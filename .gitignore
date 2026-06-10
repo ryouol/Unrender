@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Generated data & model artifacts (large/regenerable). The small held-out eval
+# splits (test.jsonl, val.jsonl) + dataset README are committed deliberately to
+# freeze the benchmark; everything else regenerates from the recipe.
+data/**/images/
+data/**/labels/
+data/**/manifest.jsonl
+data/**/train.jsonl
+data/real_eval/images/
+outputs/
+*.png
+!docs/**/*.png
+
+# Tooling
+.ipynb_checkpoints/
+.pytest_cache/
+.DS_Store
+wandb/

@@ -24,8 +24,10 @@ Runbook (on the GPU box, from the repo root):
         --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-lora
     # eval the merged model through the SAME scorer as the frontier baselines:
     python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-lora/merged \
-        --split data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
-    python -m unrender.eval.score --pred outputs/eval_v1/unrender-lora/predictions.jsonl
+        --data data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
+    python -m unrender.eval.score --predictions outputs/eval_v1/unrender-lora/predictions.jsonl
+
+On Modal, all of the above is wrapped by modal_train.py (gen/smoke/train/evaluate).
 
 The exact Unsloth vision API (FastVisionModel / UnslothVisionDataCollator) moves
 fast — if a call signature here is stale, check current Unsloth docs; the shape

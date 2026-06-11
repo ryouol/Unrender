@@ -33,6 +33,24 @@ def _axis_text(label, unit=None):
     return label or ""
 
 
+def _apply_value_axis(ax, spec, horizontal):
+    """eval-v1 hardening of the value axis: truncated baseline, unrounded max,
+    and K/M/B tick suffixes. No-op unless the spec sets those knobs."""
+    if spec.y_baseline is None and spec.y_top is None and not spec.tick_suffix:
+        return
+    get_lim, set_lim = (ax.get_xlim, ax.set_xlim) if horizontal else (ax.get_ylim, ax.set_ylim)
+    axis = ax.xaxis if horizontal else ax.yaxis
+    if spec.y_baseline is not None or spec.y_top is not None:
+        lo, hi = get_lim()
+        set_lim(spec.y_baseline if spec.y_baseline is not None else lo,
+                spec.y_top if spec.y_top is not None else hi)
+    if spec.tick_suffix:
+        from matplotlib.ticker import FuncFormatter
+        div = {"K": 1e3, "M": 1e6, "B": 1e9}[spec.tick_suffix]
+        suffix = spec.tick_suffix
+        axis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v / div:g}{suffix}"))
+
+
 def render_chart(spec: ChartSpec) -> Image.Image:
     """Draw the chart described by `spec` and return it as a PIL RGB image."""
     # Scope the font choice so it can't leak into the next render in this worker.
@@ -125,6 +143,7 @@ def _draw_chart(spec: ChartSpec) -> Image.Image:
             ax.set_ylabel(_axis_text(spec.y_label, spec.y_unit))
         if spec.grid:
             ax.grid(axis="x" if ct == "horizontal_bar" else "y", linestyle="--", alpha=0.5)
+        _apply_value_axis(ax, spec, horizontal=(ct == "horizontal_bar"))
 
     fig.tight_layout()
     buf = io.BytesIO()

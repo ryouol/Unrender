@@ -41,12 +41,12 @@ def _cap_long_side(img: Image.Image, max_side: int) -> Image.Image:
 
 
 def _make_one(args_tuple):
-    index, base_seed, images_dir, labels_dir, augment, max_side = args_tuple
+    index, base_seed, images_dir, labels_dir, augment, max_side, hard, aug_frac = args_tuple
     rng = random.Random(base_seed + index)
 
-    spec = random_spec(rng)
+    spec = random_spec(rng, hard=hard)
     img = render_chart(spec)
-    did_augment = augment and rng.random() < _AUGMENT_FRACTION
+    did_augment = augment and rng.random() < aug_frac
     if did_augment:
         img = augment_image(img, rng)
     img = _cap_long_side(img, max_side)
@@ -76,6 +76,7 @@ def generate(
     workers: Optional[int] = None,
     max_side: int = 1280,
     start_index: int = 0,
+    hard: bool = False,
 ) -> Path:
     out_dir = Path(out)
     images_dir = out_dir / "images"
@@ -84,15 +85,16 @@ def generate(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     workers = workers or max(1, (os.cpu_count() or 4) - 2)
+    aug_frac = 0.95 if hard else _AUGMENT_FRACTION  # heavier augmentation on the hard split
     tasks = [
-        (i, base_seed, str(images_dir), str(labels_dir), augment, max_side)
+        (i, base_seed, str(images_dir), str(labels_dir), augment, max_side, hard, aug_frac)
         for i in range(start_index, start_index + n)
     ]
 
     manifest_path = out_dir / "manifest.jsonl"
     mode = "a" if start_index > 0 and manifest_path.exists() else "w"
 
-    print(f"Generating {n} charts -> {out_dir}  (workers={workers}, augment={augment})")
+    print(f"Generating {n} charts -> {out_dir}  (workers={workers}, augment={augment}, hard={hard})")
     with open(manifest_path, mode, encoding="utf-8") as mf:
         if workers == 1:
             for t in tqdm(tasks, total=len(tasks)):
@@ -117,6 +119,7 @@ def main():
     p.add_argument("--max-side", type=int, default=1280, help="cap longest image side (px)")
     p.add_argument("--start-index", type=int, default=0, help="first sample index (for appending)")
     p.add_argument("--no-augment", action="store_true", help="disable image degradations")
+    p.add_argument("--hard", action="store_true", help="eval-v1 hard mode (denser, truncated axes, K/M/B, ...)")
     args = p.parse_args()
 
     generate(
@@ -127,6 +130,7 @@ def main():
         workers=args.workers,
         max_side=args.max_side,
         start_index=args.start_index,
+        hard=args.hard,
     )
 
 

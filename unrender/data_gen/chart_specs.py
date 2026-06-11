@@ -59,6 +59,16 @@ _PALETTES = [
 _FONTS = ["sans-serif", "serif", "monospace", "DejaVu Sans", "DejaVu Serif"]
 _LEGEND_LOCS = ["best", "upper right", "upper left", "lower right", "lower left"]
 
+# Near-monochrome ramps for hard mode: 4-6 series in similar shades are hard to
+# tell apart (forces the model to track position, not just color).
+_MONO_PALETTES = [
+    ["#08306b", "#2171b5", "#4292c6", "#6baed6", "#9ecae1", "#c6dbef"],  # blues
+    ["#00441b", "#238b45", "#41ab5d", "#74c476", "#a1d99b", "#c7e9c0"],  # greens
+    ["#7f2704", "#d94801", "#f16913", "#fd8d3c", "#fdae6b", "#fdd0a2"],  # oranges
+    ["#3f007d", "#6a51a3", "#807dba", "#9e9ac8", "#bcbddc", "#dadaeb"],  # purples
+    ["#252525", "#525252", "#737373", "#969696", "#bdbdbd", "#d9d9d9"],  # greys
+]
+
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
 _COUNTRIES = ["USA", "China", "India", "Germany", "Japan", "Brazil", "UK", "France", "Canada", "Italy", "Spain", "Mexico"]
@@ -88,6 +98,11 @@ class ChartSpec:
     rotate_xticks: int = 0
     decimals: int = 0
     thousands_sep: bool = False
+    # --- hard-mode style knobs (eval-v1); all default to the easy v0 behavior ---
+    y_baseline: Optional[float] = None   # truncated/non-zero value-axis floor
+    y_top: Optional[float] = None        # unrounded value-axis maximum
+    tick_suffix: Optional[str] = None    # "K" / "M" / "B" value-axis tick suffix
+    minor_ticks: bool = False
 
     def to_chart_data(self) -> ChartData:
         """Build the exact ground-truth label from this spec."""
@@ -119,6 +134,16 @@ def _pooled(rng: random.Random, pool: List[str], n: int, noun: str, fmt) -> tupl
 
 
 def _categories(rng: random.Random, n: int) -> tuple:
+    """Exactly n unique category labels (+ dimension name). Pads if the chosen
+    pool can't supply n (e.g. >12 months in hard mode) — a no-op for n<=12."""
+    labels, dim = _categories_raw(rng, n)
+    labels = labels[:n]
+    if len(labels) < n:
+        labels += [f"{dim} {len(labels) + i + 1}" for i in range(n - len(labels))]
+    return labels, dim
+
+
+def _categories_raw(rng: random.Random, n: int) -> tuple:
     """Return (n UNIQUE category labels of one coherent kind, dimension name).
 
     The dimension name describes the categories (e.g. quarters -> "Quarter") so
@@ -189,8 +214,16 @@ def _values(rng: random.Random, n_series: int, n_cat: int, allow_negative: bool,
     return out
 
 
-def random_spec(rng: random.Random) -> ChartSpec:
-    """Produce one fully-specified random chart."""
+def random_spec(rng: random.Random, hard: bool = False) -> ChartSpec:
+    """Produce one fully-specified random chart.
+
+    hard=True enables the eval-v1 escalations (denser data, truncated/unrounded
+    value axes, K/M/B ticks, similar palettes, smaller figures). The hard path is
+    a separate function so the easy path's RNG sequence is byte-identical to
+    eval-v0 — regenerating v0 from the recipe still reproduces it exactly.
+    """
+    if hard:
+        return _hard_spec(rng)
     chart_type = _weighted_chart_type(rng)
     is_multi = chart_type in MULTI_SERIES_TYPES
     is_pie = chart_type == "pie"
@@ -241,4 +274,69 @@ def random_spec(rng: random.Random) -> ChartSpec:
         rotate_xticks=rotate,
         decimals=decimals,
         thousands_sep=rng.random() < 0.4,
+    )
+
+
+def _hard_spec(rng: random.Random) -> ChartSpec:
+    """eval-v1 hard charts (see CHANGELOG): 15-60 points, 4-6 similar-shade
+    series, truncated/unrounded value axes, K/M/B ticks, smaller figures, more
+    label-free. Separate RNG path so it can't perturb the v0 (easy) sequence."""
+    chart_type = _weighted_chart_type(rng)
+    is_multi = chart_type in MULTI_SERIES_TYPES
+    is_pie = chart_type == "pie"
+
+    if is_pie:
+        n_series, n_cat = 1, rng.randint(4, 8)                    # pies stay readable
+    elif is_multi:
+        n_series, n_cat = rng.randint(4, 6), rng.randint(4, 10)   # 16-60 points
+    else:
+        n_series, n_cat = 1, rng.randint(15, 40)                  # dense single series
+
+    metric = rng.choice(_METRICS)
+    categories, dim = _categories(rng, n_cat)
+
+    decimals = rng.choice([0, 0, 0, 1, 2])
+    allow_negative = (not is_pie) and chart_type in ("bar", "horizontal_bar", "line", "multi_line") and rng.random() < 0.2
+    values = _values(rng, n_series, n_cat, allow_negative, decimals)
+    if is_pie:
+        values = [[max(abs(v), 1) for v in values[0]]]
+
+    series_names = _series_names(rng, n_series) if is_multi else [metric if rng.random() < 0.5 else None]
+
+    has_unit = rng.random() < 0.45
+    unit = rng.choice(_UNITS) if has_unit else None
+    rotate = rng.choice([0, 30, 45, 90]) if n_cat > 6 else rng.choice([0, 0, 45])
+
+    # Value-axis hardening (truncated baseline, unrounded max, K/M/B ticks).
+    y_baseline = y_top = tick_suffix = None
+    flat = [v for row in values for v in row] or [0.0, 1.0]
+    vmin, vmax = min(flat), max(flat)
+    if not is_pie:
+        if vmin > 0 and rng.random() < 0.6:
+            y_baseline = round(vmin * rng.uniform(0.5, 0.9), 4)
+        if rng.random() < 0.7:
+            y_top = round(vmax * rng.uniform(1.02, 1.12), 4)
+        if vmax >= 1e4 and rng.random() < 0.6:
+            tick_suffix = "B" if vmax >= 1e9 else "M" if vmax >= 1e6 else "K"
+
+    return ChartSpec(
+        chart_type=chart_type,
+        title=_title(rng, metric, dim),
+        x_label=None if is_pie else (dim if rng.random() < 0.85 else None),
+        y_label=None if is_pie else (metric if rng.random() < 0.85 else None),
+        y_unit=None if is_pie else unit,
+        categories=categories,
+        series_names=series_names,
+        values=values,
+        value_labels_shown=rng.random() < 0.35,   # ~65% label-free (the hard case)
+        palette=rng.choice(_MONO_PALETTES) if is_multi else rng.choice(_PALETTES),
+        grid=rng.random() < 0.35,
+        legend_loc=rng.choice(_LEGEND_LOCS),
+        font_family=rng.choice(_FONTS),
+        dpi=rng.choice([72, 96, 100, 150]),
+        figsize=(round(rng.uniform(3.2, 5.5), 1), round(rng.uniform(2.6, 4.2), 1)),
+        rotate_xticks=rotate,
+        decimals=decimals,
+        thousands_sep=rng.random() < 0.3,
+        y_baseline=y_baseline, y_top=y_top, tick_suffix=tick_suffix,
     )

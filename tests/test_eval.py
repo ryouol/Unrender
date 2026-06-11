@@ -122,5 +122,37 @@ def test_score_cli_handles_empty_predictions(tmp_path):
 
     pred_file = tmp_path / "predictions.jsonl"
     pred_file.write_text("")
-    report = score(str(pred_file), tol=0.05)
-    assert report["metrics"]["n"] == 0
+    report = score(str(pred_file))
+    assert report["tracks"]["0.05"]["metrics"]["n"] == 0
+
+
+def test_classify_status():
+    from unrender.eval.metrics import classify_status
+    assert classify_status("RateLimitError: 429", None) == "infra_error"
+    assert classify_status(None, None) == "model_invalid"
+    assert classify_status(None, {"chart_type": "bar"}) == "ok"
+
+
+def test_repair_maps_key_synonyms():
+    """category/label/name->x, value/amount->y, data/values->points (A2)."""
+    raw = ('{"chart_type":"bar","series":[{"name":"Rev",'
+           '"data":[{"category":"Jan","value":10},{"label":"Feb","amount":20}]}]}')
+    parsed, _ = parse_chart_json(raw)
+    assert parsed is not None
+    pts = parsed.series[0].points
+    assert parsed.series[0].name == "Rev"          # series 'name' preserved
+    assert (pts[0].x, pts[0].y) == ("Jan", 10.0)   # category->x, value->y
+    assert (pts[1].x, pts[1].y) == ("Feb", 20.0)   # label->x, amount->y
+
+
+def test_pie_label_free_scored_on_proportions():
+    """A label-free pie with correct proportions but wrong absolute scale scores
+    100% (proportions are all that's recoverable); a labeled pie does not (A3)."""
+    gt = ChartData(chart_type="pie", series=[Series(name=None, points=[
+        Point(x="A", y=200.0), Point(x="B", y=300.0), Point(x="C", y=500.0)])])
+    pred = ChartData(chart_type="pie", series=[Series(name=None, points=[  # same shares, /10 scale
+        Point(x="A", y=20.0), Point(x="B", y=30.0), Point(x="C", y=50.0)])])
+    free = score_sample(pred, gt, labels_shown=False)
+    assert free["n_correct_points"] == 3            # proportions match
+    labeled = score_sample(pred, gt, labels_shown=True)
+    assert labeled["n_correct_points"] == 0         # absolute values are 10x off

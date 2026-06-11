@@ -34,6 +34,8 @@ def dump(predictions: str, n: int, tol: float, out: str = "") -> Path:
 
     scored = []
     for r in read_jsonl(pred_path):
+        if r.get("status") == "infra_error":
+            continue  # transport failure, not a model attempt — don't show as a failure
         try:
             gt = ChartData.model_validate_json(r["gt"])
         except Exception:
@@ -42,7 +44,7 @@ def dump(predictions: str, n: int, tol: float, out: str = "") -> Path:
             pred = ChartData.model_validate(r["pred"]) if r.get("pred") else None
         except Exception:
             pred = None
-        sd = score_sample(pred, gt, tol=tol)
+        sd = score_sample(pred, gt, tol=tol, labels_shown=(r.get("meta") or {}).get("labels_shown"))
         scored.append((_cell_acc(sd), sd, r, gt, pred))
     scored.sort(key=lambda t: (t[0], -t[1]["n_gt_points"]))  # worst first; bigger charts break ties
 

@@ -227,33 +227,7 @@ Product B,1.0
 {"chart_type":"pie","title":null,"x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"Product A","value":16.67},{"category":"Product B","value":16.67},{"category":"Product C","value":16.67},{"category":"Product D","value":16.67},{"category":"Product E","value":16.67},{"category":"Product F","value":16.67}]}]}
 ```
 
-## 11. `0002274` — cell acc 0%  (type=pie, labels_shown=False, augmented=True)
-
-![0002274](../../../data/synthetic_v0/images/0002274.png)
-
-**Ground truth:**
-```csv
-category,value
-2013,92683.86
-2014,86632.84
-2015,55467.54
-2016,18020.72
-2017,99974.07
-2018,66682.67
-```
-
-**Prediction:**
-```csv
-category,value
-2013,20.0
-2014,18.0
-2015,12.0
-2016,5.0
-2017,22.0
-2018,14.0
-```
-
-## 12. `0000270` — cell acc 0%  (type=pie, labels_shown=True, augmented=True)
+## 11. `0000270` — cell acc 0%  (type=pie, labels_shown=True, augmented=True)
 
 ![0000270](../../../data/synthetic_v0/images/0000270.png)
 
@@ -273,7 +247,7 @@ Cat 6,5.37
 {"chart_type":"pie","title":"Throughput Overview","x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"Cat 1","value":5.6},{"category":"Cat 2","value":6.56},{"category":"Cat 3","value":6.91},{"category":"Cat 4","value":5.91},{"category":"Cat 5","value":5.65},{"category":"Cat 6","value":5.17}]}]}
 ```
 
-## 13. `0002141` — cell acc 0%  (type=pie, labels_shown=False, augmented=True)
+## 12. `0002141` — cell acc 0%  (type=pie, labels_shown=False, augmented=True)
 
 ![0002141](../../../data/synthetic_v0/images/0002141.png)
 
@@ -292,7 +266,7 @@ Central,911.0
 {"chart_type":"pie","title":"Headcount per Region","x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"South","value":34},{"category":"Central","value":44},{"category":"EMEA","value":1},{"category":"East","value":20},{"category":"North","value":1}]}]}
 ```
 
-## 14. `0001253` — cell acc 0%  (type=pie, labels_shown=True, augmented=True)
+## 13. `0001253` — cell acc 0%  (type=pie, labels_shown=True, augmented=True)
 
 ![0001253](../../../data/synthetic_v0/images/0001253.png)
 
@@ -311,7 +285,7 @@ Cat 5,1.0
 {"chart_type":"pie","title":"Headcount (Category)","x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"Cat 1","value":1},{"category":"Cat 2","value":1},{"category":"Cat 3","value":1},{"category":"Cat 4","value":1},{"category":"Cat 5","value":1}]}]}
 ```
 
-## 15. `0000844` — cell acc 0%  (type=pie, labels_shown=False, augmented=True)
+## 14. `0000844` — cell acc 0%  (type=pie, labels_shown=False, augmented=True)
 
 ![0000844](../../../data/synthetic_v0/images/0000844.png)
 
@@ -327,4 +301,22 @@ Italy,6669.0
 **Prediction:** unparseable — schema[0]: 8 error(s)
 ```
 {"chart_type":"pie","title":"Sales Breakdown","x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"Brazil","value":17},{"category":"Italy","value":29},{"category":"Mexico","value":39},{"category":"Spain","value":15}]}]}
+```
+
+## 15. `0000386` — cell acc 0%  (type=pie, labels_shown=True, augmented=True)
+
+![0000386](../../../data/synthetic_v0/images/0000386.png)
+
+**Ground truth:**
+```csv
+category,value
+Product D,1.0
+Product C,1.0
+Product E,1.0
+Product F,1.0
+```
+
+**Prediction:** unparseable — schema[0]: 8 error(s)
+```
+{"chart_type":"pie","title":"Product Net Income","x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"category":"Product C","value":1},{"category":"Product D","value":1},{"category":"Product E","value":1},{"category":"Product F","value":1}]}]}
 ```

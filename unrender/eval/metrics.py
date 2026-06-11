@@ -128,8 +128,30 @@ def _series_name_f1(pred: List[Series], gt: List[Series]) -> float:
     return 2 * prec * rec / (prec + rec) if prec + rec else 0.0
 
 
-def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05) -> Dict:
-    """Score one prediction. Returns raw counts so aggregate() can pool them."""
+def classify_status(error, pred) -> str:
+    """Three-way status for a prediction row (A1):
+      infra_error  — the call raised (429/quota/network); model never answered.
+      model_invalid — model answered but output couldn't be parsed/validated.
+      ok           — usable prediction.
+    Scoring excludes infra_error from N; model_invalid counts as a miss.
+    """
+    if error:
+        return "infra_error"
+    if pred is None:
+        return "model_invalid"
+    return "ok"
+
+
+def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05,
+                 labels_shown: Optional[bool] = None) -> Dict:
+    """Score one prediction. Returns raw counts so aggregate() can pool them.
+
+    Pie special case (A3): when a pie's values are NOT printed (labels_shown is
+    False), the absolute slice values are unrecoverable from geometry — only the
+    proportions are. So for label-free pies we normalize BOTH gt and prediction
+    to shares-of-total before the tolerance check, scoring the model on the
+    proportions it can actually read.
+    """
     n_gt = sum(len(s.points) for s in gt.series)
     has_title, has_x, has_y = int(bool(gt.title)), int(bool(gt.x_axis.label)), int(bool(gt.y_axis.label))
 
@@ -144,6 +166,7 @@ def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05) ->
             "abs_errors": [], "rel_errors": [],
         }
 
+    pie_prop = gt.chart_type == "pie" and labels_shown is False
     n_correct, abs_e, rel_e = 0, [], []
     for g_series, p_series in _align_series(pred.series, gt.series):
         if p_series is None:
@@ -152,12 +175,18 @@ def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05) ->
         # whole chart's — otherwise a true 0 beside a huge value in another
         # series would accept an arbitrarily large prediction.
         series_scale = max([abs(p.y) for p in g_series.points] + [1e-9])
+        gt_total = sum(abs(p.y) for p in g_series.points) or 1.0
+        pred_total = sum(abs(p.y) for p in p_series.points if math.isfinite(p.y)) or 1.0
         for gp, pp in _align_points(p_series.points, g_series.points):
             if pp is None or not math.isfinite(pp.y):
                 continue  # NaN/Infinity counts as a miss, never poisons error stats
-            abs_e.append(abs(pp.y - gp.y))
-            rel_e.append(abs(pp.y - gp.y) / max(abs(gp.y), 1e-9))
-            if _value_correct(pp.y, gp.y, tol, series_scale):
+            if pie_prop:  # compare shares of total, with a fixed [0,1] scale
+                gy, py, scale = abs(gp.y) / gt_total, abs(pp.y) / pred_total, 1.0
+            else:
+                gy, py, scale = gp.y, pp.y, series_scale
+            abs_e.append(abs(py - gy))
+            rel_e.append(abs(py - gy) / max(abs(gy), 1e-9))
+            if _value_correct(py, gy, tol, scale):
                 n_correct += 1
 
     ct_ok = _norm(pred.chart_type) == _norm(gt.chart_type)

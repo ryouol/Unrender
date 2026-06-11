@@ -28,6 +28,7 @@ from unrender.eval.dataset import load_eval_samples
 from unrender.eval.providers import DEFAULT_MODELS, PROVIDERS, STALE_DEFAULT
 from unrender.io_utils import read_jsonl
 from unrender.eval import providers as _providers
+from unrender.eval.metrics import classify_status
 from unrender.prompts import EXTRACTION_PROMPT
 from unrender.schema.validate import parse_chart_json
 
@@ -51,18 +52,22 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int) -
     out_dir.mkdir(parents=True, exist_ok=True)
     pred_path = out_dir / "predictions.jsonl"
 
-    # Resume only over SUCCESSFUL attempts; rows that recorded a transport error
-    # are dropped so they get retried (a rate-limit on Monday shouldn't be frozen
-    # into the benchmark forever). Rewrite the file without them to avoid dupe ids.
+    # Resume keeps ok + model_invalid (real model answers) and retries only
+    # infra_error rows (429/quota/network) — a transient failure shouldn't be
+    # frozen into the benchmark. Rewrite without the infra_error rows to avoid
+    # duplicate ids. (Handles old rows with no "status" via classify_status.)
+    def _status(r):
+        return r.get("status") or classify_status(r.get("error"), r.get("pred"))
+
     done = set()
     if pred_path.exists():
         existing = read_jsonl(pred_path)
-        keep = [r for r in existing if not r.get("error")]
+        keep = [r for r in existing if _status(r) != "infra_error"]
         done = {r["id"] for r in keep}
         if len(keep) != len(existing):
             with open(pred_path, "w", encoding="utf-8") as f:
                 f.writelines(json.dumps(r) + "\n" for r in keep)
-            print(f"Resuming: kept {len(keep)} ok, retrying {len(existing) - len(keep)} failed.")
+            print(f"Resuming: kept {len(keep)}, retrying {len(existing) - len(keep)} infra_error.")
         elif done:
             print(f"Resuming: {len(done)} predictions already present, skipping those.")
 
@@ -87,11 +92,12 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int) -
                     raw = ""
                     break
             parsed, perrs = parse_chart_json(raw) if raw else (None, ["empty"])
+            status = classify_status(error, parsed)
             f.write(json.dumps({
                 "id": s.id, "image": s.image, "gt": s.gt_json, "meta": s.meta,
                 "raw": raw, "pred": parsed.model_dump() if parsed else None,
                 "usage": dict(_providers.LAST_USAGE),
-                "parse_errors": perrs, "error": error,
+                "status": status, "parse_errors": perrs, "error": error,
             }) + "\n")
             f.flush()
             n_err += int(error is not None)

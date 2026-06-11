@@ -163,12 +163,40 @@ box; its predictions drop into the same scorer. Still to add for full
 credibility: a small **real-world** test set (FRED / Our World in Data charts
 whose CSVs are downloadable) so the claim isn't "only on my own synthetic data."
 
-## Next steps (Phase 3)
+## Fine-tune (Phase 3)
 
 Iteration base is **Qwen3-VL-4B**, launch base **Qwen3-VL-8B** (same Unsloth
-path; the 2.5 family is skipped). Fine-tune with LoRA on a rented GPU (~$5–25/run)
-using `data/synthetic_v0/train.jsonl`, run the Phase-2 scorer, read `FAILURES.md`,
-generate charts targeting those failures, and repeat. Then deploy (Phase 4).
+path; the 2.5 family is skipped). LoRA fine-tune lives in
+`unrender/train/sft_lora.py` — it feeds the chat-format split rows straight to
+the trainer, so the prompt and JSON target match the eval harness exactly (no
+re-specifying the task). The vision tower is fine-tuned too, since reading
+label-free geometry is a visual skill, not just text generation.
+
+On the rented GPU box (~$5–25/run), from the repo root:
+
+```bash
+pip install -e ".[train]"             # CUDA-only deps (Unsloth/TRL/bitsandbytes)
+
+# images aren't committed — regenerate them byte-for-byte, then re-split:
+python -m unrender.data_gen.generate      --n 5000 --out data/synthetic_v1 --seed 5678 --hard
+python -m unrender.data_gen.split_dataset --out data/synthetic_v1
+
+# LoRA fine-tune (v0+v1 mixed; label-free charts oversampled 1.5x):
+python -m unrender.train.sft_lora \
+    --train data/synthetic_v1/train.jsonl data/synthetic_v0/train.jsonl \
+    --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-lora
+#   --max-steps 30 first for a cheap smoke run; --base Qwen/Qwen3-VL-8B-Instruct for launch.
+
+# eval the merged model through the SAME scorer as the frontier baselines:
+python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-lora/merged \
+    --split data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
+python -m unrender.eval.score --pred outputs/eval_v1/unrender-lora/predictions.jsonl
+```
+
+Then read `FAILURES.md`, generate charts targeting those failures, and repeat.
+The biggest remaining credibility gap is still external: add a real-world test
+set (see above) so "beats frontier" isn't only true on our own synthetic data.
+Then deploy (Phase 4).
 
 ## Hardware
 

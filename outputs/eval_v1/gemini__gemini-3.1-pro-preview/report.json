@@ -1,0 +1,528 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "tracks": {
+    "0.05": {
+      "metrics": {
+        "n": 255,
+        "schema_valid_rate": 0.8470588235294118,
+        "chart_type_acc": 0.8470588235294118,
+        "cell_accuracy": 0.5710075778838057,
+        "chart_exact_rate": 0.22745098039215686,
+        "title_acc": 0.8504672897196262,
+        "x_label_acc": 0.817258883248731,
+        "y_label_acc": 0.5421052631578948,
+        "series_name_f1": 0.5686274509803921,
+        "mae": 16675.54827614807,
+        "median_rel_err": 0.003194888178913812,
+        "total_points": 7126
+      },
+      "slices": {
+        "labeled": {
+          "n": 95,
+          "schema_valid_rate": 0.8315789473684211,
+          "chart_type_acc": 0.8315789473684211,
+          "cell_accuracy": 0.6417468541820873,
+          "chart_exact_rate": 0.3157894736842105,
+          "title_acc": 0.8433734939759037,
+          "x_label_acc": 0.7948717948717948,
+          "y_label_acc": 0.5606060606060606,
+          "series_name_f1": 0.5789473684210527,
+          "mae": 4981.989489603025,
+          "median_rel_err": 0.0,
+          "total_points": 2702
+        },
+        "label_free": {
+          "n": 160,
+          "schema_valid_rate": 0.85625,
+          "chart_type_acc": 0.85625,
+          "cell_accuracy": 0.5278028933092225,
+          "chart_exact_rate": 0.175,
+          "title_acc": 0.8549618320610687,
+          "x_label_acc": 0.8319327731092437,
+          "y_label_acc": 0.532258064516129,
+          "series_name_f1": 0.5625,
+          "mae": 23624.037574752205,
+          "median_rel_err": 0.010440308669995511,
+          "total_points": 4424
+        },
+        "by_chart_type": {
+          "bar": {
+            "all": {
+              "n": 44,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5941422594142259,
+              "chart_exact_rate": 0.3181818181818182,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6666666666666666,
+              "series_name_f1": 0.45454545454545453,
+              "mae": 23123.169812807882,
+              "median_rel_err": 0.002320185614849139,
+              "total_points": 1195
+            },
+            "label_free": {
+              "n": 25,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5260196905766527,
+              "chart_exact_rate": 0.28,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6666666666666666,
+              "series_name_f1": 0.36,
+              "mae": 36669.504288052376,
+              "median_rel_err": 0.010168345888090857,
+              "total_points": 711
+            }
+          },
+          "grouped_bar": {
+            "all": {
+              "n": 35,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.7925813777441333,
+              "chart_exact_rate": 0.2571428571428571,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6333333333333333,
+              "series_name_f1": 1.0,
+              "mae": 3782.19359410574,
+              "median_rel_err": 0.0016644428881564977,
+              "total_points": 1321
+            },
+            "label_free": {
+              "n": 20,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.7222222222222222,
+              "chart_exact_rate": 0.15,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.4444444444444444,
+              "series_name_f1": 1.0,
+              "mae": 6229.099292430464,
+              "median_rel_err": 0.009653208606689452,
+              "total_points": 738
+            }
+          },
+          "horizontal_bar": {
+            "all": {
+              "n": 35,
+              "schema_valid_rate": 0.2,
+              "chart_type_acc": 0.2,
+              "cell_accuracy": 0.031286210892236384,
+              "chart_exact_rate": 0.0,
+              "title_acc": 0.17857142857142858,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.08571428571428572,
+              "mae": 0.8620689655172413,
+              "median_rel_err": 0.0012106537530266344,
+              "total_points": 863
+            },
+            "label_free": {
+              "n": 22,
+              "schema_valid_rate": 0.13636363636363635,
+              "chart_type_acc": 0.13636363636363635,
+              "cell_accuracy": 0.048214285714285716,
+              "chart_exact_rate": 0.0,
+              "title_acc": 0.1111111111111111,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.09090909090909091,
+              "mae": 0.8620689655172413,
+              "median_rel_err": 0.0012106537530266344,
+              "total_points": 560
+            }
+          },
+          "line": {
+            "all": {
+              "n": 44,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5688291139240507,
+              "chart_exact_rate": 0.36363636363636365,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.5945945945945946,
+              "series_name_f1": 0.45454545454545453,
+              "mae": 18686.46787967847,
+              "median_rel_err": 0.0015824091528378438,
+              "total_points": 1264
+            },
+            "label_free": {
+              "n": 34,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5192909280500522,
+              "chart_exact_rate": 0.3235294117647059,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6428571428571429,
+              "series_name_f1": 0.47058823529411764,
+              "mae": 23571.484196060937,
+              "median_rel_err": 0.007173869876478221,
+              "total_points": 959
+            }
+          },
+          "multi_line": {
+            "all": {
+              "n": 40,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.7517680339462518,
+              "chart_exact_rate": 0.1,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.7428571428571429,
+              "series_name_f1": 1.0,
+              "mae": 12469.045354376989,
+              "median_rel_err": 0.0026232850587277682,
+              "total_points": 1414
+            },
+            "label_free": {
+              "n": 27,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.7363238512035011,
+              "chart_exact_rate": 0.1111111111111111,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.7307692307692307,
+              "series_name_f1": 1.0,
+              "mae": 10551.464497909259,
+              "median_rel_err": 0.004777091477688448,
+              "total_points": 914
+            }
+          },
+          "pie": {
+            "all": {
+              "n": 31,
+              "schema_valid_rate": 0.7419354838709677,
+              "chart_type_acc": 0.7419354838709677,
+              "cell_accuracy": 0.6,
+              "chart_exact_rate": 0.41935483870967744,
+              "title_acc": 0.7307692307692307,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.12903225806451613,
+              "mae": 2.226960283220471,
+              "median_rel_err": 0.008945386064030128,
+              "total_points": 190
+            },
+            "label_free": {
+              "n": 18,
+              "schema_valid_rate": 0.7777777777777778,
+              "chart_type_acc": 0.7777777777777778,
+              "cell_accuracy": 0.5327102803738317,
+              "chart_exact_rate": 0.2222222222222222,
+              "title_acc": 0.8,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.1111111111111111,
+              "mae": 0.004237553263960203,
+              "median_rel_err": 0.025441921364164663,
+              "total_points": 107
+            }
+          },
+          "stacked_bar": {
+            "all": {
+              "n": 26,
+              "schema_valid_rate": 0.8846153846153846,
+              "chart_type_acc": 0.8846153846153846,
+              "cell_accuracy": 0.44254835039817975,
+              "chart_exact_rate": 0.07692307692307693,
+              "title_acc": 0.9090909090909091,
+              "x_label_acc": 0.875,
+              "y_label_acc": 0.5833333333333334,
+              "series_name_f1": 0.8846153846153846,
+              "mae": 39425.87446746718,
+              "median_rel_err": 0.042810098792535674,
+              "total_points": 879
+            },
+            "label_free": {
+              "n": 14,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.39770114942528734,
+              "chart_exact_rate": 0.0,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6428571428571429,
+              "series_name_f1": 1.0,
+              "mae": 68398.24228016703,
+              "median_rel_err": 0.20677966101694914,
+              "total_points": 435
+            }
+          }
+        }
+      },
+      "n_infra_error": 45,
+      "n_model_invalid": 39,
+      "n_skipped_gt": 0
+    },
+    "0.02": {
+      "metrics": {
+        "n": 255,
+        "schema_valid_rate": 0.8470588235294118,
+        "chart_type_acc": 0.8470588235294118,
+        "cell_accuracy": 0.5141734493404434,
+        "chart_exact_rate": 0.16470588235294117,
+        "title_acc": 0.8504672897196262,
+        "x_label_acc": 0.817258883248731,
+        "y_label_acc": 0.5421052631578948,
+        "series_name_f1": 0.5686274509803921,
+        "mae": 16675.54827614807,
+        "median_rel_err": 0.003194888178913812,
+        "total_points": 7126
+      },
+      "slices": {
+        "labeled": {
+          "n": 95,
+          "schema_valid_rate": 0.8315789473684211,
+          "chart_type_acc": 0.8315789473684211,
+          "cell_accuracy": 0.613619541080681,
+          "chart_exact_rate": 0.25263157894736843,
+          "title_acc": 0.8433734939759037,
+          "x_label_acc": 0.7948717948717948,
+          "y_label_acc": 0.5606060606060606,
+          "series_name_f1": 0.5789473684210527,
+          "mae": 4981.989489603025,
+          "median_rel_err": 0.0,
+          "total_points": 2702
+        },
+        "label_free": {
+          "n": 160,
+          "schema_valid_rate": 0.85625,
+          "chart_type_acc": 0.85625,
+          "cell_accuracy": 0.4534358047016275,
+          "chart_exact_rate": 0.1125,
+          "title_acc": 0.8549618320610687,
+          "x_label_acc": 0.8319327731092437,
+          "y_label_acc": 0.532258064516129,
+          "series_name_f1": 0.5625,
+          "mae": 23624.037574752205,
+          "median_rel_err": 0.010440308669995511,
+          "total_points": 4424
+        },
+        "by_chart_type": {
+          "bar": {
+            "all": {
+              "n": 44,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5531380753138075,
+              "chart_exact_rate": 0.22727272727272727,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6666666666666666,
+              "series_name_f1": 0.45454545454545453,
+              "mae": 23123.169812807882,
+              "median_rel_err": 0.002320185614849139,
+              "total_points": 1195
+            },
+            "label_free": {
+              "n": 25,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.4711673699015471,
+              "chart_exact_rate": 0.16,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6666666666666666,
+              "series_name_f1": 0.36,
+              "mae": 36669.504288052376,
+              "median_rel_err": 0.010168345888090857,
+              "total_points": 711
+            }
+          },
+          "grouped_bar": {
+            "all": {
+              "n": 35,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.7055261165783497,
+              "chart_exact_rate": 0.14285714285714285,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6333333333333333,
+              "series_name_f1": 1.0,
+              "mae": 3782.19359410574,
+              "median_rel_err": 0.0016644428881564977,
+              "total_points": 1321
+            },
+            "label_free": {
+              "n": 20,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.6056910569105691,
+              "chart_exact_rate": 0.1,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.4444444444444444,
+              "series_name_f1": 1.0,
+              "mae": 6229.099292430464,
+              "median_rel_err": 0.009653208606689452,
+              "total_points": 738
+            }
+          },
+          "horizontal_bar": {
+            "all": {
+              "n": 35,
+              "schema_valid_rate": 0.2,
+              "chart_type_acc": 0.2,
+              "cell_accuracy": 0.031286210892236384,
+              "chart_exact_rate": 0.0,
+              "title_acc": 0.17857142857142858,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.08571428571428572,
+              "mae": 0.8620689655172413,
+              "median_rel_err": 0.0012106537530266344,
+              "total_points": 863
+            },
+            "label_free": {
+              "n": 22,
+              "schema_valid_rate": 0.13636363636363635,
+              "chart_type_acc": 0.13636363636363635,
+              "cell_accuracy": 0.048214285714285716,
+              "chart_exact_rate": 0.0,
+              "title_acc": 0.1111111111111111,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.09090909090909091,
+              "mae": 0.8620689655172413,
+              "median_rel_err": 0.0012106537530266344,
+              "total_points": 560
+            }
+          },
+          "line": {
+            "all": {
+              "n": 44,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.5245253164556962,
+              "chart_exact_rate": 0.2727272727272727,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.5945945945945946,
+              "series_name_f1": 0.45454545454545453,
+              "mae": 18686.46787967847,
+              "median_rel_err": 0.0015824091528378438,
+              "total_points": 1264
+            },
+            "label_free": {
+              "n": 34,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.46611053180396245,
+              "chart_exact_rate": 0.23529411764705882,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6428571428571429,
+              "series_name_f1": 0.47058823529411764,
+              "mae": 23571.484196060937,
+              "median_rel_err": 0.007173869876478221,
+              "total_points": 959
+            }
+          },
+          "multi_line": {
+            "all": {
+              "n": 40,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.6746817538896747,
+              "chart_exact_rate": 0.1,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.7428571428571429,
+              "series_name_f1": 1.0,
+              "mae": 12469.045354376989,
+              "median_rel_err": 0.0026232850587277682,
+              "total_points": 1414
+            },
+            "label_free": {
+              "n": 27,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.6444201312910285,
+              "chart_exact_rate": 0.1111111111111111,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.7307692307692307,
+              "series_name_f1": 1.0,
+              "mae": 10551.464497909259,
+              "median_rel_err": 0.004777091477688448,
+              "total_points": 914
+            }
+          },
+          "pie": {
+            "all": {
+              "n": 31,
+              "schema_valid_rate": 0.7419354838709677,
+              "chart_type_acc": 0.7419354838709677,
+              "cell_accuracy": 0.46842105263157896,
+              "chart_exact_rate": 0.2903225806451613,
+              "title_acc": 0.7307692307692307,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.12903225806451613,
+              "mae": 2.226960283220471,
+              "median_rel_err": 0.008945386064030128,
+              "total_points": 190
+            },
+            "label_free": {
+              "n": 18,
+              "schema_valid_rate": 0.7777777777777778,
+              "chart_type_acc": 0.7777777777777778,
+              "cell_accuracy": 0.308411214953271,
+              "chart_exact_rate": 0.05555555555555555,
+              "title_acc": 0.8,
+              "x_label_acc": 0.0,
+              "y_label_acc": 0.0,
+              "series_name_f1": 0.1111111111111111,
+              "mae": 0.004237553263960203,
+              "median_rel_err": 0.025441921364164663,
+              "total_points": 107
+            }
+          },
+          "stacked_bar": {
+            "all": {
+              "n": 26,
+              "schema_valid_rate": 0.8846153846153846,
+              "chart_type_acc": 0.8846153846153846,
+              "cell_accuracy": 0.3845278725824801,
+              "chart_exact_rate": 0.07692307692307693,
+              "title_acc": 0.9090909090909091,
+              "x_label_acc": 0.875,
+              "y_label_acc": 0.5833333333333334,
+              "series_name_f1": 0.8846153846153846,
+              "mae": 39425.87446746718,
+              "median_rel_err": 0.042810098792535674,
+              "total_points": 879
+            },
+            "label_free": {
+              "n": 14,
+              "schema_valid_rate": 1.0,
+              "chart_type_acc": 1.0,
+              "cell_accuracy": 0.2942528735632184,
+              "chart_exact_rate": 0.0,
+              "title_acc": 1.0,
+              "x_label_acc": 1.0,
+              "y_label_acc": 0.6428571428571429,
+              "series_name_f1": 1.0,
+              "mae": 68398.24228016703,
+              "median_rel_err": 0.20677966101694914,
+              "total_points": 435
+            }
+          }
+        }
+      },
+      "n_infra_error": 45,
+      "n_model_invalid": 39,
+      "n_skipped_gt": 0
+    }
+  }
+}

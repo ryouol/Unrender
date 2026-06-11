@@ -1,0 +1,5 @@
+{
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "data": "data/synthetic_v1/test.jsonl"
+}

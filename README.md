@@ -172,7 +172,21 @@ the trainer, so the prompt and JSON target match the eval harness exactly (no
 re-specifying the task). The vision tower is fine-tuned too, since reading
 label-free geometry is a visual skill, not just text generation.
 
-On the rented GPU box (~$5–25/run), from the repo root:
+**On Modal (what we use):** `modal_train.py` wraps the whole pipeline — data gen
+onto a persistent Volume (exact pinned rendering stack, so the frozen recipes
+reproduce byte-for-byte), Unsloth LoRA training, and eval through the same
+harness as the frontier baselines. Per-second billing, nothing to terminate.
+
+```bash
+pip install modal && modal setup            # once
+modal run modal_train.py::gen               # once: v0+v1 -> Volume (CPU, ~$0.3)
+modal run modal_train.py::smoke             # 30-step train + tiny eval (~$0.5)
+modal run --detach modal_train.py::train    # real run (L4 ~$2-4; UNRENDER_GPU=A100 for 8B)
+modal run --detach modal_train.py::evaluate # merged model over the 1000-chart test
+modal volume get unrender-vol outputs ./outputs/modal   # pull predictions/report
+```
+
+**Or on any rented GPU box** (RunPod/Vast, ~$5–25/run), from the repo root:
 
 ```bash
 pip install -e ".[train]"             # CUDA-only deps (Unsloth/TRL/bitsandbytes)
@@ -189,8 +203,8 @@ python -m unrender.train.sft_lora \
 
 # eval the merged model through the SAME scorer as the frontier baselines:
 python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-lora/merged \
-    --split data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
-python -m unrender.eval.score --pred outputs/eval_v1/unrender-lora/predictions.jsonl
+    --data data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
+python -m unrender.eval.score --predictions outputs/eval_v1/unrender-lora/predictions.jsonl
 ```
 
 Then read `FAILURES.md`, generate charts targeting those failures, and repeat.

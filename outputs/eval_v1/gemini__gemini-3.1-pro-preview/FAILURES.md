@@ -1,6 +1,6 @@
 # Worst 15 predictions — gemini__gemini-3.1-pro-preview
 
-_Sorted by cell accuracy (within 5%). 255 scored total._
+_Sorted by cell accuracy (within 5%). 264 scored total._
 
 
 ## 1. `0001100` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
@@ -523,7 +523,95 @@ Region 38,975601.0
     
 ```
 
-## 7. `0001331` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
+## 7. `0002051` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
+
+![0002051](../../../data/synthetic_v1/images/0002051.png)
+
+**Ground truth:**
+```csv
+Country,Market Share
+Canada,1.0
+France,0.0
+Brazil,1.0
+Japan,1.0
+India,1.0
+USA,0.0
+Mexico,0.0
+Germany,1.0
+Spain,1.0
+China,1.0
+Italy,0.0
+UK,0.0
+Country 13,0.0
+Country 14,0.0
+Country 15,1.0
+Country 16,0.0
+Country 17,0.0
+Country 18,1.0
+Country 19,0.0
+Country 20,1.0
+Country 21,0.0
+Country 22,0.0
+Country 23,0.0
+Country 24,1.0
+Country 25,0.0
+Country 26,1.0
+Country 27,0.0
+Country 28,0.0
+Country 29,0.0
+Country 30,1.0
+Country 31,1.0
+Country 32,1.0
+Country 33,0.0
+Country 34,1.0
+Country 35,1.0
+Country 36,0.0
+Country 37,0.0
+Country 38,0.0
+```
+
+**Prediction:** unparseable — schema[0]: 31 error(s)
+```
+{
+  "chart_type": "horizontal_bar",
+  "title": "Total Market Share by Country",
+  "x_axis": {
+    "label": "Market Share",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Country",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Canada",
+          "x": 0.0
+        },
+        {
+          "y": "France",
+          "x": 1.0
+        },
+        {
+          "y": "Japan",
+          "x": 1.0
+        },
+        {
+          "y": "Mexico",
+          "x": 1.0
+        },
+        {
+          "y": "Germany",
+          "x": 1.0
+        },
+        {
+  
+```
+
+## 8. `0001331` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
 ![0001331](../../../data/synthetic_v1/images/0001331.png)
 
@@ -607,7 +695,95 @@ Cat 37,1.41
           "
 ```
 
-## 8. `0004240` — cell acc 0%  (type=stacked_bar, labels_shown=False, augmented=True)
+## 9. `0000279` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
+
+![0000279](../../../data/synthetic_v1/images/0000279.png)
+
+**Ground truth:**
+```csv
+Product,Users
+Product D,36.0
+Product E,2.0
+Product A,74.0
+Product F,47.0
+Product B,4.0
+Product C,35.0
+Product G,63.0
+Product H,77.0
+Product I,36.0
+Product J,53.0
+Product K,30.0
+Product L,77.0
+Product M,85.0
+Product N,12.0
+Product O,31.0
+Product P,20.0
+Product Q,80.0
+Product R,42.0
+Product S,49.0
+Product T,94.0
+Product U,94.0
+Product V,75.0
+Product W,28.0
+Product X,69.0
+Product Y,37.0
+Product Z,3.0
+Product [,2.0
+Product \,74.0
+Product ],34.0
+Product ^,32.0
+Product _,98.0
+Product `,75.0
+Product a,27.0
+Product b,7.0
+Product c,75.0
+Product d,3.0
+Product e,55.0
+```
+
+**Prediction:**
+```csv
+Product,Users
+Product_0,36.0
+Product_1,2.0
+Product_2,74.0
+Product_3,47.0
+Product_4,4.0
+Product_5,35.0
+Product_6,63.0
+Product_7,77.0
+Product_8,36.0
+Product_9,53.0
+Product_10,30.0
+Product_11,77.0
+Product_12,85.0
+Product_13,13.0
+Product_14,31.0
+Product_15,21.0
+Product_16,81.0
+Product_17,43.0
+Product_18,50.0
+Product_19,95.0
+Product_20,95.0
+Product_21,76.0
+Product_22,29.0
+Product_23,70.0
+Product_24,38.0
+Product_25,4.0
+Product_26,3.0
+Product_27,75.0
+Product_28,35.0
+Product_29,34.0
+Product_30,100.0
+Product_31,76.0
+Product_32,28.0
+Product_33,8.0
+Product_34,76.0
+Product_35,5.0
+Product_36,56.0
+```
+
+## 10. `0004240` — cell acc 0%  (type=stacked_bar, labels_shown=False, augmented=True)
 
 ![0004240](../../../data/synthetic_v1/images/0004240.png)
 
@@ -639,7 +815,7 @@ EMEA,974.0,182.0,0.0,0.0
 Region 9,384.0,668.0,0.0,0.0
 ```
 
-## 9. `0001101` — cell acc 0%  (type=bar, labels_shown=True, augmented=True)
+## 11. `0001101` — cell acc 0%  (type=bar, labels_shown=True, augmented=True)
 
 ![0001101](../../../data/synthetic_v1/images/0001101.png)
 
@@ -725,7 +901,7 @@ C35,15.6
 C36,81.5
 ```
 
-## 10. `0001044` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
+## 12. `0001044` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
 
 ![0001044](../../../data/synthetic_v1/images/0001044.png)
 
@@ -782,7 +958,7 @@ Jun,44917.8,9027.1,18868.7,21123.3,45801.3,93995.0
       
 ```
 
-## 11. `0002590` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
+## 13. `0002590` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
 
 ![0002590](../../../data/synthetic_v1/images/0002590.png)
 
@@ -838,7 +1014,7 @@ Cat 6,67220.0,77283.0,32609.0,20835.0,24663.0,83906.0
 
 ```
 
-## 12. `0002113` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
+## 14. `0002113` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
 
 ![0002113](../../../data/synthetic_v1/images/0002113.png)
 
@@ -924,7 +1100,7 @@ Year,Energy Use
 2029,18000.0
 ```
 
-## 13. `0004627` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
+## 15. `0004627` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
 ![0004627](../../../data/synthetic_v1/images/0004627.png)
 
@@ -1004,164 +1180,4 @@ x,Year
 1862.745098039215,2030.0
 8235.29411764706,2031.0
 8725.490196078432,2032.0
-```
-
-## 14. `0004473` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
-
-![0004473](../../../data/synthetic_v1/images/0004473.png)
-
-**Ground truth:**
-```csv
-Quarter,Expenses
-Q4 2015,66.0
-Q1 2016,384.0
-Q2 2016,180.0
-Q3 2016,158.0
-Q4 2016,217.0
-Q1 2017,41.0
-Q2 2017,116.0
-Q3 2017,933.0
-Q4 2017,959.0
-Q1 2018,356.0
-Q2 2018,204.0
-Q3 2018,108.0
-Q4 2018,208.0
-Q1 2019,403.0
-Q2 2019,233.0
-Q3 2019,218.0
-Q4 2019,345.0
-Q1 2020,31.0
-Q2 2020,76.0
-Q3 2020,620.0
-Q4 2020,149.0
-Q1 2021,797.0
-Q2 2021,209.0
-Q3 2021,453.0
-Q4 2021,30.0
-Q1 2022,626.0
-Q2 2022,625.0
-Q3 2022,998.0
-Q4 2022,314.0
-Q1 2023,619.0
-Q2 2023,791.0
-Q3 2023,974.0
-Q4 2023,686.0
-```
-
-**Prediction:** unparseable — schema[0]: 33 error(s)
-```
-{
-  "chart_type": "horizontal_bar",
-  "title": "Total Expenses by Quarter",
-  "x_axis": {
-    "label": "Expenses (%)",
-    "unit": null
-  },
-  "y_axis": {
-    "label": "Quarter",
-    "unit": null
-  },
-  "series": [
-    {
-      "name": null,
-      "points": [
-        {
-          "y": "Q4 2015",
-          "x": 68.32
-        },
-        {
-          "y": "Q1 2016",
-          "x": 386.13
-        },
-        {
-          "y": "Q2 2016",
-          "x": 180.26
-        },
-        {
-          "y": "Q3 2016",
-          "x": 158.41
-        },
-        {
-          "y": "Q4 2016",
-          "x": 218.4
-        }
-```
-
-## 15. `0001423` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
-
-![0001423](../../../data/synthetic_v1/images/0001423.png)
-
-**Ground truth:**
-```csv
-Product,Headcount
-Product C,32820.75
-Product E,29003.77
-Product A,82327.95
-Product F,97790.45
-Product B,81290.78
-Product D,80626.48
-Product G,1224.82
-Product H,19629.54
-Product I,92337.02
-Product J,65541.55
-Product K,217.81
-Product L,90025.61
-Product M,976.32
-Product N,60480.46
-Product O,42444.41
-Product P,90552.88
-Product Q,28831.17
-Product R,64430.44
-Product S,29568.33
-Product T,11394.51
-Product U,95214.1
-Product V,76049.28
-Product W,42228.41
-Product X,73903.56
-Product Y,15863.48
-Product Z,89367.36
-Product [,42729.52
-Product \,31513.67
-Product ],71364.76
-Product ^,76833.82
-Product _,1229.43
-Product `,41229.18
-Product a,28560.05
-```
-
-**Prediction:** unparseable — schema[0]: 33 error(s)
-```
-{
-  "chart_type": "horizontal_bar",
-  "title": "Total Headcount by Product",
-  "x_axis": {
-    "label": "Headcount (%)",
-    "unit": "K"
-  },
-  "y_axis": {
-    "label": "Product",
-    "unit": null
-  },
-  "series": [
-    {
-      "name": null,
-      "points": [
-        {
-          "y": "Product C",
-          "x": 33166.302381282255
-        },
-        {
-          "y": "Product c",
-          "x": 29339.429074092797
-        },
-        {
-          "y": "Product A",
-          "x": 82239.38043689404
-        },
-        {
-          "y": "Product F",
-          "x": 97534.50508688849
-        },
-        {
-
 ```

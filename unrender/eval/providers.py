@@ -143,7 +143,10 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = proc(text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt").to(net.device)
     with torch.no_grad():
-        out = net.generate(**inputs, max_new_tokens=1024, do_sample=False)
+        # 4096 matches the max_tokens the frontier providers get — a dense hard
+        # chart's JSON can exceed 1024 tokens, and a tighter cap here would
+        # truncate (and unfairly penalize) only the local model.
+        out = net.generate(**inputs, max_new_tokens=4096, do_sample=False)
     trimmed = out[0][inputs["input_ids"].shape[1]:]
     return proc.decode(trimmed, skip_special_tokens=True)
 

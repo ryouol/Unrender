@@ -1,359 +1,878 @@
 # Worst 15 predictions — gemini__gemini-3.1-pro-preview
 
-_Sorted by cell accuracy (within 5%). 300 scored total._
+_Sorted by cell accuracy (within 5%). 257 scored total._
 
 
-## 1. `0004253` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
+## 1. `0001796` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0004253](../../../data/synthetic_v0/images/0004253.png)
-
-**Ground truth:**
-```csv
-Region,Product C,Product A,Product B,Product E
-East,75347.0,45899.0,61650.0,87298.0
-APAC,67314.0,66727.0,24471.0,90503.0
-North,1404.0,38840.0,93192.0,35531.0
-EMEA,7053.0,77382.0,4168.0,13416.0
-South,93173.0,45297.0,43610.0,50035.0
-West,68825.0,91545.0,63505.0,62002.0
-LATAM,55645.0,36982.0,5108.0,26489.0
-Central,90761.0,4555.0,33116.0,93862.0
-Region 9,76807.0,69480.0,30753.0,29645.0
-Region 10,30363.0,89007.0,71385.0,69941.0
-Region 11,63184.0,65119.0,57468.0,15955.0
-```
-
-**Prediction:** unparseable — ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_requests_per_model_per_day, limit: 250, model: gemini-3.1-pro\nPlease retry in 17m49.529651452s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_requests_per_model_per_day', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-pro'}, 'quotaValue': '250'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '1069s'}]}}
-```
-(empty)
-```
-
-## 2. `0003335` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
-
-![0003335](../../../data/synthetic_v0/images/0003335.png)
+![0001796](../../../data/synthetic_v0/images/0001796.png)
 
 **Ground truth:**
 ```csv
-Year,Product D,Product C,Product E,Product F
-2001,1.0,0.0,0.0,1.0
-2002,0.0,1.0,1.0,1.0
-2003,1.0,0.0,0.0,1.0
-2004,0.0,0.0,1.0,1.0
-2005,1.0,0.0,0.0,1.0
-2006,1.0,0.0,0.0,1.0
-2007,0.0,0.0,1.0,0.0
-2008,1.0,1.0,1.0,0.0
-2009,0.0,0.0,0.0,1.0
-2010,0.0,1.0,0.0,1.0
-2011,0.0,0.0,1.0,0.0
+Month,Profit
+Jan,87.1
+Feb,45.4
+Mar,29.7
+Apr,28.4
+May,32.7
+Jun,6.3
+Jul,0.8
+Aug,38.7
+Sep,31.3
+Oct,37.9
+Nov,95.3
+Dec,22.3
 ```
 
-**Prediction:** unparseable — ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_requests_per_model_per_day, limit: 250, model: gemini-3.1-pro\nPlease retry in 4m2.161624479s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_requests_per_model_per_day', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-pro'}, 'quotaValue': '250'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '242s'}]}}
+**Prediction:** unparseable — schema[0]: 12 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": null,
+  "x_axis": {
+    "label": "Profit (kWh)",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Jan",
+          "x": 87.23
+        },
+        {
+          "y": "Feb",
+          "x": 45.32
+        },
+        {
+          "y": "Mar",
+          "x": 29.57
+        },
+        {
+          "y": "Apr",
+          "x": 28.51
+        },
+        {
+          "y": "May",
+          "x": 32.77
+        },
+        {
+          "y": "Jun",
+          "x":
 ```
 
-## 3. `0000577` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
+## 2. `0003952` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
 
-![0000577](../../../data/synthetic_v0/images/0000577.png)
+![0003952](../../../data/synthetic_v0/images/0003952.png)
 
 **Ground truth:**
 ```csv
-Month,Product E,Product B,Product A,Product C
-Jan,715.0,368.0,100.0,72.0
-Feb,36.0,617.0,406.0,94.0
-Mar,707.0,340.0,855.0,899.0
-Apr,70.0,955.0,504.0,331.0
-May,177.0,380.0,145.0,920.0
-Jun,416.0,185.0,193.0,740.0
-Jul,189.0,88.0,41.0,909.0
-Aug,93.0,283.0,875.0,151.0
-Sep,592.0,653.0,104.0,483.0
-Oct,20.0,70.0,458.0,313.0
-Nov,581.0,85.0,816.0,240.0
+Month,Throughput
+Jan,31322.0
+Feb,48013.0
+Mar,64944.0
+Apr,48791.0
+May,60186.0
+Jun,44402.0
+Jul,16986.0
+Aug,34764.0
+Sep,39633.0
+Oct,87504.0
+Nov,96975.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 11 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Annual Throughput",
+  "x_axis": {
+    "label": "Throughput",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "x": 31.322,
+          "y": "Jan"
+        },
+        {
+          "x": 48.013,
+          "y": "Feb"
+        },
+        {
+          "x": 64.944,
+          "y": "Mar"
+        },
+        {
+          "x": 48.791,
+          "y": "Apr"
+        },
+        {
+          "x": 60.186,
+          "y": "May"
+        },
+        {
+          "x": 44.
 ```
 
-## 4. `0002452` — cell acc 0%  (type=grouped_bar, labels_shown=True, augmented=True)
+## 3. `0000803` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
 
-![0002452](../../../data/synthetic_v0/images/0002452.png)
+![0000803](../../../data/synthetic_v0/images/0000803.png)
 
 **Ground truth:**
 ```csv
-Year,Series 1,Series 2,Series 3,Series 4
-2010,109.4,649.6,836.1,306.7
-2011,450.0,230.3,702.9,500.8
-2012,884.0,968.8,34.3,711.0
-2013,890.3,797.2,946.3,44.0
-2014,547.4,15.0,964.2,600.6
-2015,380.3,708.9,855.4,384.3
-2016,418.3,640.6,784.6,175.5
-2017,954.5,969.3,784.3,914.6
-2018,484.7,379.0,283.9,224.8
-2019,900.6,658.2,724.2,936.5
-2020,921.2,580.3,513.1,401.9
+Year,Sales
+2009,-404.0
+2010,267.0
+2011,955.0
+2012,812.0
+2013,459.0
+2014,690.0
+2015,839.0
+2016,217.0
+2017,920.0
+2018,-319.0
+2019,73.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
-```
-(empty)
+**Prediction:**
+```csv
+Sales,Year
+-404,2009.0
+267,2010.0
+955,2011.0
+812,2012.0
+459,2013.0
+690,2014.0
+839,2015.0
+217,2016.0
+920,2017.0
+-319,2018.0
+73,2019.0
 ```
 
-## 5. `0004732` — cell acc 0%  (type=stacked_bar, labels_shown=False, augmented=False)
+## 4. `0003582` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0004732](../../../data/synthetic_v0/images/0004732.png)
+![0003582](../../../data/synthetic_v0/images/0003582.png)
 
 **Ground truth:**
 ```csv
-Product,North,Central,APAC,EMEA
-Product A,66877.15,37682.02,91375.4,31262.58
-Product E,47537.46,56283.32,87437.72,36268.02
-Product D,4061.34,21644.9,88963.83,70620.41
-Product C,82171.81,74442.15,5382.43,35003.3
-Product B,76797.44,10105.61,85257.01,73732.24
-Product F,62456.26,88478.25,58525.09,71262.93
-Product G,35512.81,32501.12,34198.86,20772.52
-Product H,49812.87,79575.04,71182.28,16861.79
-Product I,84718.66,95191.76,15836.41,13669.93
-Product J,23387.95,3951.46,34773.84,6698.36
+Product,Production
+Product F,486004.0
+Product A,322128.0
+Product D,46133.0
+Product B,728083.0
+Product C,258807.0
+Product E,367790.0
+Product G,574408.0
+Product H,127837.0
+Product I,324789.0
+Product J,497820.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 10 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Production Overview",
+  "x_axis": {
+    "label": "Production (mm)",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Product",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "x": 487213.9113649524,
+          "y": "Product F"
+        },
+        {
+          "x": 322470.8354415865,
+          "y": "Product A"
+        },
+        {
+          "x": 46554.49250024479,
+          "y": "Product D"
+        },
+        {
+          "x": 727786.1517409957,
+          "y": "Product B"
+        },
+        {
+      
 ```
 
-## 6. `0001736` — cell acc 0%  (type=multi_line, labels_shown=True, augmented=True)
+## 5. `0004397` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
 
-![0001736](../../../data/synthetic_v0/images/0001736.png)
+![0004397](../../../data/synthetic_v0/images/0004397.png)
 
 **Ground truth:**
 ```csv
-Category,Series 1,Series 2,Series 3,Series 4
-Cat 1,4.5,1.3,2.7,0.9
-Cat 2,1.3,8.8,5.9,5.2
-Cat 3,2.5,6.2,3.2,0.2
-Cat 4,8.8,2.4,8.0,5.5
-Cat 5,3.3,8.9,3.0,1.3
-Cat 6,0.4,0.1,7.6,9.9
-Cat 7,2.0,0.5,5.2,5.7
-Cat 8,0.5,4.7,6.0,1.2
-Cat 9,7.5,6.7,1.3,2.4
+Region,value
+EMEA,0.0
+North,1.0
+LATAM,1.0
+East,1.0
+West,1.0
+Central,0.0
+South,1.0
+APAC,1.0
+Region 9,0.0
+Region 10,0.0
 ```
 
-**Prediction:** unparseable — ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_requests_per_model_per_day, limit: 250, model: gemini-3.1-pro\nPlease retry in 23h57m10.781588465s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_requests_per_model_per_day', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-pro'}, 'quotaValue': '250'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '86230s'}]}}
+**Prediction:** unparseable — schema[0]: 10 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Rainfall Breakdown",
+  "x_axis": {
+    "label": null,
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Region",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Region 10",
+          "x": 0
+        },
+        {
+          "y": "Region 9",
+          "x": 0
+        },
+        {
+          "y": "APAC",
+          "x": 1
+        },
+        {
+          "y": "South",
+          "x": 1
+        },
+        {
+          "y": "Central",
+          "x": 0
+        },
+        {
+          "y": "West",
+        
 ```
 
-## 7. `0001904` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
+## 6. `0000674` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0001904](../../../data/synthetic_v0/images/0001904.png)
+![0000674](../../../data/synthetic_v0/images/0000674.png)
 
 **Ground truth:**
 ```csv
-Category,Series 1,Series 2,Series 3,Series 4
-Cat 1,259926.0,236535.0,123788.0,280613.0
-Cat 2,886956.0,807999.0,86737.0,704730.0
-Cat 3,270333.0,674732.0,111309.0,989694.0
-Cat 4,861806.0,550325.0,472292.0,246602.0
-Cat 5,278292.0,255025.0,526589.0,630227.0
-Cat 6,833986.0,385954.0,689076.0,443330.0
-Cat 7,933274.0,503037.0,476069.0,849267.0
-Cat 8,193657.0,809238.0,200232.0,560333.0
-Cat 9,958035.0,232908.0,825205.0,577678.0
+x,Throughput
+Q2 2018,2865.9
+Q3 2018,68804.7
+Q4 2018,96905.8
+Q1 2019,33535.3
+Q2 2019,62022.5
+Q3 2019,74635.6
+Q4 2019,51847.1
+Q1 2020,80967.9
+Q2 2020,52899.4
+Q3 2020,90805.9
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 10 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Total Throughput by Quarter",
+  "x_axis": {
+    "label": "Throughput",
+    "unit": null
+  },
+  "y_axis": {
+    "label": null,
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Q3 2020",
+          "x": 90786
+        },
+        {
+          "y": "Q2 2020",
+          "x": 52912
+        },
+        {
+          "y": "Q1 2020",
+          "x": 80922
+        },
+        {
+          "y": "Q4 2019",
+          "x": 51838
+        },
+        {
+          "y": "Q3 2019",
+          "x": 74581
+        },
+      
 ```
 
-## 8. `0004466` — cell acc 0%  (type=grouped_bar, labels_shown=False, augmented=False)
+## 7. `0003837` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0004466](../../../data/synthetic_v0/images/0004466.png)
+![0003837](../../../data/synthetic_v0/images/0003837.png)
 
 **Ground truth:**
 ```csv
-x,Series 1,Series 2,Series 3
-Jan,8.0,6.0,3.0
-Feb,1.0,8.0,10.0
-Mar,8.0,5.0,1.0
-Apr,3.0,10.0,1.0
-May,4.0,1.0,4.0
-Jun,7.0,9.0,0.0
-Jul,1.0,2.0,3.0
-Aug,1.0,5.0,4.0
-Sep,4.0,3.0,10.0
-Oct,4.0,1.0,3.0
-Nov,8.0,1.0,2.0
-Dec,2.0,9.0,7.0
+Country,value
+Brazil,4.8
+Germany,6.2
+France,0.2
+Japan,-4.4
+Italy,1.2
+UK,-2.4
+Mexico,4.5
+India,-2.6
+Canada,8.3
+USA,3.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 10 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Latency (Country)",
+  "x_axis": {
+    "label": null,
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Country",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": "Latency",
+      "points": [
+        {
+          "y": "USA",
+          "x": 3
+        },
+        {
+          "y": "Canada",
+          "x": 8.3
+        },
+        {
+          "y": "India",
+          "x": -2.6
+        },
+        {
+          "y": "Mexico",
+          "x": 4.5
+        },
+        {
+          "y": "UK",
+          "x": -2.4
+        },
+        {
+          "y": "Italy",
+   
 ```
 
-## 9. `0003840` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
+## 8. `0004718` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0003840](../../../data/synthetic_v0/images/0003840.png)
+![0004718](../../../data/synthetic_v0/images/0004718.png)
 
 **Ground truth:**
 ```csv
-Category,North,APAC,Central
-Cat 1,0.6,0.8,0.2
-Cat 2,0.5,0.1,0.1
-Cat 3,0.1,1.0,0.9
-Cat 4,0.1,0.5,0.2
-Cat 5,0.1,0.7,0.0
-Cat 6,0.1,0.8,0.1
-Cat 7,0.3,0.5,0.9
-Cat 8,0.4,0.8,0.5
-Cat 9,0.6,0.2,0.8
-Cat 10,0.4,0.9,1.0
-Cat 11,1.0,0.1,0.2
+Month,Downloads
+Jan,102862.2
+Feb,757265.8
+Mar,691125.1
+Apr,518973.0
+May,415199.6
+Jun,887506.1
+Jul,830047.4
+Aug,520094.9
+Sep,817668.9
+Oct,615787.8
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 10 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Month Downloads",
+  "x_axis": {
+    "label": "Downloads",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "x": 103225,
+          "y": "Jan"
+        },
+        {
+          "x": 758064,
+          "y": "Feb"
+        },
+        {
+          "x": 690322,
+          "y": "Mar"
+        },
+        {
+          "x": 519354,
+          "y": "Apr"
+        },
+        {
+          "x": 416129,
+          "y": "May"
+        },
+        {
+          "x": 887096
 ```
 
-## 10. `0003844` — cell acc 0%  (type=grouped_bar, labels_shown=True, augmented=True)
+## 9. `0003632` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=False)
 
-![0003844](../../../data/synthetic_v0/images/0003844.png)
+![0003632](../../../data/synthetic_v0/images/0003632.png)
 
 **Ground truth:**
 ```csv
-Quarter,LATAM,Central,APAC,South
-Q1 2016,98493.5,44353.5,22825.5,18455.5
-Q2 2016,21660.1,40635.9,72100.3,74269.3
-Q3 2016,17899.3,24318.2,16169.9,2117.7
-Q4 2016,18540.5,1883.3,71421.6,94937.4
-Q1 2017,62363.3,52830.2,77174.6,82145.5
-Q2 2017,77777.7,36439.4,41910.4,89712.2
-Q3 2017,57251.5,21465.9,5774.8,48945.1
-Q4 2017,15422.2,86636.6,29546.8,98177.6
+x,Rainfall
+Cat 1,0.74
+Cat 2,0.08
+Cat 3,0.5
+Cat 4,0.51
+Cat 5,0.8
+Cat 6,0.81
+Cat 7,0.58
+Cat 8,0.93
+Cat 9,0.07
 ```
 
-**Prediction:** unparseable — ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_requests_per_model_per_day, limit: 250, model: gemini-3.1-pro\nPlease retry in 23h59m28.560832801s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_requests_per_model_per_day', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-pro'}, 'quotaValue': '250'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '86368s'}]}}
+**Prediction:** unparseable — schema[0]: 9 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": null,
+  "x_axis": {
+    "label": "Rainfall",
+    "unit": null
+  },
+  "y_axis": {
+    "label": null,
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Cat 1",
+          "x": 0.74
+        },
+        {
+          "y": "Cat 2",
+          "x": 0.08
+        },
+        {
+          "y": "Cat 3",
+          "x": 0.5
+        },
+        {
+          "y": "Cat 4",
+          "x": 0.51
+        },
+        {
+          "y": "Cat 5",
+          "x": 0.8
+        },
+        {
+          "y": "Cat 6",
+          "x": 0
 ```
 
-## 11. `0003747` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
+## 10. `0003716` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=False)
 
-![0003747](../../../data/synthetic_v0/images/0003747.png)
+![0003716](../../../data/synthetic_v0/images/0003716.png)
 
 **Ground truth:**
 ```csv
-Year,LATAM,EMEA,South,East
-2007,5187.0,1282.0,3675.0,355.0
-2008,8041.0,8273.0,363.0,3481.0
-2009,757.0,3512.0,8338.0,5495.0
-2010,4994.0,2958.0,5350.0,2762.0
-2011,6950.0,4658.0,1461.0,9157.0
-2012,9092.0,4773.0,6711.0,1901.0
-2013,363.0,8283.0,4219.0,8724.0
-2014,6693.0,5395.0,9136.0,8571.0
+x,Latency
+Q2 2016,4081.0
+Q3 2016,3565.0
+Q4 2016,7669.0
+Q1 2017,9836.0
+Q2 2017,77.0
+Q3 2017,6331.0
+Q4 2017,8147.0
+Q1 2018,8428.0
+Q2 2018,7220.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 9 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Latency Overview",
+  "x_axis": {
+    "label": "Latency (ms)",
+    "unit": "ms"
+  },
+  "y_axis": {
+    "label": null,
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Q2 2016",
+          "x": 4082
+        },
+        {
+          "y": "Q3 2016",
+          "x": 3571
+        },
+        {
+          "y": "Q4 2016",
+          "x": 7653
+        },
+        {
+          "y": "Q1 2017",
+          "x": 9846
+        },
+        {
+          "y": "Q2 2017",
+          "x": 51
+        },
+        {
+          "y
 ```
 
-## 12. `0003422` — cell acc 0%  (type=grouped_bar, labels_shown=False, augmented=True)
+## 11. `0004262` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0003422](../../../data/synthetic_v0/images/0003422.png)
+![0004262](../../../data/synthetic_v0/images/0004262.png)
 
 **Ground truth:**
 ```csv
-Region,Central,South,East
-North,17149.5,97558.6,86289.5
-LATAM,83632.9,96711.5,41245.2
-APAC,95214.6,70707.7,45.6
-EMEA,42548.3,15570.8,37566.0
-South,24104.2,67801.1,12859.4
-West,99324.2,45385.4,85512.7
-East,23384.5,12544.2,36056.4
-Central,27635.0,4738.8,39550.1
-Region 9,50114.9,44603.8,93025.3
-Region 10,45425.8,40304.2,75616.3
+Month,Revenue
+Feb,494.0
+Mar,2288.0
+Apr,3075.0
+May,9367.0
+Jun,1404.0
+Jul,-2472.0
+Aug,6809.0
+Sep,9678.0
+Oct,-627.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 9 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": null,
+  "x_axis": {
+    "label": "Revenue",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Feb",
+          "x": 500
+        },
+        {
+          "y": "Mar",
+          "x": 2250
+        },
+        {
+          "y": "Apr",
+          "x": 3000
+        },
+        {
+          "y": "May",
+          "x": 9300
+        },
+        {
+          "y": "Jun",
+          "x": 1300
+        },
+        {
+          "y": "Jul",
+          "x": -2600
+    
 ```
 
-## 13. `0002220` — cell acc 0%  (type=stacked_bar, labels_shown=True, augmented=True)
+## 12. `0004612` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
 
-![0002220](../../../data/synthetic_v0/images/0002220.png)
+![0004612](../../../data/synthetic_v0/images/0004612.png)
 
 **Ground truth:**
 ```csv
-Quarter,Series 1,Series 2,Series 3
-Q1 2019,82671.0,73122.0,37119.0
-Q2 2019,28495.0,72639.0,77551.0
-Q3 2019,29852.0,41760.0,5056.0
-Q4 2019,18648.0,5536.0,5338.0
-Q1 2020,84208.0,60842.0,68004.0
-Q2 2020,75169.0,9912.0,92058.0
-Q3 2020,55131.0,58136.0,58423.0
-Q4 2020,43648.0,67192.0,97994.0
-Q1 2021,58219.0,87454.0,71716.0
+x,Expenses
+Cat 1,7.0
+Cat 2,3.0
+Cat 3,8.0
+Cat 4,6.0
+Cat 5,1.0
+Cat 6,8.0
+Cat 7,6.0
+Cat 8,6.0
+Cat 9,10.0
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 9 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Expenses per Category",
+  "x_axis": {
+    "label": "Expenses",
+    "unit": null
+  },
+  "y_axis": {
+    "label": null,
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Cat 1",
+          "x": 7
+        },
+        {
+          "y": "Cat 2",
+          "x": 3
+        },
+        {
+          "y": "Cat 3",
+          "x": 8
+        },
+        {
+          "y": "Cat 4",
+          "x": 6
+        },
+        {
+          "y": "Cat 5",
+          "x": 1
+        },
+        {
+          "y": "Cat 6",
+          
 ```
 
-## 14. `0002239` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
+## 13. `0001147` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
 
-![0002239](../../../data/synthetic_v0/images/0002239.png)
+![0001147](../../../data/synthetic_v0/images/0001147.png)
 
 **Ground truth:**
 ```csv
-Year,Product A,Product D,Product B
-2004,61226.0,98908.0,79844.0
-2005,64819.0,56050.0,1660.0
-2006,24533.0,70231.0,48619.0
-2007,24578.0,69645.0,51381.0
-2008,47983.0,73089.0,77087.0
-2009,4514.0,43268.0,5097.0
+Month,Production
+May,0.0
+Jun,0.0
+Jul,0.0
+Aug,1.0
+Sep,1.0
+Oct,1.0
+Nov,0.0
+Dec,1.0
 ```
 
-**Prediction:** unparseable — ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_requests_per_model_per_day, limit: 250, model: gemini-3.1-pro\nPlease retry in 10m56.226430958s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_requests_per_model_per_day', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-pro'}, 'quotaValue': '250'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '656s'}]}}
+**Prediction:** unparseable — schema[0]: 8 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": "Month Production",
+  "x_axis": {
+    "label": "Production",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "x": 0,
+          "y": "May"
+        },
+        {
+          "x": 0,
+          "y": "Jun"
+        },
+        {
+          "x": 0,
+          "y": "Jul"
+        },
+        {
+          "x": 1,
+          "y": "Aug"
+        },
+        {
+          "x": 1,
+          "y": "Sep"
+        },
+        {
+          "x": 1,
+          "y": "Oct"
+     
 ```
 
-## 15. `0002927` — cell acc 0%  (type=multi_line, labels_shown=False, augmented=True)
+## 14. `0003186` — cell acc 0%  (type=horizontal_bar, labels_shown=False, augmented=True)
 
-![0002927](../../../data/synthetic_v0/images/0002927.png)
+![0003186](../../../data/synthetic_v0/images/0003186.png)
 
 **Ground truth:**
 ```csv
-Product,Product F,Product D
-Product C,77.0,82.0
-Product A,51.0,18.0
-Product E,67.0,14.0
-Product F,2.0,26.0
-Product D,45.0,15.0
-Product B,25.0,11.0
-Product G,53.0,52.0
-Product H,62.0,57.0
-Product I,94.0,62.0
+Quarter,Users
+Q1 2016,59209.62
+Q2 2016,8232.53
+Q3 2016,4090.8
+Q4 2016,70783.49
+Q1 2017,26935.63
+Q2 2017,85728.94
+Q3 2017,2481.45
+Q4 2017,75008.04
 ```
 
-**Prediction:** unparseable — ConnectError: [Errno 8] nodename nor servname provided, or not known
+**Prediction:** unparseable — schema[0]: 8 error(s)
 ```
-(empty)
+{
+  "chart_type": "horizontal_bar",
+  "title": null,
+  "x_axis": {
+    "label": "Users (USD)",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Quarter",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "y": "Q1 2016",
+          "x": 58913
+        },
+        {
+          "y": "Q2 2016",
+          "x": 7826
+        },
+        {
+          "y": "Q3 2016",
+          "x": 3260
+        },
+        {
+          "y": "Q4 2016",
+          "x": 69782
+        },
+        {
+          "y": "Q1 2017",
+          "x": 25869
+        },
+        {
+          "y": "Q
+```
+
+## 15. `0003884` — cell acc 0%  (type=horizontal_bar, labels_shown=True, augmented=True)
+
+![0003884](../../../data/synthetic_v0/images/0003884.png)
+
+**Ground truth:**
+```csv
+Region,Cost
+West,3.76
+EMEA,48.91
+LATAM,57.2
+South,1.65
+APAC,9.73
+East,59.76
+North,-12.1
+Central,-10.5
+```
+
+**Prediction:** unparseable — schema[0]: 8 error(s)
+```
+{
+  "chart_type": "horizontal_bar",
+  "title": "Total Cost by Region",
+  "x_axis": {
+    "label": "Cost",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Region",
+    "unit": null
+  },
+  "series": [
+    {
+      "name": null,
+      "points": [
+        {
+          "x": 3.76,
+          "y": "West"
+        },
+        {
+          "x": 48.91,
+          "y": "EMEA"
+        },
+        {
+          "x": 57.2,
+          "y": "LATAM"
+        },
+        {
+          "x": 1.65,
+          "y": "South"
+        },
+        {
+          "x": 9.73,
+          "y": "APAC"
+        },
+        {
+          "x": 59.76,
+
 ```

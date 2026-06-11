@@ -1,6 +1,6 @@
 # Worst 15 predictions — anthropic__claude-fable-5
 
-_Sorted by cell accuracy (within 5%). 158 scored total._
+_Sorted by cell accuracy (within 5%). 300 scored total._
 
 
 ## 1. `0001918` — cell acc 0%  (type=grouped_bar, labels_shown=True, augmented=True)
@@ -476,7 +476,98 @@ Category40,75.0
 Category41,1.0
 ```
 
-## 7. `0004044` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
+## 7. `0003821` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
+
+![0003821](../../../data/synthetic_v1/images/0003821.png)
+
+**Ground truth:**
+```csv
+x,Temperature
+Product A,2.0
+Product F,7.0
+Product B,67.0
+Product E,15.0
+Product C,53.0
+Product D,27.0
+Product G,1.0
+Product H,31.0
+Product I,79.0
+Product J,55.0
+Product K,23.0
+Product L,12.0
+Product M,70.0
+Product N,12.0
+Product O,68.0
+Product P,12.0
+Product Q,22.0
+Product R,95.0
+Product S,70.0
+Product T,55.0
+Product U,69.0
+Product V,20.0
+Product W,18.0
+Product X,98.0
+Product Y,60.0
+Product Z,60.0
+Product [,37.0
+Product \,19.0
+Product ],39.0
+Product ^,28.0
+Product _,30.0
+Product `,55.0
+Product a,99.0
+Product b,89.0
+Product c,84.0
+Product d,65.0
+Product e,36.0
+Product f,23.0
+Product g,77.0
+```
+
+**Prediction:**
+```csv
+x,Temperature
+P1,3.0
+P2,7.0
+P3,67.0
+P4,15.0
+P5,53.0
+P6,27.0
+P7,31.0
+P8,79.0
+P9,23.0
+P10,55.0
+P11,12.0
+P12,70.0
+P13,12.0
+P14,68.0
+P15,12.0
+P16,22.0
+P17,95.0
+P18,70.0
+P19,55.0
+P20,69.0
+P21,19.0
+P22,18.0
+P23,98.0
+P24,60.0
+P25,60.0
+P26,37.0
+P27,19.0
+P28,39.0
+P29,29.0
+P30,30.0
+P31,55.0
+P32,99.0
+P33,89.0
+P34,84.0
+P35,65.0
+P36,36.0
+P37,23.0
+P38,77.0
+```
+
+## 8. `0004044` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
 
 ![0004044](../../../data/synthetic_v1/images/0004044.png)
 
@@ -568,7 +659,7 @@ Year,GDP (GB)
 2019,38000.0
 ```
 
-## 8. `0000279` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
+## 9. `0000279` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
 
 ![0000279](../../../data/synthetic_v1/images/0000279.png)
 
@@ -656,7 +747,7 @@ Product,Users (ms)
 37,56.0
 ```
 
-## 9. `0004736` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
+## 10. `0004736` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
 
 ![0004736](../../../data/synthetic_v1/images/0004736.png)
 
@@ -747,7 +838,7 @@ C39,210.0
 C40,630.0
 ```
 
-## 10. `0004168` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
+## 11. `0004168` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
 
 ![0004168](../../../data/synthetic_v1/images/0004168.png)
 
@@ -836,7 +927,7 @@ Year,Headcount (%)
 2042,63.0
 ```
 
-## 11. `0004895` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
+## 12. `0004895` — cell acc 0%  (type=line, labels_shown=False, augmented=True)
 
 ![0004895](../../../data/synthetic_v1/images/0004895.png)
 
@@ -929,7 +1020,7 @@ Month,value
 2023-06,50.0
 ```
 
-## 12. `0001101` — cell acc 0%  (type=bar, labels_shown=True, augmented=True)
+## 13. `0001101` — cell acc 0%  (type=bar, labels_shown=True, augmented=True)
 
 ![0001101](../../../data/synthetic_v1/images/0001101.png)
 
@@ -1018,7 +1109,7 @@ C38,14.0
 C39,80.5
 ```
 
-## 13. `0001363` — cell acc 0%  (type=multi_line, labels_shown=True, augmented=True)
+## 14. `0001363` — cell acc 0%  (type=multi_line, labels_shown=True, augmented=True)
 
 ![0001363](../../../data/synthetic_v1/images/0001363.png)
 
@@ -1050,7 +1141,7 @@ Central,892.934,796.881,631.038,293.475
 Region 9,995.973,935.0,761.501,417.661
 ```
 
-## 14. `0000507` — cell acc 0%  (type=line, labels_shown=True, augmented=True)
+## 15. `0000507` — cell acc 0%  (type=line, labels_shown=True, augmented=True)
 
 ![0000507](../../../data/synthetic_v1/images/0000507.png)
 
@@ -1132,88 +1223,4 @@ Quarter,Energy Use
 2016-Q1,912.2
 2016-Q2,252.8
 2016-Q3,43.2
-```
-
-## 15. `0001727` — cell acc 0%  (type=bar, labels_shown=False, augmented=True)
-
-![0001727](../../../data/synthetic_v1/images/0001727.png)
-
-**Ground truth:**
-```csv
-Quarter,value
-Q1 2022,1.0
-Q2 2022,1.0
-Q3 2022,0.0
-Q4 2022,1.0
-Q1 2023,0.0
-Q2 2023,0.0
-Q3 2023,0.0
-Q4 2023,0.0
-Q1 2024,0.0
-Q2 2024,1.0
-Q3 2024,0.0
-Q4 2024,0.0
-Q1 2025,0.0
-Q2 2025,0.0
-Q3 2025,0.0
-Q4 2025,0.0
-Q1 2026,1.0
-Q2 2026,1.0
-Q3 2026,1.0
-Q4 2026,0.0
-Q1 2027,0.0
-Q2 2027,1.0
-Q3 2027,0.0
-Q4 2027,1.0
-Q1 2028,0.0
-Q2 2028,1.0
-Q3 2028,1.0
-Q4 2028,1.0
-Q1 2029,0.0
-Q2 2029,1.0
-Q3 2029,0.0
-Q4 2029,0.0
-Q1 2030,0.0
-Q2 2030,0.0
-Q3 2030,1.0
-```
-
-**Prediction:**
-```csv
-Quarter,value
-01-2022,0.0
-02-2022,1.0
-03-2022,1.0
-04-2022,0.0
-01-2023,1.0
-02-2023,0.0
-03-2023,0.0
-04-2023,0.0
-01-2024,0.0
-02-2024,0.0
-03-2024,1.0
-04-2024,0.0
-01-2025,0.0
-02-2025,0.0
-03-2025,0.0
-04-2025,0.0
-01-2026,1.0
-02-2026,1.0
-03-2026,1.0
-04-2026,0.0
-01-2027,0.0
-02-2027,1.0
-03-2027,0.0
-04-2027,1.0
-01-2028,0.0
-02-2028,1.0
-03-2028,1.0
-04-2028,1.0
-01-2029,0.0
-02-2029,1.0
-03-2029,0.0
-04-2029,0.0
-01-2030,0.0
-02-2030,1.0
-03-2030,0.0
 ```

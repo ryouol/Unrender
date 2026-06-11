@@ -1,0 +1,262 @@
+{
+  "provider": "anthropic",
+  "model": "claude-fable-5",
+  "tol": 0.05,
+  "n_failed_calls": 0,
+  "metrics": {
+    "n": 300,
+    "schema_valid_rate": 1.0,
+    "chart_type_acc": 1.0,
+    "cell_accuracy": 0.8822211155378487,
+    "chart_exact_rate": 0.6433333333333333,
+    "title_acc": 1.0,
+    "x_label_acc": 0.8654708520179372,
+    "y_label_acc": 0.47085201793721976,
+    "series_name_f1": 0.6133333333333333,
+    "mae": 3145.633172310757,
+    "median_rel_err": 0.0,
+    "total_points": 4016
+  },
+  "slices": {
+    "labeled": {
+      "n": 140,
+      "schema_valid_rate": 1.0,
+      "chart_type_acc": 1.0,
+      "cell_accuracy": 0.9211222869242985,
+      "chart_exact_rate": 0.8214285714285714,
+      "title_acc": 1.0,
+      "x_label_acc": 0.8532110091743119,
+      "y_label_acc": 0.5,
+      "series_name_f1": 0.5857142857142857,
+      "mae": 1364.9306246691372,
+      "median_rel_err": 0.0,
+      "total_points": 1889
+    },
+    "label_free": {
+      "n": 160,
+      "schema_valid_rate": 1.0,
+      "chart_type_acc": 1.0,
+      "cell_accuracy": 0.847672778561354,
+      "chart_exact_rate": 0.4875,
+      "title_acc": 1.0,
+      "x_label_acc": 0.8771929824561403,
+      "y_label_acc": 0.44715447154471544,
+      "series_name_f1": 0.6375,
+      "mae": 4727.084565115186,
+      "median_rel_err": 0.0031678986272439284,
+      "total_points": 2127
+    },
+    "by_chart_type": {
+      "bar": {
+        "all": {
+          "n": 59,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9101654846335697,
+          "chart_exact_rate": 0.8305084745762712,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.6122448979591837,
+          "series_name_f1": 0.4406779661016949,
+          "mae": 1275.6843735224586,
+          "median_rel_err": 0.0,
+          "total_points": 423
+        },
+        "label_free": {
+          "n": 33,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.8414096916299559,
+          "chart_exact_rate": 0.7272727272727273,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.6206896551724138,
+          "series_name_f1": 0.42424242424242425,
+          "mae": 2376.2400440528636,
+          "median_rel_err": 0.0037137408411120894,
+          "total_points": 227
+        }
+      },
+      "grouped_bar": {
+        "all": {
+          "n": 42,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9121756487025948,
+          "chart_exact_rate": 0.5952380952380952,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.5277777777777778,
+          "series_name_f1": 1.0,
+          "mae": 1088.1488822355288,
+          "median_rel_err": 0.0,
+          "total_points": 1002
+        },
+        "label_free": {
+          "n": 23,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.8839458413926499,
+          "chart_exact_rate": 0.4782608695652174,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.5238095238095238,
+          "series_name_f1": 1.0,
+          "mae": 2066.230135396518,
+          "median_rel_err": 0.0022396416573348264,
+          "total_points": 517
+        }
+      },
+      "horizontal_bar": {
+        "all": {
+          "n": 41,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.952054794520548,
+          "chart_exact_rate": 0.7560975609756098,
+          "title_acc": 1.0,
+          "x_label_acc": 0.0,
+          "y_label_acc": 0.0,
+          "series_name_f1": 0.3902439024390244,
+          "mae": 245.25140410958912,
+          "median_rel_err": 0.0,
+          "total_points": 292
+        },
+        "label_free": {
+          "n": 21,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9072847682119205,
+          "chart_exact_rate": 0.5238095238095238,
+          "title_acc": 1.0,
+          "x_label_acc": 0.0,
+          "y_label_acc": 0.0,
+          "series_name_f1": 0.5238095238095238,
+          "mae": 410.89675496688756,
+          "median_rel_err": 0.0031479538300104633,
+          "total_points": 151
+        }
+      },
+      "line": {
+        "all": {
+          "n": 40,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9551724137931035,
+          "chart_exact_rate": 0.875,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.47058823529411764,
+          "series_name_f1": 0.325,
+          "mae": 462.9884137931035,
+          "median_rel_err": 0.0,
+          "total_points": 290
+        },
+        "label_free": {
+          "n": 20,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9103448275862069,
+          "chart_exact_rate": 0.75,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.42105263157894735,
+          "series_name_f1": 0.35,
+          "mae": 910.9175172413794,
+          "median_rel_err": 0.0006713047723666544,
+          "total_points": 145
+        }
+      },
+      "multi_line": {
+        "all": {
+          "n": 35,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9551630434782609,
+          "chart_exact_rate": 0.4857142857142857,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.6,
+          "series_name_f1": 0.9714285714285714,
+          "mae": 376.53383152173916,
+          "median_rel_err": 0.0,
+          "total_points": 736
+        },
+        "label_free": {
+          "n": 19,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.9505882352941176,
+          "chart_exact_rate": 0.47368421052631576,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.6,
+          "series_name_f1": 1.0,
+          "mae": 303.0236000000001,
+          "median_rel_err": 0.0009301573179115947,
+          "total_points": 425
+        }
+      },
+      "pie": {
+        "all": {
+          "n": 35,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.5059523809523809,
+          "chart_exact_rate": 0.45714285714285713,
+          "title_acc": 1.0,
+          "x_label_acc": 0.0,
+          "y_label_acc": 0.0,
+          "series_name_f1": 0.14285714285714285,
+          "mae": 35822.343035714286,
+          "median_rel_err": 0.02831047108973663,
+          "total_points": 168
+        },
+        "label_free": {
+          "n": 18,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.012195121951219513,
+          "chart_exact_rate": 0.0,
+          "title_acc": 1.0,
+          "x_label_acc": 0.0,
+          "y_label_acc": 0.0,
+          "series_name_f1": 0.1111111111111111,
+          "mae": 71918.03134146341,
+          "median_rel_err": 0.9997576297782789,
+          "total_points": 82
+        }
+      },
+      "stacked_bar": {
+        "all": {
+          "n": 48,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.8153846153846154,
+          "chart_exact_rate": 0.4166666666666667,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.5365853658536586,
+          "series_name_f1": 1.0,
+          "mae": 4073.9914660633485,
+          "median_rel_err": 0.0025118565067965507,
+          "total_points": 1105
+        },
+        "label_free": {
+          "n": 26,
+          "schema_valid_rate": 1.0,
+          "chart_type_acc": 1.0,
+          "cell_accuracy": 0.8293103448275863,
+          "chart_exact_rate": 0.3076923076923077,
+          "title_acc": 1.0,
+          "x_label_acc": 1.0,
+          "y_label_acc": 0.4090909090909091,
+          "series_name_f1": 1.0,
+          "mae": 3839.0850862068964,
+          "median_rel_err": 0.009412857599067305,
+          "total_points": 580
+        }
+      }
+    }
+  }
+}

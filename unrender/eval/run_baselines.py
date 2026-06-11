@@ -19,6 +19,7 @@ import argparse
 import json
 import random
 import re
+import time
 from pathlib import Path
 
 from tqdm import tqdm
@@ -26,12 +27,18 @@ from tqdm import tqdm
 from unrender.eval.dataset import load_eval_samples
 from unrender.eval.providers import DEFAULT_MODELS, PROVIDERS, STALE_DEFAULT
 from unrender.io_utils import read_jsonl
+from unrender.eval import providers as _providers
 from unrender.prompts import EXTRACTION_PROMPT
 from unrender.schema.validate import parse_chart_json
 
 
 def _slug(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", s).strip("-")
+
+
+def _is_rate_limit(e: Exception) -> bool:
+    s = str(e).lower()
+    return any(k in s for k in ("429", "resource_exhausted", "rate limit", "overloaded"))
 
 
 def run(provider: str, model: str, data: str, out: str, limit: int, seed: int) -> Path:
@@ -65,15 +72,25 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int) -
     n_ok = n_err = 0
     with open(pred_path, "a", encoding="utf-8") as f:
         for s in tqdm([x for x in samples if x.id not in done], desc=f"{provider}:{model}"):
-            error = None
-            try:
-                raw = fn(s.image, EXTRACTION_PROMPT, model, gt_json=s.gt_json, rng=rng)
-            except Exception as e:  # one bad sample shouldn't kill the whole run
-                raw, error = "", f"{type(e).__name__}: {e}"
+            error, raw = None, ""
+            _providers.LAST_USAGE.clear()  # observability only; reset before each call
+            for attempt in range(6):  # retry transient 429s with exponential backoff
+                try:
+                    raw = fn(s.image, EXTRACTION_PROMPT, model, gt_json=s.gt_json, rng=rng)
+                    error = None
+                    break
+                except Exception as e:  # one bad sample shouldn't kill the whole run
+                    error = f"{type(e).__name__}: {e}"
+                    if _is_rate_limit(e) and attempt < 5:
+                        time.sleep(min(5 * 2 ** attempt, 60))  # 5,10,20,40,60s
+                        continue
+                    raw = ""
+                    break
             parsed, perrs = parse_chart_json(raw) if raw else (None, ["empty"])
             f.write(json.dumps({
                 "id": s.id, "image": s.image, "gt": s.gt_json, "meta": s.meta,
                 "raw": raw, "pred": parsed.model_dump() if parsed else None,
+                "usage": dict(_providers.LAST_USAGE),
                 "parse_errors": perrs, "error": error,
             }) + "\n")
             f.flush()
@@ -85,6 +102,11 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int) -
 
 
 def main():
+    from dotenv import load_dotenv
+
+    # override=True so .env wins over a stale/empty key already in the environment
+    # (e.g. the harness exports an empty ANTHROPIC_API_KEY since it uses that API).
+    load_dotenv(override=True)
     p = argparse.ArgumentParser(description="Run a model over an eval set; save predictions.")
     p.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
     p.add_argument("--model", default=None, help="model id (defaults per provider; override frontier ones)")

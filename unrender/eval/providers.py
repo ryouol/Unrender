@@ -39,6 +39,17 @@ def _b64(image_path: str) -> str:
         return base64.standard_b64encode(f.read()).decode("utf-8")
 
 
+# Token usage from the most recent real provider call — observability only, read
+# by run_baselines for the cost projection. Does NOT affect the request sent, the
+# prompt, the parsing, or the scoring.
+LAST_USAGE: Dict = {}
+
+
+def _set_usage(input_tokens, output_tokens):
+    LAST_USAGE.clear()
+    LAST_USAGE.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
+
+
 def openai_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     from openai import OpenAI
 
@@ -56,6 +67,8 @@ def openai_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
         if "max_tokens" not in str(e).lower():
             raise
         resp = client.chat.completions.create(model=model, messages=messages)
+    u = getattr(resp, "usage", None)
+    _set_usage(getattr(u, "prompt_tokens", None), getattr(u, "completion_tokens", None))
     return resp.choices[0].message.content or ""
 
 
@@ -74,6 +87,8 @@ def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None) -> str
             ],
         }],
     )
+    u = getattr(msg, "usage", None)
+    _set_usage(getattr(u, "input_tokens", None), getattr(u, "output_tokens", None))
     if msg.stop_reason == "refusal":
         return ""
     return "".join(b.text for b in msg.content if b.type == "text")
@@ -90,6 +105,8 @@ def gemini_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
         model=model,
         contents=[types.Part.from_bytes(data=data, mime_type="image/png"), prompt],
     )
+    um = getattr(resp, "usage_metadata", None)
+    _set_usage(getattr(um, "prompt_token_count", None), getattr(um, "candidates_token_count", None))
     # resp.text raises (not returns falsy) when a candidate has no text part —
     # e.g. a safety block or non-STOP finish. Treat that as an empty prediction.
     try:

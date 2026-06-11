@@ -28,8 +28,15 @@ def score(predictions: str, tol: float, out: str = "") -> dict:
     pred_path = Path(predictions)
     rows = read_jsonl(pred_path)
 
-    scored, skipped = [], 0   # each item: (slice_meta, score_dict)
+    scored, skipped, failed = [], 0, 0   # each scored item: (slice_meta, score_dict)
     for r in rows:
+        if r.get("error"):
+            # Transport failure (e.g. 429 rate limit, raw=""), NOT a model attempt.
+            # The model never saw the image, so it can't be scored as a miss —
+            # exclude it. (A model that DID answer but returned junk has error=None
+            # and pred=None, and IS counted as a miss below.)
+            failed += 1
+            continue
         try:
             gt = ChartData.model_validate_json(r["gt"])  # one bad GT row shouldn't abort the run
         except Exception:
@@ -50,7 +57,7 @@ def score(predictions: str, tol: float, out: str = "") -> dict:
     meta_path = pred_path.parent / "meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     report = {"provider": meta.get("provider"), "model": meta.get("model"),
-              "tol": tol, "metrics": metrics, "slices": slices}
+              "tol": tol, "n_failed_calls": failed, "metrics": metrics, "slices": slices}
 
     out_path = Path(out) if out else pred_path.parent / "report.json"
     out_path.write_text(json.dumps(report, indent=2))
@@ -58,6 +65,8 @@ def score(predictions: str, tol: float, out: str = "") -> dict:
     label = f"{report['provider']}:{report['model']}" if report["provider"] else pred_path.parent.name
     if skipped:
         print(f"⚠  skipped {skipped} row(s) with unparseable ground truth")
+    if failed:
+        print(f"⚠  excluded {failed} transport-failed call(s) (e.g. rate limit) — not model misses")
     if not metrics["n"]:
         print(f"=== {label}: no scorable predictions in {pred_path} ===")
         return report

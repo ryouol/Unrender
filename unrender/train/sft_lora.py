@@ -37,6 +37,7 @@ below follows the established vision-SFT notebook.
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from pathlib import Path
 from typing import List
@@ -118,6 +119,28 @@ def build_dataset(records: List[dict]):
         return {"messages": out}
 
     return ds.with_transform(to_messages)
+
+
+def _patch_transformers_4572_bug(model_dir: Path) -> None:
+    """transformers 4.57.2 crashes loading any LOCAL model dir whose config.json
+    records transformers_version <= 4.57.2 and whose tokenizer is big + fast
+    (Qwen's is): tokenization_utils_base.py json-loads config.json into a dict,
+    then reads `.model_type` off it -> AttributeError, inside a Mistral-only
+    regex fix that would have early-returned for Qwen anyway. Recording a
+    version above the gate makes every loader skip that branch. No-op once the
+    installed transformers (and thus the recorded version) moves past 4.57.2.
+    """
+    from packaging import version as _v
+
+    cfg_path = Path(model_dir) / "config.json"
+    if not cfg_path.exists():
+        return
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    v = cfg.get("transformers_version")
+    if v and _v.parse(v) <= _v.parse("4.57.2"):
+        cfg["transformers_version"] = "4.57.3"
+        cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"Patched {cfg_path}: transformers_version {v} -> 4.57.3 (4.57.2 local-load bug)")
 
 
 def train(
@@ -210,6 +233,7 @@ def train(
     adapter_dir = out_dir / "adapter"
     model.save_pretrained(str(adapter_dir))           # LoRA adapter (small, resumable)
     processor.save_pretrained(str(adapter_dir))
+    _patch_transformers_4572_bug(adapter_dir)
     print(f"Saved LoRA adapter -> {adapter_dir}")
 
     if merge:
@@ -217,6 +241,7 @@ def train(
         # adapter wiring — eval uses the identical code path as every baseline.
         merged_dir = out_dir / "merged"
         model.save_pretrained_merged(str(merged_dir), processor, save_method="merged_16bit")
+        _patch_transformers_4572_bug(merged_dir)
         print(f"Saved merged 16bit model -> {merged_dir}  (eval with --provider hf --model {merged_dir})")
 
 

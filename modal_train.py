@@ -137,7 +137,52 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
     VOL.commit()
 
 
+@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1800)
+def probe_model(model_path: str):
+    """Load a saved model the exact way hf_vlm_provider does, one piece at a
+    time, with full tracebacks — for debugging broken exports without burning a
+    full eval run."""
+    import traceback
+
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    mp = model_path if model_path.startswith("/") else f"{V}/{model_path}"
+    proc = net = None
+    for name, fn in (
+        ("AutoProcessor", lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=True)),
+        ("AutoModel", lambda: AutoModelForImageTextToText.from_pretrained(
+            mp, torch_dtype="auto", device_map="auto", trust_remote_code=True)),
+    ):
+        try:
+            obj = fn()
+            print(f"[probe] {name}: OK ({type(obj).__name__})")
+            proc, net = (obj, net) if name == "AutoProcessor" else (proc, obj)
+        except Exception:
+            print(f"[probe] {name}: FAILED")
+            traceback.print_exc()
+            return
+    # One real generation against a volume image, exactly like the provider.
+    import glob
+
+    import torch
+    from PIL import Image
+
+    img_path = sorted(glob.glob(f"{V}/data/synthetic_v1/images/*.png"))[0]
+    messages = [{"role": "user", "content": [
+        {"type": "image", "image": img_path}, {"type": "text", "text": "Extract the data as JSON."}]}]
+    text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = proc(text=[text], images=[Image.open(img_path).convert("RGB")], return_tensors="pt").to(net.device)
+    with torch.no_grad():
+        out = net.generate(**inputs, max_new_tokens=64, do_sample=False)
+    print("[probe] generate: OK ->", proc.decode(out[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)[:200])
+
+
 # --- local entrypoints (what you `modal run`) ---------------------------------
+
+
+@app.local_entrypoint()
+def probe(model: str = "runs/smoke/merged"):
+    probe_model.remote(model_path=model)
 
 @app.local_entrypoint()
 def gen(n: int = 5000):

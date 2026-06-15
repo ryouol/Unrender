@@ -16,7 +16,7 @@ product*, not a bigger model.
 
 - [x] **Phase 1 — Synthetic data engine** (built, runs on a MacBook)
 - [x] **Phase 2 — Eval harness + frontier baselines** (scorer + provider runners + comparison report)
-- [ ] Phase 3 — LoRA fine-tune on a rented GPU
+- [x] Phase 3 — FineTune Qwen
 - [ ] Phase 4 — Deploy: Hugging Face Space demo + inference API
 - [ ] Phase 5 — Launch with reproducible receipts (weights, dataset, eval, demo)
 

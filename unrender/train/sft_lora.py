@@ -44,9 +44,13 @@ from typing import List
 
 from unrender.io_utils import read_jsonl
 
-# Iteration base; --base swaps to Qwen3-VL-8B for the launch run. The unsloth/
-# mirror downloads faster but the canonical HF id (what providers.py evals)
-# loads identically through FastVisionModel.
+# Iteration base; --base swaps to Qwen3-VL-8B for the launch run.
+# CAUTION: with load_in_4bit=True, Unsloth REDIRECTS this id to its own
+# `unsloth/Qwen3-VL-4B-Instruct-unsloth-bnb-4bit` mirror and saves THAT
+# tokenizer/processor into merged/. So the fair eval base-model control is NOT
+# the canonical Qwen/ id loaded through plain transformers (different processor =
+# confound) — it must be the Unsloth full-precision mirror pinned to the matching
+# revision. See PREREGISTRATION.md and run_baselines.py --revision.
 DEFAULT_BASE = "Qwen/Qwen3-VL-4B-Instruct"
 
 

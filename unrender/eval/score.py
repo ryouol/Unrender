@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Iterable, Optional
 
 from unrender.eval.metrics import aggregate, classify_status, score_sample
-from unrender.io_utils import read_jsonl
+from unrender.io_utils import read_jsonl, fingerprint_ids
 from unrender.schema.chart_schema import ChartData
 from unrender.schema.validate import parse_chart_json
 
@@ -85,16 +86,41 @@ def score_rows(rows: Iterable[dict], tol: float, only_ids: Optional[set] = None)
     }
 
 
-def score(predictions: str, out: str = "", tols=TRACKS) -> dict:
+def score(predictions: str, out: str = "", tols=TRACKS, only_ids=None) -> dict:
     pred_path = Path(predictions)
     rows = read_jsonl(pred_path)
-    tracks = {f"{t}": score_rows(rows, t) for t in tols}
+    dup = [i for i, c in Counter(str(r["id"]) for r in rows).items() if c > 1]
+    if dup:
+        raise SystemExit(f"{pred_path} has {len(dup)} duplicate id(s) (e.g. {dup[:5]}) — "
+                         f"double-counted charts skew the metric. Dedup the file before scoring.")
+    subset_fp = None
+    if only_ids is not None:
+        only_ids = {str(i) for i in only_ids}
+        subset_fp = fingerprint_ids(only_ids)
+        # STRICT subset-coverage: a subset rescore must find every requested id in
+        # the predictions, else N is silently smaller than intended (the dev300 bug).
+        missing = only_ids - {str(r["id"]) for r in rows}
+        if missing:
+            raise SystemExit(
+                f"subset-coverage failure: {len(missing)}/{len(only_ids)} subset ids are absent "
+                f"from {pred_path} (e.g. {sorted(missing)[:5]}). Wrong predictions/subset pair — "
+                f"refusing to score a smaller, unbalanced N.")
+    tracks = {f"{t}": score_rows(rows, t, only_ids=only_ids) for t in tols}
 
     meta_path = pred_path.parent / "meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    report = {"provider": meta.get("provider"), "model": meta.get("model"), "tracks": tracks}
+    report = {"provider": meta.get("provider"), "model": meta.get("model"),
+              "dataset_fp": fingerprint_ids(r["id"] for r in rows),
+              "subset_fp": subset_fp, "tracks": tracks}
 
-    out_path = Path(out) if out else pred_path.parent / "report.json"
+    # Never clobber the full-set report.json with a subset rescore (the score.py:99
+    # bug): a subset score defaults to a distinct, self-describing filename.
+    if out:
+        out_path = Path(out)
+    elif only_ids is not None:
+        out_path = pred_path.parent / f"report.subset-{subset_fp}.json"
+    else:
+        out_path = pred_path.parent / "report.json"
     out_path.write_text(json.dumps(report, indent=2))
 
     label = f"{report['provider']}:{report['model']}" if report["provider"] else pred_path.parent.name
@@ -122,8 +148,14 @@ def main():
     p = argparse.ArgumentParser(description="Score a predictions.jsonl (5% + 2% tracks).")
     p.add_argument("--predictions", required=True)
     p.add_argument("--out", default="")
+    p.add_argument("--subset", default=None, help="JSON file with an 'ids' list — score ONLY those (free re-score on a fixed subset)")
     args = p.parse_args()
-    score(args.predictions, args.out)
+    only_ids, out = None, args.out
+    if args.subset:
+        only_ids = json.loads(Path(args.subset).read_text())["ids"]
+        if not out:  # name the report after the subset so it never clobbers report.json
+            out = str(Path(args.predictions).parent / f"report.{Path(args.subset).stem}.json")
+    score(args.predictions, out, only_ids=only_ids)
 
 
 if __name__ == "__main__":

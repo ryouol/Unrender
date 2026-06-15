@@ -115,8 +115,24 @@ def gemini_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
         return ""
 
 
-# Cache for the local HF model so we load weights once, not per image.
-_HF_CACHE: Dict[str, tuple] = {}
+# Cache for the local HF model so we load weights once, not per image. Keyed by
+# (model, revision) so a pinned base and an unpinned one never alias each other.
+_HF_CACHE: Dict[tuple, tuple] = {}
+
+# Load-time config for the local HF provider (currently a pinned Hub `revision`),
+# set by run_baselines before the loop. Separate from HF_GEN_CONFIG because it
+# selects WHICH weights/processor load, not how they decode. Empty => Hub default.
+# A pinned revision matters for the base-model control: the LoRA was trained on
+# the Unsloth mirror, so its base must be pinned to the matching processor, not an
+# unpinned Hub HEAD that can drift.
+HF_MODEL_CONFIG: Dict = {}
+
+# Decoding config for the local HF provider, set by run_baselines from CLI flags
+# (or modal_train) so the decoder sweep can vary decoding WITHOUT touching this
+# call site. Empty dict => greedy (do_sample=False, 4096 cap), the control arm.
+# Recognized keys: repetition_penalty, max_new_tokens, do_sample, temperature,
+# top_p, no_repeat_ngram_size. Only hf_vlm_provider reads it.
+HF_GEN_CONFIG: Dict = {}
 
 
 def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
@@ -130,23 +146,31 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from PIL import Image
 
-    if model not in _HF_CACHE:
-        proc = AutoProcessor.from_pretrained(model, trust_remote_code=True)
+    rev = HF_MODEL_CONFIG.get("revision")
+    key = (model, rev)
+    if key not in _HF_CACHE:
+        proc = AutoProcessor.from_pretrained(model, revision=rev, trust_remote_code=True)
         net = AutoModelForImageTextToText.from_pretrained(
-            model, torch_dtype="auto", device_map="auto", trust_remote_code=True
+            model, revision=rev, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
-        _HF_CACHE[model] = (proc, net)
-    proc, net = _HF_CACHE[model]
+        _HF_CACHE[key] = (proc, net)
+    proc, net = _HF_CACHE[key]
 
     messages = [{"role": "user", "content": [
         {"type": "image", "image": image_path}, {"type": "text", "text": prompt}]}]
     text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = proc(text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt").to(net.device)
+    # 4096 matches the max_tokens the frontier providers get — a dense hard
+    # chart's JSON can exceed 1024 tokens, and a tighter cap here would truncate
+    # (and unfairly penalize) only the local model. HF_GEN_CONFIG (set by the
+    # caller) overrides for the decoder sweep; an empty config is greedy decoding.
+    gen_kwargs = {"max_new_tokens": HF_GEN_CONFIG.get("max_new_tokens") or 4096,
+                  "do_sample": bool(HF_GEN_CONFIG.get("do_sample", False))}
+    for k in ("repetition_penalty", "temperature", "top_p", "no_repeat_ngram_size"):
+        if HF_GEN_CONFIG.get(k):
+            gen_kwargs[k] = HF_GEN_CONFIG[k]
     with torch.no_grad():
-        # 4096 matches the max_tokens the frontier providers get — a dense hard
-        # chart's JSON can exceed 1024 tokens, and a tighter cap here would
-        # truncate (and unfairly penalize) only the local model.
-        out = net.generate(**inputs, max_new_tokens=4096, do_sample=False)
+        out = net.generate(**inputs, **gen_kwargs)
     trimmed = out[0][inputs["input_ids"].shape[1]:]
     return proc.decode(trimmed, skip_special_tokens=True)
 

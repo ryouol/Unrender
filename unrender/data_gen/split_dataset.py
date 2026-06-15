@@ -44,6 +44,12 @@ def split(out: str, val_size: int, test_size: int, seed: int = 7) -> None:
         raise FileNotFoundError(f"No manifest at {manifest_path}. Run generate first.")
 
     entries = read_jsonl(manifest_path)
+    # Sort by stable id BEFORE the seeded shuffle so split membership depends only on
+    # (id set, seed) — never on manifest write-order. Generation now writes in index
+    # order too, but this makes the split reproducible even from an older unordered
+    # manifest. (Splits frozen before this fix are pinned by explicit id-list, e.g.
+    # unrender/eval/subsets/modal_v1_split.json — regenerating will NOT reproduce them.)
+    entries.sort(key=lambda e: e["id"])
     random.Random(seed).shuffle(entries)
 
     if val_size + test_size >= len(entries):

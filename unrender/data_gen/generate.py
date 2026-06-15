@@ -103,7 +103,12 @@ def generate(
             import multiprocessing as mp
 
             with mp.Pool(workers) as pool:
-                for entry in tqdm(pool.imap_unordered(_make_one, tasks, chunksize=8), total=len(tasks)):
+                # imap (ordered), NOT imap_unordered: the manifest MUST be written in
+                # index order so the dataset — and therefore split_dataset's seeded
+                # shuffle — is reproducible across runs. imap_unordered wrote in
+                # worker-completion order, which silently desynced the local and Modal
+                # test splits (only 494/1000 overlap; see modal_v1_split.json).
+                for entry in tqdm(pool.imap(_make_one, tasks, chunksize=8), total=len(tasks)):
                     mf.write(json.dumps(entry) + "\n")
 
     print(f"Done. Manifest: {manifest_path}")

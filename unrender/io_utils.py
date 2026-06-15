@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import List
+from typing import Iterable, List
 
 
 def read_jsonl(path, limit: int = 0) -> List[dict]:
@@ -23,3 +24,15 @@ def read_jsonl(path, limit: int = 0) -> List[dict]:
             if limit and len(out) >= limit:
                 break
     return out
+
+
+def fingerprint_ids(ids: Iterable) -> str:
+    """Order-independent 16-hex fingerprint of an id collection.
+
+    Binds a predictions/report file to the exact split or subset it was produced
+    from, so a desynced split (e.g. the dev300/Modal-test divergence, where a
+    subset was built against a different shuffle than the model saw) is detectable
+    instead of silently scoring a smaller, unbalanced N.
+    """
+    joined = "\n".join(sorted({str(i) for i in ids}))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]

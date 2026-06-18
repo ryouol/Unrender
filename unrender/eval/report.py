@@ -51,7 +51,7 @@ def _pct(x) -> str:
 
 
 def _cell_table(providers: List[dict], tol: float, ids: set) -> str:
-    cols = ["Model", "Cell (all)", "Labeled", "Label-free", "Gap (lab−free)", "Exact-chart"]
+    cols = ["Model", "Cell (all)", "Cell (exact)", "Labeled", "Label-free", "Gap (lab−free)", "Exact-chart"]
     lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join("---" for _ in cols) + " |"]
     rows = []
     for p in providers:
@@ -61,7 +61,8 @@ def _cell_table(providers: List[dict], tol: float, ids: set) -> str:
         free = sl["label_free"].get("cell_accuracy")
         gap = f"{(lab-free)*100:+.1f} pts" if lab is not None and free is not None else "—"
         rows.append((free if free is not None else -1, [
-            p["name"], _pct(m.get("cell_accuracy")), _pct(lab), _pct(free), gap,
+            p["name"], _pct(m.get("cell_accuracy")), _pct(m.get("cell_accuracy_exact")),
+            _pct(lab), _pct(free), gap,
             _pct(m.get("chart_exact_rate")),
         ]))
     for _, cells in sorted(rows, key=lambda t: t[0], reverse=True):
@@ -110,7 +111,10 @@ def build(report_paths: List[str], out: str, title: str = "Unrender — chart-to
             f"# {title}\n\n"
             f"Headline cell-accuracy tables are on the **intersection of charts where all "
             f"{len(providers)} providers produced an ok prediction: N = {len(ids)}** (identical across rows). "
-            "Cell = data point within tolerance; label-free pies scored on proportions. "
+            "Cell = data point within tolerance. **Cell (exact)** is the exact-numeric headline; "
+            "**Cell (all)** additionally pools label-free pies, which are scored on PROPORTIONS "
+            "(a proxy — absolute slice values aren't recoverable from geometry), so cite Cell (exact) "
+            "for exact-extraction claims. "
             "Reliability (schema-valid / invalid / rate-limit-excluded) is on each provider's full set.\n\n"
         )
         for t in TRACKS:

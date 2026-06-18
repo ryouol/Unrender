@@ -156,3 +156,61 @@ def test_pie_label_free_scored_on_proportions():
     assert free["n_correct_points"] == 3            # proportions match
     labeled = score_sample(pred, gt, labels_shown=True)
     assert labeled["n_correct_points"] == 0         # absolute values are 10x off
+
+
+def test_label_free_pie_is_proxy_not_pooled_into_exact():
+    """Label-free pie points are bucketed as a proportion PROXY and kept OUT of the
+    exact-numeric headline (audit B): cell_accuracy pools them, cell_accuracy_exact
+    excludes them, pie_proportion_accuracy isolates them."""
+    pie = ChartData(chart_type="pie", series=[Series(name=None, points=[
+        Point(x="A", y=200.0), Point(x="B", y=300.0), Point(x="C", y=500.0)])])
+    pie_pred = ChartData(chart_type="pie", series=[Series(name=None, points=[  # right shares
+        Point(x="A", y=20.0), Point(x="B", y=30.0), Point(x="C", y=50.0)])])
+    s_pie = score_sample(pie_pred, pie, labels_shown=False)
+    s_bar = score_sample(_gt(), _gt())              # exact-numeric, 3 pts, perfect
+    assert s_pie["n_proxy_points"] == 3 and s_pie["n_proxy_correct"] == 3
+    assert s_bar["n_proxy_points"] == 0
+    agg = aggregate([s_pie, s_bar])
+    assert agg["proxy_points"] == 3 and agg["exact_points"] == 3
+    assert agg["pie_proportion_accuracy"] == 1.0
+    assert agg["cell_accuracy_exact"] == 1.0        # bar only
+    # a wrong-proportion pie must NOT drag down the exact headline
+    bad_pie = ChartData(chart_type="pie", series=[Series(name=None, points=[
+        Point(x="A", y=1.0), Point(x="B", y=1.0), Point(x="C", y=1.0)])])  # equal shares = wrong
+    s_bad = score_sample(bad_pie, pie, labels_shown=False)
+    agg2 = aggregate([s_bad, _perfect_bar_sample()])
+    assert agg2["cell_accuracy_exact"] == 1.0       # exact bar untouched by the pie miss
+    assert agg2["pie_proportion_accuracy"] < 1.0
+
+
+def _perfect_bar_sample():
+    return score_sample(_gt(), _gt())
+
+
+def test_geometry_target_roundtrip_recovers_values():
+    """capture_geometry -> to_target (compact text) -> from_target -> decode must
+    recover values within tolerance on real renders, and the parser must tolerate
+    code fences / prose around the JSON (geometry-supervision plumbing)."""
+    import random as _random
+    from unrender.data_gen.chart_specs import random_spec
+    from unrender.data_gen.geometry import capture_geometry
+    from unrender.data_gen.geometry_target import to_target, from_target
+    from unrender.eval.geometry_decode import decode_geometry
+
+    scores = []
+    for i in range(12):
+        spec = random_spec(_random.Random(5678 + i), hard=True)
+        gt = spec.to_chart_data()
+        tgt = to_target(capture_geometry(spec))
+        assert tgt.startswith("{") and tgt.endswith("}")           # compact JSON
+        dec = decode_geometry(from_target(tgt))
+        assert dec is not None
+        scores.append(score_sample(dec, gt, tol=0.05, labels_shown=spec.value_labels_shown))
+    # exact-numeric recovery should be near-perfect at 3dp on clean GT geometry
+    assert aggregate(scores)["cell_accuracy_exact"] >= 0.9
+
+    # parser tolerates fences + prose (model output is rarely bare JSON)
+    spec = random_spec(_random.Random(5678), hard=True)
+    tgt = to_target(capture_geometry(spec))
+    assert from_target(f"Here is the geometry:\n```json\n{tgt}\n```\nDone.") is not None
+    assert from_target("not a target at all") is None

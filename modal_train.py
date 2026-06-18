@@ -134,6 +134,22 @@ def generate_data(n: int = 5000):
     VOL.commit()
 
 
+@app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
+def gen_geometry_data(train_files: str = "v1,v0"):
+    """Build the geometry-supervision training targets (train.geom.jsonl) from the
+    existing train splits on the Volume — CPU, ~$0.3. Regenerates each chart's spec
+    from its seed, captures exact renderer geometry, writes the compact geometry
+    target (verified against the stored GT). Run once before the geometry train."""
+    from unrender.train.geometry_data import build_geometry_split
+
+    seeds = {"v0": 1234, "v1": 5678}
+    for t in (s.strip() for s in train_files.split(",")):
+        build_geometry_split(f"{V}/data/synthetic_{t}/train.jsonl",
+                             f"{V}/data/synthetic_{t}/train.geom.jsonl",
+                             base_seed=seeds[t], hard=(t == "v1"))
+    VOL.commit()
+
+
 @app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=12 * 3600)
 def train_model(
     train_files: str = "v1,v0",
@@ -145,10 +161,15 @@ def train_model(
     batch_size: int = 2,
     grad_accum: int = 4,
     lora_r: int = 16,
+    geometry: bool = False,
 ):
     from unrender.train.sft_lora import train
 
-    paths = [f"{V}/data/synthetic_{t.strip()}/train.jsonl" for t in train_files.split(",")]
+    # geometry=True trains on the geometry-program targets (run gen_geom first);
+    # sft_lora is target-agnostic (feeds messages[].content straight through), so
+    # only the filename changes.
+    fname = "train.geom.jsonl" if geometry else "train.jsonl"
+    paths = [f"{V}/data/synthetic_{t.strip()}/{fname}" for t in train_files.split(",")]
     train(
         train_paths=paths,
         out=f"{V}/runs/{out_name}",
@@ -167,7 +188,7 @@ def train_model(
 @app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=20 * 3600)
 def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str = "",
                subset: str = "", subset_ids=None, repetition_penalty: float = 0.0,
-               max_new_tokens: int = 0, revision: str = ""):
+               max_new_tokens: int = 0, revision: str = "", decode: str = "table"):
     """Run a model over a test split through the SAME harness as the frontier
     baselines, then print the sliced score report. ``model_path`` is a Volume
     run dir OR an HF hub id (``Qwen/Qwen3-VL-4B-Instruct``) for the base-model
@@ -180,7 +201,9 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
     from pathlib import Path
 
     from unrender.eval.run_baselines import run
+    from unrender.prompts import EXTRACTION_PROMPT, GEOMETRY_PROMPT
 
+    prompt = GEOMETRY_PROMPT if decode == "geometry" else EXTRACTION_PROMPT
     mp = _resolve_model(model_path)
     # ids arrive as an arg (the entrypoint reads the committed JSON on your Mac),
     # so the container never depends on a non-.py file being mounted.
@@ -197,6 +220,7 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
         data=f"{V}/data/synthetic_{data}/test.jsonl",
         out=out_dir, limit=limit, seed=0,
         only_ids=only_ids, gen_config=gen_config or None, revision=revision or None,
+        prompt=prompt,
     )
     VOL.commit()
     # score.py prints its report in main(); run it as the CLI so logs show the
@@ -205,9 +229,27 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
     # subset report (provenance symmetry) and re-asserts coverage.
     score_cmd = ["python", "-m", "unrender.eval.score", "--predictions", str(pred)]
     if subset:
-        import unrender.eval as _ev
-        score_cmd += ["--subset", str(Path(_ev.__file__).parent / "subsets" / f"{subset}.json")]
-    subprocess.run(score_cmd, check=True, cwd="/root")
+        # Write the RESOLVED ids to a container-local file rather than relying on
+        # the packaged subset JSON being shipped to Modal — add_local_python_source
+        # does NOT ship non-.py data, which is why the first base run produced
+        # predictions+meta but no report (the score subprocess couldn't find
+        # common300.json and raised). only_ids was passed from the entrypoint.
+        import json as _json
+        if only_ids:
+            subset_file = f"{out_dir}/subset_ids.json"
+            Path(subset_file).write_text(_json.dumps({"ids": sorted(str(i) for i in only_ids)}))
+            score_cmd += ["--subset", subset_file]
+    if decode != "table":
+        score_cmd += ["--decode", decode]
+    # Non-fatal: predictions are already committed above; a scoring hiccup must not
+    # lose the run — log loudly and let the report be regenerated locally for free.
+    try:
+        subprocess.run(score_cmd, check=True, cwd="/root")
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠ in-container scoring failed ({e}). Predictions ARE committed; "
+              f"re-score locally: python -m unrender.eval.score --predictions <pulled> "
+              f"--subset unrender/eval/subsets/{subset or '<name>'}.json"
+              + (f" --decode {decode}" if decode != 'table' else ""))
     VOL.commit()
 
 
@@ -323,6 +365,13 @@ def gen(n: int = 5000):
 
 
 @app.local_entrypoint()
+def gen_geom(train_files: str = "v1,v0"):
+    """Build geometry-supervision targets on the Volume (CPU, ~$0.3). Run once
+    before `train ... --geometry`."""
+    gen_geometry_data.remote(train_files=train_files)
+
+
+@app.local_entrypoint()
 def smoke():
     """End-to-end insurance before spending real hours: 30 train steps, save +
     merge, then eval 5 images through the hf provider (proves the merged model
@@ -342,31 +391,48 @@ def train(
     batch_size: int = 2,
     grad_accum: int = 4,
     lora_r: int = 16,
+    geometry: bool = False,
 ):
-    train_model.remote(
+    """`--geometry` trains the geometry-supervision arm on train.geom.jsonl
+    (run `gen_geom` first); use a distinct --out-name e.g. qwen3vl4b-geom.
+
+    Uses .spawn() (fire-and-forget): the client returns immediately so a dropped
+    laptop/SSH/stream can't tear down a multi-hour run. ALWAYS invoke with
+    `modal run --detach ...` so the app persists after this returns; results land
+    on the Volume regardless of the client. Logs: `modal app logs <id>`."""
+    call = train_model.spawn(
         train_files=train_files, out_name=out_name, base=base,
         labelfree_weight=labelfree_weight, epochs=epochs, max_steps=max_steps,
-        batch_size=batch_size, grad_accum=grad_accum, lora_r=lora_r,
+        batch_size=batch_size, grad_accum=grad_accum, lora_r=lora_r, geometry=geometry,
     )
+    print(f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
+          f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}")
 
 
 @app.local_entrypoint()
 def evaluate(model: str = "runs/qwen3vl4b-lora/merged", data: str = "v1", limit: int = 0,
              subset: str = "", repetition_penalty: float = 0.0, max_new_tokens: int = 0,
-             revision: str = ""):
+             revision: str = "", decode: str = "table"):
     """Eval one model. Examples (item 1 base-model controls on the frozen subset):
         modal run modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
         modal run modal_train.py::evaluate --subset common300   # the LoRA on the same 300 (apples-to-apples)
 
     `--revision` pins a Hub base to an exact commit; the base control must use the
     Unsloth mirror + matching revision (PREREGISTRATION.md), not an unpinned HEAD.
+    `--decode geometry` evals the geometry arm (geometry prompt + deterministic decode).
+
+    Uses .spawn() — returns immediately; ALWAYS run with `modal run --detach ...` so
+    the long eval survives a dropped client (the base run nearly lost its report to a
+    local network blip). Results persist on the Volume; logs via `modal app logs <id>`.
     """
     # Resolve the frozen id list LOCALLY (the repo has it) and pass it as an arg,
     # so the container needs no data-file mount.
     ids = _load_subset_ids(subset) if subset else None
-    eval_model.remote(model_path=model, data=data, limit=limit, subset=subset, subset_ids=ids,
-                      repetition_penalty=repetition_penalty, max_new_tokens=max_new_tokens,
-                      revision=revision)
+    call = eval_model.spawn(model_path=model, data=data, limit=limit, subset=subset, subset_ids=ids,
+                            repetition_penalty=repetition_penalty, max_new_tokens=max_new_tokens,
+                            revision=revision, decode=decode)
+    print(f"submitted eval (FunctionCall {call.object_id}); returns now — use --detach. "
+          f"Results -> Volume outputs/; pull: modal volume get unrender-vol outputs ./outputs/modal")
 
 
 @app.local_entrypoint()
@@ -376,6 +442,9 @@ def sweep(model: str = "runs/qwen3vl4b-lora/merged",
     """Decoder sweep on the LoRA (item 2): greedy control (free) vs repetition
     penalties, on the invalid+valid subset. One model load, prints an ADOPT table.
         modal run --detach modal_train.py::sweep
+    Uses .spawn() — run with --detach; read the ADOPT table in `modal app logs <id>`.
     """
-    sweep_model.remote(model_path=model, lora_pred_dir=lora_pred_dir, data=data,
-                       n_valid=n_valid, penalties=penalties)
+    call = sweep_model.spawn(model_path=model, lora_pred_dir=lora_pred_dir, data=data,
+                             n_valid=n_valid, penalties=penalties)
+    print(f"submitted sweep (FunctionCall {call.object_id}); returns now — use --detach. "
+          f"ADOPT table prints in: modal app logs {call.object_id}")

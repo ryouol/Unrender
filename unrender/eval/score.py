@@ -24,6 +24,19 @@ from unrender.io_utils import read_jsonl, fingerprint_ids
 from unrender.schema.chart_schema import ChartData
 from unrender.schema.validate import parse_chart_json
 
+
+def _decode_raw(raw: str, mode: str):
+    """Turn a saved raw model response into a ChartData. `table` = parse JSON
+    directly (the default arm); `geometry` = parse the geometry program and run
+    the deterministic pixel->value decode (the geometry-supervision arm). Both
+    re-derive from the SAVED RAW, so re-scoring stays free."""
+    if mode == "geometry":
+        from unrender.data_gen.geometry_target import from_target
+        from unrender.eval.geometry_decode import decode_geometry
+        geom = from_target(raw or "")
+        return (decode_geometry(geom) if geom else None), []
+    return parse_chart_json(raw or "")
+
 TRACKS = (0.05, 0.02)  # headline, strict
 _PCT_KEYS = ["schema_valid_rate", "cell_accuracy", "chart_exact_rate", "chart_type_acc", "series_name_f1"]
 
@@ -54,11 +67,14 @@ def _slice(scored: list) -> dict:
     }
 
 
-def score_rows(rows: Iterable[dict], tol: float, only_ids: Optional[set] = None) -> dict:
+def score_rows(rows: Iterable[dict], tol: float, only_ids: Optional[set] = None,
+               decode: str = "table") -> dict:
     """Score a set of prediction rows at one tolerance. Shared by the per-provider
     report and the cross-provider intersection table.
 
     only_ids: if given, score only rows whose id is in the set (intersection, A6).
+    decode: "table" (parse raw as ChartData JSON) or "geometry" (parse the geometry
+            program and deterministically decode values — the geometry arm).
     """
     scored, n_infra, n_invalid, n_skipped = [], 0, 0, 0
     for r in rows:
@@ -72,9 +88,9 @@ def score_rows(rows: Iterable[dict], tol: float, only_ids: Optional[set] = None)
         except Exception:
             n_skipped += 1
             continue
-        # Re-parse the SAVED RAW with the current repair (A4) instead of trusting
-        # the stored pred — so scorer/repair improvements re-score for free.
-        pred, _ = parse_chart_json(r.get("raw") or "")
+        # Re-derive from the SAVED RAW (A4) instead of trusting the stored pred —
+        # so scorer/repair/decoder improvements re-score for free.
+        pred, _ = _decode_raw(r.get("raw") or "", decode)
         n_invalid += int(pred is None)
         m = r.get("meta") or {}
         slice_meta = {"labels_shown": m.get("labels_shown"), "chart_type": gt.chart_type}
@@ -86,7 +102,7 @@ def score_rows(rows: Iterable[dict], tol: float, only_ids: Optional[set] = None)
     }
 
 
-def score(predictions: str, out: str = "", tols=TRACKS, only_ids=None) -> dict:
+def score(predictions: str, out: str = "", tols=TRACKS, only_ids=None, decode: str = "table") -> dict:
     pred_path = Path(predictions)
     rows = read_jsonl(pred_path)
     dup = [i for i, c in Counter(str(r["id"]) for r in rows).items() if c > 1]
@@ -105,7 +121,7 @@ def score(predictions: str, out: str = "", tols=TRACKS, only_ids=None) -> dict:
                 f"subset-coverage failure: {len(missing)}/{len(only_ids)} subset ids are absent "
                 f"from {pred_path} (e.g. {sorted(missing)[:5]}). Wrong predictions/subset pair — "
                 f"refusing to score a smaller, unbalanced N.")
-    tracks = {f"{t}": score_rows(rows, t, only_ids=only_ids) for t in tols}
+    tracks = {f"{t}": score_rows(rows, t, only_ids=only_ids, decode=decode) for t in tols}
 
     meta_path = pred_path.parent / "meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
@@ -137,6 +153,7 @@ def score(predictions: str, out: str = "", tols=TRACKS, only_ids=None) -> dict:
         m = tracks[f"{t}"]["metrics"]
         sl = tracks[f"{t}"]["slices"]
         print(f"  -- {t:.0%} tol --  cell={m['cell_accuracy']*100:.1f}%  "
+              f"cell_exact={m.get('cell_accuracy_exact',0)*100:.1f}%  "
               f"exact_chart={m['chart_exact_rate']*100:.1f}%  "
               f"labeled={sl['labeled'].get('cell_accuracy',0)*100:.1f}%  "
               f"label_free={sl['label_free'].get('cell_accuracy',0)*100:.1f}%")
@@ -149,13 +166,15 @@ def main():
     p.add_argument("--predictions", required=True)
     p.add_argument("--out", default="")
     p.add_argument("--subset", default=None, help="JSON file with an 'ids' list — score ONLY those (free re-score on a fixed subset)")
+    p.add_argument("--decode", choices=["table", "geometry"], default="table",
+                   help="how to turn raw into values: table=ChartData JSON (default); geometry=geometry program + deterministic decode")
     args = p.parse_args()
     only_ids, out = None, args.out
     if args.subset:
         only_ids = json.loads(Path(args.subset).read_text())["ids"]
         if not out:  # name the report after the subset so it never clobbers report.json
             out = str(Path(args.predictions).parent / f"report.{Path(args.subset).stem}.json")
-    score(args.predictions, out, only_ids=only_ids)
+    score(args.predictions, out, only_ids=only_ids, decode=args.decode)
 
 
 if __name__ == "__main__":

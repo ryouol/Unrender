@@ -70,6 +70,25 @@ def test_run_records_fingerprints_and_pinned_revision(tmp_path):
     assert json.loads((out2 / "meta.json").read_text())["model_revision"] == "abc123"
 
 
+def test_hf_hub_model_requires_pinned_revision(tmp_path):
+    """A Hub-id base control must be revision-pinned — an unpinned HEAD can drift
+    from the merged model's processor (a base-vs-LoRA confound, audit finding I).
+    A local model dir is exempt (fingerprinted by content)."""
+    from unrender.eval.run_baselines import run
+    data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
+    # Hub id (not a local path) without --revision -> refuse before any model load.
+    with pytest.raises(SystemExit, match="revision"):
+        run("hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o"), 0, 0)
+    # Passing an explicit revision clears the guard (it then proceeds to load, which
+    # needs torch — so we only assert the guard itself no longer raises SystemExit).
+    try:
+        run("hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o2"), 0, 0, revision="deadbeef")
+    except SystemExit as e:
+        assert "revision" not in str(e)
+    except Exception:
+        pass  # any non-SystemExit (e.g. missing torch) means the guard passed
+
+
 def test_resume_config_mismatch_raises(tmp_path):
     from unrender.eval.run_baselines import run
     data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
@@ -146,6 +165,98 @@ def test_split_membership_independent_of_manifest_order(tmp_path):
                 for l in Path(p).read_text().splitlines() if l.strip()}
     for name in ("train", "val", "test"):
         assert ids(tmp_path / "a" / f"{name}.jsonl") == ids(tmp_path / "b" / f"{name}.jsonl")
+
+
+# --- table-level leakage (data-table dedup across splits) -------------------
+
+def _table_sigs_by_id(path):
+    """id -> data_table_signature for a chat-format split file."""
+    from unrender.io_utils import read_jsonl
+    from unrender.schema.chart_schema import ChartData, data_table_signature
+    out = {}
+    for r in read_jsonl(path):
+        rid = Path(r["images"][0]).stem
+        out[rid] = data_table_signature(ChartData.model_validate_json(r["messages"][1]["content"]))
+    return out
+
+
+def test_data_table_signature_ignores_cosmetics_keeps_values():
+    from unrender.schema.chart_schema import Axis, ChartData, Point, Series, data_table_signature
+    base = ChartData(chart_type="bar", title="A", x_axis=Axis(label="X"),
+                     series=[Series(name="S", points=[Point(x="a", y=1.0), Point(x="b", y=2.0)])])
+    cosmetic = base.model_copy(deep=True); cosmetic.title = "totally different title"
+    valued = base.model_copy(deep=True); valued.series[0].points[1].y = 2.5
+    assert data_table_signature(base) == data_table_signature(cosmetic)  # cosmetics ignored
+    assert data_table_signature(base) != data_table_signature(valued)    # value change detected
+
+
+def test_common300_no_data_table_leak_into_train():
+    """The base-vs-LoRA subset (common300) must share NO underlying data table with
+    the TRAIN split — id-level disjointness isn't enough if a train chart was
+    re-rendered into test (audit finding G). Reads the committed Modal split
+    artifacts; skips if they aren't present."""
+    root = Path(__file__).resolve().parent.parent
+    train_p = root / "outputs/modal/data_v1/train.jsonl"
+    test_p = root / "outputs/modal/data_v1/test.jsonl"
+    sub_p = root / "unrender/eval/subsets/common300.json"
+    if not (train_p.exists() and test_p.exists() and sub_p.exists()):
+        pytest.skip("committed Modal split artifacts not present")
+    common = set(json.loads(sub_p.read_text())["ids"])
+    test_sigs = _table_sigs_by_id(test_p)
+    common_sigs = {test_sigs[i] for i in common if i in test_sigs}
+    train_sigs = set(_table_sigs_by_id(train_p).values())
+    leaked = common_sigs & train_sigs
+    assert not leaked, f"{len(leaked)} common300 data tables also appear in TRAIN (memorization leak)"
+
+
+# --- geometry-supervision plumbing ------------------------------------------
+
+def test_geometry_data_builder_and_decode_scoring(tmp_path):
+    """End-to-end geometry arm: build geometry-target training rows from a seeded
+    split, then score a 'perfect' geometry prediction file via --decode geometry.
+    Both must round-trip to high cell@5_exact (the train target == what the eval
+    decodes)."""
+    import random as _random
+    from unrender.data_gen.chart_specs import random_spec
+    from unrender.data_gen.geometry import capture_geometry
+    from unrender.data_gen.geometry_target import to_target
+    from unrender.train.geometry_data import build_geometry_split
+    from unrender.prompts import GEOMETRY_PROMPT
+    from unrender.eval.score import score
+
+    # 1. a small seeded source split (chat format, table-JSON targets)
+    src = tmp_path / "train.jsonl"
+    specs = {}
+    with open(src, "w") as f:
+        for i in range(4):
+            spec = random_spec(_random.Random(5678 + i), hard=True)
+            specs[i] = spec
+            f.write(json.dumps({
+                "images": [f"data/x/{i:07d}.png"],
+                "messages": [{"role": "user", "content": "P"},
+                             {"role": "assistant", "content": canonical_json(spec.to_chart_data())}],
+                "meta": {"labels_shown": spec.value_labels_shown, "chart_type": spec.chart_type},
+            }) + "\n")
+
+    # 2. build geometry-target rows; every row must carry GEOMETRY_PROMPT
+    out = tmp_path / "train.geom.jsonl"
+    res = build_geometry_split(str(src), str(out), base_seed=5678, hard=True)
+    assert res["n_ok"] == 4 and res["n_mismatch"] == 0
+    grows = [json.loads(l) for l in out.read_text().splitlines()]
+    assert all(r["messages"][0]["content"] == GEOMETRY_PROMPT for r in grows)
+
+    # 3. a 'perfect' geometry prediction file (raw = the captured target) scored
+    #    via --decode geometry must recover values within tolerance.
+    preds = tmp_path / "predictions.jsonl"
+    with open(preds, "w") as f:
+        for i, spec in specs.items():
+            f.write(json.dumps({
+                "id": f"{i:07d}", "gt": canonical_json(spec.to_chart_data()),
+                "raw": to_target(capture_geometry(spec)),
+                "status": "ok", "meta": {"labels_shown": spec.value_labels_shown},
+            }) + "\n")
+    rep = score(str(preds), out=str(tmp_path / "r.json"), decode="geometry")
+    assert rep["tracks"]["0.05"]["metrics"]["cell_accuracy_exact"] >= 0.9
 
 
 # --- output-tag uniqueness (Modal) ------------------------------------------

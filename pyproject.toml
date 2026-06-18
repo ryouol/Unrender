@@ -54,5 +54,17 @@ dev = ["pytest>=8.0"]
 [tool.setuptools.packages.find]
 include = ["unrender*"]
 
+# Ship the frozen eval subsets (common300.json, etc.) with the package — they are
+# data, not code, so without this a `pip install` (and any in-container read) would
+# miss them. The Modal score step now also writes resolved ids to a container-local
+# file, but packaging keeps `python -m unrender.eval.score --subset <name>` working
+# from an installed wheel too.
+[tool.setuptools.package-data]
+"unrender.eval" = ["subsets/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so top-level modules (e.g. modal_train.py, which
+# is a script, not part of the installed `unrender` package) import under a bare
+# `pytest` invocation, not only `python -m pytest` (which adds CWD implicitly).
+pythonpath = ["."]

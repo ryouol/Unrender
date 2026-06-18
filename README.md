@@ -16,9 +16,15 @@ product*, not a bigger model.
 
 - [x] **Phase 1 — Synthetic data engine** (built, runs on a MacBook)
 - [x] **Phase 2 — Eval harness + frontier baselines** (scorer + provider runners + comparison report)
-- [ ] Phase 3 — LoRA fine-tune on a rented GPU
+- [~] **Phase 3 — LoRA fine-tune on a rented GPU** — *in progress.* 4B LoRA trained + evaluated on the 1000-chart hard test (`cell@5 = 34.8%`, exact-numeric `34.7%`). **Open:** the base-model control has **not** been run, so no base-vs-LoRA delta or "beats-frontier" result is established yet (see `EXPERIMENT_AUDIT.md` and `PREREGISTRATION.md`).
 - [ ] Phase 4 — Deploy: Hugging Face Space demo + inference API
 - [ ] Phase 5 — Launch with reproducible receipts (weights, dataset, eval, demo)
+
+> **Current evidence (2026-06-15):** the pipeline (data → train → eval) works and the
+> 4B LoRA learns schema/chart-type reliably, but numeric precision is the open gap and
+> the *frontier comparison is not yet decided* — frontier runs cover only ~45 of
+> common300 and the pinned base control is still pending. The "narrow model beats
+> frontier" line above is the **hypothesis under test**, not a demonstrated result.
 
 ## Pipeline
 

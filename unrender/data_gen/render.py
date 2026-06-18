@@ -59,6 +59,20 @@ def render_chart(spec: ChartSpec) -> Image.Image:
 
 
 def _draw_chart(spec: ChartSpec) -> Image.Image:
+    """Build the figure and rasterize it to a PIL image at spec.dpi."""
+    fig, ax = _build_figure(spec)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=spec.dpi)
+    plt.close(fig)
+    buf.seek(0)
+    return Image.open(buf).convert("RGB")
+
+
+def _build_figure(spec: ChartSpec):
+    """Draw `spec` onto a fresh fig/ax and return (fig, ax) — everything up to
+    rasterization. Shared by _draw_chart (which saves+closes) and the geometry
+    capture in geometry.py (which reads back artist transforms), so the captured
+    geometry is guaranteed to match the rendered pixels. Caller owns plt.close."""
     fig, ax = plt.subplots(figsize=spec.figsize)
 
     n_cat = len(spec.categories)
@@ -146,8 +160,4 @@ def _draw_chart(spec: ChartSpec) -> Image.Image:
         _apply_value_axis(ax, spec, horizontal=(ct == "horizontal_bar"))
 
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=spec.dpi)
-    plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).convert("RGB")
+    return fig, ax

@@ -149,9 +149,14 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     rev = HF_MODEL_CONFIG.get("revision")
     key = (model, rev)
     if key not in _HF_CACHE:
-        proc = AutoProcessor.from_pretrained(model, revision=rev, trust_remote_code=True)
+        # Only pass `revision` when actually pinning. Passing revision=None
+        # explicitly (vs omitting it) routes a LOCAL model dir through a hub-lookup
+        # code path that, in current transformers, hits a 'dict has no model_type'
+        # crash — the probe (which omits revision) loads the same merged model fine.
+        rev_kw = {"revision": rev} if rev else {}
+        proc = AutoProcessor.from_pretrained(model, trust_remote_code=True, **rev_kw)
         net = AutoModelForImageTextToText.from_pretrained(
-            model, revision=rev, torch_dtype="auto", device_map="auto", trust_remote_code=True
+            model, torch_dtype="auto", device_map="auto", trust_remote_code=True, **rev_kw
         )
         _HF_CACHE[key] = (proc, net)
     proc, net = _HF_CACHE[key]

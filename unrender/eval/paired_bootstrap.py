@@ -33,11 +33,13 @@ CI_MUST_EXCLUDE_ZERO = True
 A_INVALID_NOT_WORSE = True
 
 
-def _score_one(row: dict, tol: float):
-    """Per-chart score, identical to score_rows: re-parse the saved raw with the
-    current repair, score against gt. Returns (score_dict, n_correct, n_gt, invalid)."""
+def _score_one(row: dict, tol: float, decode: str = "table"):
+    """Per-chart score, identical to score_rows: re-derive from the saved raw
+    (table JSON or geometry program), score against gt. Returns (score_dict,
+    n_correct, n_gt, invalid)."""
+    from unrender.eval.score import _decode_raw
     gt = ChartData.model_validate_json(row["gt"])
-    pred, _ = parse_chart_json(row.get("raw") or "")
+    pred, _ = _decode_raw(row.get("raw") or "", decode)
     m = row.get("meta") or {}
     s = score_sample(pred, gt, tol=tol, labels_shown=m.get("labels_shown"))
     return s, s["n_correct_points"], s["n_gt_points"], pred is None
@@ -65,7 +67,7 @@ def _index(rows, label):
     return by_id
 
 
-def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0):
+def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table", decode_b="table"):
     a_by, b_by = _index(a_rows, "A"), _index(b_rows, "B")
     ids = [str(i) for i in ids]
     if len(ids) != len(set(ids)):
@@ -80,8 +82,8 @@ def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0):
     inv_a = inv_b = 0
     sa_all, sb_all = [], []
     for rid in ids:
-        sa, ca, ga, ia = _score_one(a_by[rid], tol)
-        sb, cb, gb, ib = _score_one(b_by[rid], tol)
+        sa, ca, ga, ia = _score_one(a_by[rid], tol, decode_a)
+        sb, cb, gb, ib = _score_one(b_by[rid], tol, decode_b)
         nc_a.append(ca); ng_a.append(ga); nc_b.append(cb); ng_b.append(gb)
         inv_a += int(ia); inv_b += int(ib)
         sa_all.append(sa); sb_all.append(sb)
@@ -139,12 +141,15 @@ def main():
     p.add_argument("--tol", type=float, default=0.05)
     p.add_argument("--iters", type=int, default=10000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--decode-a", choices=["table", "geometry"], default="table", help="how to decode model A's raw (e.g. geometry for the geometry-LoRA)")
+    p.add_argument("--decode-b", choices=["table", "geometry"], default="table", help="how to decode model B's raw")
     p.add_argument("--out", default="", help="optional path to write the result JSON")
     args = p.parse_args()
 
     ids = json.loads(Path(args.subset).read_text())["ids"]
     res = compare(read_jsonl(args.a), read_jsonl(args.b), ids,
-                  tol=args.tol, iters=args.iters, seed=args.seed)
+                  tol=args.tol, iters=args.iters, seed=args.seed,
+                  decode_a=args.decode_a, decode_b=args.decode_b)
     passed, reasons = verdict(res)
     la, lb = args.label_a, args.label_b
 

@@ -57,10 +57,19 @@ def _model_revision(model: str, revision=None):
 
 
 def run(provider: str, model: str, data: str, out: str, limit: int, seed: int,
-        only_ids=None, gen_config=None, revision=None) -> Path:
+        only_ids=None, gen_config=None, revision=None, prompt: str = EXTRACTION_PROMPT) -> Path:
     if provider not in PROVIDERS:
         raise SystemExit(f"Unknown provider '{provider}'. Choices: {sorted(PROVIDERS)}")
     fn = PROVIDERS[provider]
+    # A base-model control loaded from the Hub MUST be revision-pinned: an unpinned
+    # HEAD can drift from the exact weights/processor the merged model carries
+    # (sft_lora.py CAUTION) — a silent base-vs-LoRA confound (audit finding I). A
+    # local merged/adapter dir is exempt: _model_revision fingerprints it by content.
+    if provider == "hf" and revision is None and not Path(model).exists():
+        raise SystemExit(
+            f"unpinned hf model '{model}': pass --revision <commit-sha> to pin a Hub model so "
+            f"the base control matches the merged model's processor. Local model dirs are exempt "
+            f"(fingerprinted by content).")
     samples = load_eval_samples(data, limit=limit)
     dataset_fp = fingerprint_ids(s.id for s in samples)  # identity of the split actually loaded
     subset_fp = None
@@ -99,6 +108,8 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int,
         "data": data, "limit": limit, "dataset_fp": dataset_fp,
         "gen_config": gen_config or {}, "subset_fp": subset_fp,
         "n_subset": (len(only_ids) if only_ids is not None else None),
+        # provenance: which prompt produced these predictions (table vs geometry arm)
+        "prompt_fp": fingerprint_ids([prompt]),
     }
 
     # Resume keeps ok + model_invalid (real model answers) and retries only
@@ -116,7 +127,7 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int,
         meta_old_path = out_dir / "meta.json"
         if meta_old_path.exists():
             old = json.loads(meta_old_path.read_text())
-            for k in ("model", "model_revision", "gen_config", "subset_fp", "dataset_fp"):
+            for k in ("model", "model_revision", "gen_config", "subset_fp", "dataset_fp", "prompt_fp"):
                 if k in old and old.get(k) != meta_new[k]:
                     raise SystemExit(
                         f"resume-config mismatch on '{k}': existing predictions in {out_dir} were "
@@ -142,7 +153,7 @@ def run(provider: str, model: str, data: str, out: str, limit: int, seed: int,
             _providers.LAST_USAGE.clear()  # observability only; reset before each call
             for attempt in range(6):  # retry transient 429s with exponential backoff
                 try:
-                    raw = fn(s.image, EXTRACTION_PROMPT, model, gt_json=s.gt_json, rng=rng)
+                    raw = fn(s.image, prompt, model, gt_json=s.gt_json, rng=rng)
                     error = None
                     break
                 except Exception as e:  # one bad sample shouldn't kill the whole run

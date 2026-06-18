@@ -52,8 +52,13 @@ GPU = os.environ.get("UNRENDER_GPU", "L4")
 # (the committed test.jsonl ground truth describes these exact pixels).
 gen_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("numpy==2.4.6", "matplotlib==3.10.9", "pillow==12.2.0",
-                 "pydantic>=2.5", "tqdm>=4.66")
+    .pip_install(
+        "numpy==2.4.6",
+        "matplotlib==3.10.9",
+        "pillow==12.2.0",
+        "pydantic>=2.5",
+        "tqdm>=4.66",
+    )
     .add_local_python_source("unrender")
 )
 
@@ -62,18 +67,30 @@ gen_image = (
 # modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11").
 train_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("unsloth", "trl>=0.9", "peft>=0.11", "bitsandbytes>=0.43",
-                 "transformers>=4.46", "accelerate>=0.34", "datasets>=2.20",
-                 "pillow>=10.0", "pydantic>=2.5", "tqdm>=4.66",
-                 "rapidfuzz>=3.6", "python-dotenv>=1.0")
-    .env({
-        "HF_HOME": f"{V}/.hf_cache",     # cache the ~9GB base model on the Volume once
-        # Unsloth's auto-compiler code-gens a patched qwen3_vl module that (with
-        # current transformers) contains a syntax error and crashes from_pretrained.
-        # Disabling it falls back to stock transformers modeling: slightly slower,
-        # fully correct. Revisit when unsloth/transformers re-sync.
-        "UNSLOTH_COMPILE_DISABLE": "1",
-    })
+    .pip_install(
+        "unsloth",
+        "trl>=0.9",
+        "peft>=0.11",
+        "bitsandbytes>=0.43",
+        "transformers>=4.46",
+        "accelerate>=0.34",
+        "datasets>=2.20",
+        "pillow>=10.0",
+        "pydantic>=2.5",
+        "tqdm>=4.66",
+        "rapidfuzz>=3.6",
+        "python-dotenv>=1.0",
+    )
+    .env(
+        {
+            "HF_HOME": f"{V}/.hf_cache",  # cache the ~9GB base model on the Volume once
+            # Unsloth's auto-compiler code-gens a patched qwen3_vl module that (with
+            # current transformers) contains a syntax error and crashes from_pretrained.
+            # Disabling it falls back to stock transformers modeling: slightly slower,
+            # fully correct. Revisit when unsloth/transformers re-sync.
+            "UNSLOTH_COMPILE_DISABLE": "1",
+        }
+    )
     .add_local_python_source("unrender")
 )
 
@@ -87,6 +104,7 @@ def _resolve_model(model_path: str) -> str:
     passed straight to from_pretrained, so base-model controls need no extra
     plumbing — the hf provider downloads/caches it on the Volume like any model."""
     from pathlib import Path
+
     if model_path.startswith("/"):
         return model_path
     if Path(f"{V}/{model_path}").exists():
@@ -99,8 +117,12 @@ def _load_subset_ids(name: str):
     the package at ``unrender/eval/subsets/<name>.json``."""
     import json
     from pathlib import Path
+
     import unrender.eval as _ev
-    return json.loads((Path(_ev.__file__).parent / "subsets" / f"{name}.json").read_text())["ids"]
+
+    return json.loads(
+        (Path(_ev.__file__).parent / "subsets" / f"{name}.json").read_text()
+    )["ids"]
 
 
 def _eval_tag(mp: str, data: str, subset: str, gen_config: dict) -> str:
@@ -109,6 +131,7 @@ def _eval_tag(mp: str, data: str, subset: str, gen_config: dict) -> str:
     LoRA-merged/no-subset/greedy case reproduces the original ``eval_v1__<run>``
     name, so re-runs still resume the existing predictions."""
     from pathlib import Path
+
     base = Path(mp.rstrip("/"))
     name = base.parent.name if base.name == "merged" else base.name
     parts = [f"eval_{data}", name]
@@ -127,7 +150,10 @@ def generate_data(n: int = 5000):
     from unrender.data_gen.generate import generate
     from unrender.data_gen.split_dataset import split
 
-    for name, seed, hard in (("synthetic_v0", 1234, False), ("synthetic_v1", 5678, True)):
+    for name, seed, hard in (
+        ("synthetic_v0", 1234, False),
+        ("synthetic_v1", 5678, True),
+    ):
         out = f"{V}/data/{name}"
         generate(n=n, out=out, base_seed=seed, hard=hard, workers=8)
         split(out=out, val_size=500, test_size=1000)
@@ -144,13 +170,23 @@ def gen_geometry_data(train_files: str = "v1,v0"):
 
     seeds = {"v0": 1234, "v1": 5678}
     for t in (s.strip() for s in train_files.split(",")):
-        build_geometry_split(f"{V}/data/synthetic_{t}/train.jsonl",
-                             f"{V}/data/synthetic_{t}/train.geom.jsonl",
-                             base_seed=seeds[t], hard=(t == "v1"))
+        build_geometry_split(
+            f"{V}/data/synthetic_{t}/train.jsonl",
+            f"{V}/data/synthetic_{t}/train.geom.jsonl",
+            base_seed=seeds[t],
+            hard=(t == "v1"),
+        )
     VOL.commit()
 
 
-@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=12 * 3600)
+@app.function(
+    image=train_image,
+    volumes={V: VOL},
+    gpu=GPU,
+    cpu=4.0,
+    memory=32768,
+    timeout=12 * 3600,
+)
 def train_model(
     train_files: str = "v1,v0",
     out_name: str = "qwen3vl4b-lora",
@@ -190,10 +226,26 @@ def train_model(
     VOL.commit()
 
 
-@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=20 * 3600)
-def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str = "",
-               subset: str = "", subset_ids=None, repetition_penalty: float = 0.0,
-               max_new_tokens: int = 0, revision: str = "", decode: str = "table"):
+@app.function(
+    image=train_image,
+    volumes={V: VOL},
+    gpu=GPU,
+    cpu=4.0,
+    memory=32768,
+    timeout=20 * 3600,
+)
+def eval_model(
+    model_path: str,
+    data: str = "v1",
+    limit: int = 0,
+    out_name: str = "",
+    subset: str = "",
+    subset_ids=None,
+    repetition_penalty: float = 0.0,
+    max_new_tokens: int = 0,
+    revision: str = "",
+    decode: str = "table",
+):
     """Run a model over a test split through the SAME harness as the frontier
     baselines, then print the sliced score report. ``model_path`` is a Volume
     run dir OR an HF hub id (``Qwen/Qwen3-VL-4B-Instruct``) for the base-model
@@ -221,10 +273,15 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
 
     out_dir = f"{V}/outputs/{out_name or _eval_tag(mp, data, subset, gen_config)}"
     pred = run(
-        provider="hf", model=mp,
+        provider="hf",
+        model=mp,
         data=f"{V}/data/synthetic_{data}/test.jsonl",
-        out=out_dir, limit=limit, seed=0,
-        only_ids=only_ids, gen_config=gen_config or None, revision=revision or None,
+        out=out_dir,
+        limit=limit,
+        seed=0,
+        only_ids=only_ids,
+        gen_config=gen_config or None,
+        revision=revision or None,
         prompt=prompt,
     )
     VOL.commit()
@@ -240,9 +297,12 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
         # predictions+meta but no report (the score subprocess couldn't find
         # common300.json and raised). only_ids was passed from the entrypoint.
         import json as _json
+
         if only_ids:
             subset_file = f"{out_dir}/subset_ids.json"
-            Path(subset_file).write_text(_json.dumps({"ids": sorted(str(i) for i in only_ids)}))
+            Path(subset_file).write_text(
+                _json.dumps({"ids": sorted(str(i) for i in only_ids)})
+            )
             score_cmd += ["--subset", subset_file]
     if decode != "table":
         score_cmd += ["--decode", decode]
@@ -251,14 +311,23 @@ def eval_model(model_path: str, data: str = "v1", limit: int = 0, out_name: str 
     try:
         subprocess.run(score_cmd, check=True, cwd="/root")
     except Exception as e:  # noqa: BLE001
-        print(f"⚠ in-container scoring failed ({e}). Predictions ARE committed; "
-              f"re-score locally: python -m unrender.eval.score --predictions <pulled> "
-              f"--subset unrender/eval/subsets/{subset or '<name>'}.json"
-              + (f" --decode {decode}" if decode != 'table' else ""))
+        print(
+            f"⚠ in-container scoring failed ({e}). Predictions ARE committed; "
+            f"re-score locally: python -m unrender.eval.score --predictions <pulled> "
+            f"--subset unrender/eval/subsets/{subset or '<name>'}.json"
+            + (f" --decode {decode}" if decode != "table" else "")
+        )
     VOL.commit()
 
 
-@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=20 * 3600)
+@app.function(
+    image=train_image,
+    volumes={V: VOL},
+    gpu=GPU,
+    cpu=4.0,
+    memory=32768,
+    timeout=20 * 3600,
+)
 def sweep_model(
     model_path: str = "runs/qwen3vl4b-lora/merged",
     lora_pred_dir: str = "outputs/eval_v1__qwen3vl4b-lora",
@@ -276,9 +345,9 @@ def sweep_model(
     import random
     from pathlib import Path
 
-    from unrender.io_utils import read_jsonl
     from unrender.eval.run_baselines import run
-    from unrender.eval.score import score_rows, row_status
+    from unrender.eval.score import row_status, score_rows
+    from unrender.io_utils import read_jsonl
 
     mp = _resolve_model(model_path)
     full = read_jsonl(Path(f"{V}/{lora_pred_dir}/predictions.jsonl"))
@@ -287,37 +356,58 @@ def sweep_model(
     random.Random(0).shuffle(ok_ids)
     valid_ids = set(ok_ids[:n_valid])
     subset_ids = set(invalid_ids) | valid_ids
-    print(f"[sweep] subset: {len(invalid_ids)} invalid + {len(valid_ids)} valid = {len(subset_ids)} charts")
+    print(
+        f"[sweep] subset: {len(invalid_ids)} invalid + {len(valid_ids)} valid = {len(subset_ids)} charts"
+    )
 
     def _summarize(rows, arm):
         a = score_rows(rows, 0.05, only_ids=subset_ids)
         av = score_rows(rows, 0.05, only_ids=valid_ids)
         n = a["metrics"]["n"]
-        return {"arm": arm, "invalid": a["n_model_invalid"], "n": n,
-                "invalid_pct": (a["n_model_invalid"] / n * 100) if n else 0.0,
-                "cell": a["metrics"]["cell_accuracy"] * 100,
-                "valid_cell": av["metrics"]["cell_accuracy"] * 100}
+        return {
+            "arm": arm,
+            "invalid": a["n_model_invalid"],
+            "n": n,
+            "invalid_pct": (a["n_model_invalid"] / n * 100) if n else 0.0,
+            "cell": a["metrics"]["cell_accuracy"] * 100,
+            "valid_cell": av["metrics"]["cell_accuracy"] * 100,
+        }
 
     results = [_summarize(full, "greedy")]  # control — no generation
     valid_floor = results[0]["valid_cell"]
 
     data_path = f"{V}/data/synthetic_{data}/test.jsonl"
     for rp in [float(x) for x in penalties.split(",") if x.strip()]:
-        pred = run(provider="hf", model=mp, data=data_path,
-                   out=f"{V}/outputs/sweep_{data}__rp{rp}", limit=0, seed=0,
-                   only_ids=subset_ids, gen_config={"repetition_penalty": rp})
+        pred = run(
+            provider="hf",
+            model=mp,
+            data=data_path,
+            out=f"{V}/outputs/sweep_{data}__rp{rp}",
+            limit=0,
+            seed=0,
+            only_ids=subset_ids,
+            gen_config={"repetition_penalty": rp},
+        )
         VOL.commit()
         results.append(_summarize(read_jsonl(Path(pred)), f"rep{rp}"))
 
-    print(f"\n=== decoder sweep  (subset N={len(subset_ids)}, greedy valid-cell floor={valid_floor:.1f}%) ===")
-    print(f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict")
+    print(
+        f"\n=== decoder sweep  (subset N={len(subset_ids)}, greedy valid-cell floor={valid_floor:.1f}%) ==="
+    )
+    print(
+        f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict"
+    )
     for r in results:
         ok = r["invalid_pct"] < 1.0 and (valid_floor - r["valid_cell"]) <= 1.0
         verdict = "" if r["arm"] == "greedy" else ("ADOPT" if ok else "reject")
-        print(f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}")
+        print(
+            f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}"
+        )
 
 
-@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1800)
+@app.function(
+    image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1800
+)
 def probe_model(model_path: str):
     """Load a saved model the exact way hf_vlm_provider does, one piece at a
     time, with full tracebacks — for debugging broken exports without burning a
@@ -329,9 +419,16 @@ def probe_model(model_path: str):
     mp = model_path if model_path.startswith("/") else f"{V}/{model_path}"
     proc = net = None
     for name, fn in (
-        ("AutoProcessor", lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=True)),
-        ("AutoModel", lambda: AutoModelForImageTextToText.from_pretrained(
-            mp, torch_dtype="auto", device_map="auto", trust_remote_code=True)),
+        (
+            "AutoProcessor",
+            lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=True),
+        ),
+        (
+            "AutoModel",
+            lambda: AutoModelForImageTextToText.from_pretrained(
+                mp, torch_dtype="auto", device_map="auto", trust_remote_code=True
+            ),
+        ),
     ):
         try:
             obj = fn()
@@ -348,13 +445,29 @@ def probe_model(model_path: str):
     from PIL import Image
 
     img_path = sorted(glob.glob(f"{V}/data/synthetic_v1/images/*.png"))[0]
-    messages = [{"role": "user", "content": [
-        {"type": "image", "image": img_path}, {"type": "text", "text": "Extract the data as JSON."}]}]
-    text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = proc(text=[text], images=[Image.open(img_path).convert("RGB")], return_tensors="pt").to(net.device)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": img_path},
+                {"type": "text", "text": "Extract the data as JSON."},
+            ],
+        }
+    ]
+    text = proc.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = proc(
+        text=[text], images=[Image.open(img_path).convert("RGB")], return_tensors="pt"
+    ).to(net.device)
     with torch.no_grad():
         out = net.generate(**inputs, max_new_tokens=64, do_sample=False)
-    print("[probe] generate: OK ->", proc.decode(out[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)[:200])
+    print(
+        "[probe] generate: OK ->",
+        proc.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)[
+            :200
+        ],
+    )
 
 
 # --- local entrypoints (what you `modal run`) ---------------------------------
@@ -363,6 +476,7 @@ def probe_model(model_path: str):
 @app.local_entrypoint()
 def probe(model: str = "runs/smoke/merged"):
     probe_model.remote(model_path=model)
+
 
 @app.local_entrypoint()
 def gen(n: int = 5000):
@@ -410,19 +524,36 @@ def train(
     `modal run --detach ...` so the app persists after this returns; results land
     on the Volume regardless of the client. Logs: `modal app logs <id>`."""
     call = train_model.spawn(
-        train_files=train_files, out_name=out_name, base=base,
-        labelfree_weight=labelfree_weight, epochs=epochs, max_steps=max_steps,
-        batch_size=batch_size, grad_accum=grad_accum, lora_r=lora_r, geometry=geometry,
-        hbar_weight=hbar_weight, numeric_loss_weight=numeric_loss_weight,
+        train_files=train_files,
+        out_name=out_name,
+        base=base,
+        labelfree_weight=labelfree_weight,
+        epochs=epochs,
+        max_steps=max_steps,
+        batch_size=batch_size,
+        grad_accum=grad_accum,
+        lora_r=lora_r,
+        geometry=geometry,
+        hbar_weight=hbar_weight,
+        numeric_loss_weight=numeric_loss_weight,
     )
-    print(f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
-          f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}")
+    print(
+        f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
+        f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}"
+    )
 
 
 @app.local_entrypoint()
-def evaluate(model: str = "runs/qwen3vl4b-lora/merged", data: str = "v1", limit: int = 0,
-             subset: str = "", repetition_penalty: float = 0.0, max_new_tokens: int = 0,
-             revision: str = "", decode: str = "table"):
+def evaluate(
+    model: str = "runs/qwen3vl4b-lora/merged",
+    data: str = "v1",
+    limit: int = 0,
+    subset: str = "",
+    repetition_penalty: float = 0.0,
+    max_new_tokens: int = 0,
+    revision: str = "",
+    decode: str = "table",
+):
     """Eval one model. Examples (item 1 base-model controls on the frozen subset):
         modal run modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
         modal run modal_train.py::evaluate --subset common300   # the LoRA on the same 300 (apples-to-apples)
@@ -438,23 +569,44 @@ def evaluate(model: str = "runs/qwen3vl4b-lora/merged", data: str = "v1", limit:
     # Resolve the frozen id list LOCALLY (the repo has it) and pass it as an arg,
     # so the container needs no data-file mount.
     ids = _load_subset_ids(subset) if subset else None
-    call = eval_model.spawn(model_path=model, data=data, limit=limit, subset=subset, subset_ids=ids,
-                            repetition_penalty=repetition_penalty, max_new_tokens=max_new_tokens,
-                            revision=revision, decode=decode)
-    print(f"submitted eval (FunctionCall {call.object_id}); returns now — use --detach. "
-          f"Results -> Volume outputs/; pull: modal volume get unrender-vol outputs ./outputs/modal")
+    call = eval_model.spawn(
+        model_path=model,
+        data=data,
+        limit=limit,
+        subset=subset,
+        subset_ids=ids,
+        repetition_penalty=repetition_penalty,
+        max_new_tokens=max_new_tokens,
+        revision=revision,
+        decode=decode,
+    )
+    print(
+        f"submitted eval (FunctionCall {call.object_id}); returns now — use --detach. "
+        f"Results -> Volume outputs/; pull: modal volume get unrender-vol outputs ./outputs/modal"
+    )
 
 
 @app.local_entrypoint()
-def sweep(model: str = "runs/qwen3vl4b-lora/merged",
-          lora_pred_dir: str = "outputs/eval_v1__qwen3vl4b-lora",
-          data: str = "v1", n_valid: int = 200, penalties: str = "1.1,1.3"):
+def sweep(
+    model: str = "runs/qwen3vl4b-lora/merged",
+    lora_pred_dir: str = "outputs/eval_v1__qwen3vl4b-lora",
+    data: str = "v1",
+    n_valid: int = 200,
+    penalties: str = "1.1,1.3",
+):
     """Decoder sweep on the LoRA (item 2): greedy control (free) vs repetition
     penalties, on the invalid+valid subset. One model load, prints an ADOPT table.
         modal run --detach modal_train.py::sweep
     Uses .spawn() — run with --detach; read the ADOPT table in `modal app logs <id>`.
     """
-    call = sweep_model.spawn(model_path=model, lora_pred_dir=lora_pred_dir, data=data,
-                             n_valid=n_valid, penalties=penalties)
-    print(f"submitted sweep (FunctionCall {call.object_id}); returns now — use --detach. "
-          f"ADOPT table prints in: modal app logs {call.object_id}")
+    call = sweep_model.spawn(
+        model_path=model,
+        lora_pred_dir=lora_pred_dir,
+        data=data,
+        n_valid=n_valid,
+        penalties=penalties,
+    )
+    print(
+        f"submitted sweep (FunctionCall {call.object_id}); returns now — use --detach. "
+        f"ADOPT table prints in: modal app logs {call.object_id}"
+    )

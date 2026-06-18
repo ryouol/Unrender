@@ -66,18 +66,27 @@ def _resolve_image(path: str, data_root: str) -> str:
     raise FileNotFoundError(f"image not found: {path} (also tried {alt})")
 
 
-def load_records(train_paths: List[str], data_root: str, labelfree_weight: float, seed: int) -> List[dict]:
+def _copies(mult: float, rng: random.Random) -> int:
+    """Integer copies from a (possibly fractional) oversample multiplier — e.g.
+    1.5 means 'half of them twice'. Always >= 1."""
+    return max(1, int(mult) + (1 if rng.random() < (mult % 1) else 0))
+
+
+def load_records(train_paths: List[str], data_root: str, labelfree_weight: float, seed: int,
+                 hbar_weight: float = 1.0) -> List[dict]:
     """Read the chat-format split rows into lightweight records, oversampling the
-    label-free slice.
+    slices that matter.
 
     Label-free charts are the skill that matters (the model must read geometry,
     not OCR printed numbers — see chart_specs.py), so we let them appear
-    `labelfree_weight`x as often. Images stay on disk here; the dataset transform
-    loads them lazily per batch so we never hold thousands of decoded PNGs in RAM.
+    `labelfree_weight`x as often. `hbar_weight` independently oversamples
+    horizontal_bar, the worst slice in the Stage-A geometry smoke (36% parse +
+    edge-collapsed marks). Multipliers compose (a label-free h-bar gets both).
+    Images stay on disk here; the dataset transform loads them lazily per batch.
     """
     rng = random.Random(seed)
     records: List[dict] = []
-    n_labelfree_src = 0
+    n_labelfree_src = n_hbar_src = 0
     for tp in train_paths:
         for r in read_jsonl(tp):
             rec = {
@@ -85,18 +94,21 @@ def load_records(train_paths: List[str], data_root: str, labelfree_weight: float
                 "user": r["messages"][0]["content"],
                 "assistant": r["messages"][1]["content"],
             }
-            labels_shown = (r.get("meta") or {}).get("labels_shown", True)
-            copies = 1
-            if not labels_shown:
+            meta = r.get("meta") or {}
+            mult = 1.0
+            if not meta.get("labels_shown", True):
                 n_labelfree_src += 1
-                # integer copies + a fractional extra so 1.5 means "half of them twice"
-                copies = int(labelfree_weight) + (1 if rng.random() < (labelfree_weight % 1) else 0)
-            records.extend(rec for _ in range(max(1, copies)))
+                mult *= labelfree_weight
+            if meta.get("chart_type") == "horizontal_bar":
+                n_hbar_src += 1
+                mult *= hbar_weight
+            records.extend(rec for _ in range(_copies(mult, rng)))
 
     rng.shuffle(records)
     print(
         f"Loaded {len(records)} training records from {len(train_paths)} file(s) "
-        f"(label-free source rows: {n_labelfree_src}, oversample x{labelfree_weight})"
+        f"(label-free src: {n_labelfree_src} x{labelfree_weight}; "
+        f"horizontal_bar src: {n_hbar_src} x{hbar_weight})"
     )
     return records
 
@@ -147,12 +159,27 @@ def _patch_transformers_4572_bug(model_dir: Path) -> None:
         print(f"Patched {cfg_path}: transformers_version {v} -> 4.57.3 (4.57.2 local-load bug)")
 
 
+def _numeric_token_ids(tokenizer) -> set:
+    """Token ids whose surface form contains a digit — the fraction/number tokens
+    the geometry target's precision lives in. Up-weighting their loss makes the
+    model care about 0.314 vs 0.341 (the Stage-A coordinate-precision failure).
+    Pure Python (no torch) so it's unit-testable off the GPU box."""
+    out = set()
+    for tid in range(len(tokenizer)):
+        tok = tokenizer.convert_ids_to_tokens(tid)
+        if isinstance(tok, str) and any(ch.isdigit() for ch in tok):
+            out.add(tid)
+    return out
+
+
 def train(
     train_paths: List[str],
     out: str,
     base: str = DEFAULT_BASE,
     data_root: str = ".",
     labelfree_weight: float = 1.5,
+    hbar_weight: float = 1.0,
+    numeric_loss_weight: float = 1.0,
     epochs: float = 1.0,
     max_steps: int = 0,
     lr: float = 2e-4,
@@ -170,7 +197,7 @@ def train(
     from unsloth.trainer import UnslothVisionDataCollator
     from trl import SFTConfig, SFTTrainer
 
-    records = load_records(train_paths, data_root, labelfree_weight, seed)
+    records = load_records(train_paths, data_root, labelfree_weight, seed, hbar_weight=hbar_weight)
     dataset = build_dataset(records)
 
     model, processor = FastVisionModel.from_pretrained(
@@ -199,7 +226,38 @@ def train(
     # max_steps overrides epochs when set (>0) — handy for a quick smoke run.
     steps_kw = {"max_steps": max_steps} if max_steps > 0 else {"num_train_epochs": epochs}
 
-    trainer = SFTTrainer(
+    # Numeric-token loss weighting (the precision lever, default off = vanilla SFT):
+    # up-weight cross-entropy on digit-bearing tokens so the model learns fraction
+    # precision harder. We recompute CE manually from logits (calling the model
+    # WITHOUT labels, so Unsloth's fused CE doesn't drop the logits we need).
+    trainer_cls = SFTTrainer
+    if numeric_loss_weight and numeric_loss_weight != 1.0:
+        import torch
+
+        tok = getattr(processor, "tokenizer", processor)
+        _num_tensor = torch.tensor(sorted(_numeric_token_ids(tok)), dtype=torch.long)
+        _w = float(numeric_loss_weight)
+        print(f"numeric-token loss weighting: {_num_tensor.numel()} digit-bearing tokens x{_w}")
+
+        class _NumWeightedSFTTrainer(SFTTrainer):
+            def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+                from torch.nn import functional as F
+                labels = inputs.pop("labels")
+                outputs = model(**inputs)                      # logits, no fused loss
+                inputs["labels"] = labels
+                V = outputs.logits.size(-1)
+                sl = outputs.logits[..., :-1, :].contiguous().view(-1, V)
+                lab = labels[..., 1:].contiguous().view(-1).to(sl.device)
+                ce = F.cross_entropy(sl, lab, ignore_index=-100, reduction="none")
+                mask = lab != -100
+                isnum = torch.isin(lab, _num_tensor.to(lab.device))
+                w = torch.where(isnum & mask, _w, 1.0)
+                loss = (ce * w)[mask].sum() / w[mask].sum().clamp_min(1.0)
+                return (loss, outputs) if return_outputs else loss
+
+        trainer_cls = _NumWeightedSFTTrainer
+
+    trainer = trainer_cls(
         model=model,
         tokenizer=processor,
         data_collator=UnslothVisionDataCollator(model, processor),

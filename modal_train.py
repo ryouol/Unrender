@@ -162,12 +162,15 @@ def train_model(
     grad_accum: int = 4,
     lora_r: int = 16,
     geometry: bool = False,
+    hbar_weight: float = 1.0,
+    numeric_loss_weight: float = 1.0,
 ):
     from unrender.train.sft_lora import train
 
     # geometry=True trains on the geometry-program targets (run gen_geom first);
     # sft_lora is target-agnostic (feeds messages[].content straight through), so
-    # only the filename changes.
+    # only the filename changes. hbar_weight oversamples horizontal_bar;
+    # numeric_loss_weight up-weights digit-token loss (the precision levers).
     fname = "train.geom.jsonl" if geometry else "train.jsonl"
     paths = [f"{V}/data/synthetic_{t.strip()}/{fname}" for t in train_files.split(",")]
     train(
@@ -176,6 +179,8 @@ def train_model(
         base=base,
         data_root=V,
         labelfree_weight=labelfree_weight,
+        hbar_weight=hbar_weight,
+        numeric_loss_weight=numeric_loss_weight,
         epochs=epochs,
         max_steps=max_steps,
         batch_size=batch_size,
@@ -392,9 +397,13 @@ def train(
     grad_accum: int = 4,
     lora_r: int = 16,
     geometry: bool = False,
+    hbar_weight: float = 1.0,
+    numeric_loss_weight: float = 1.0,
 ):
     """`--geometry` trains the geometry-supervision arm on train.geom.jsonl
     (run `gen_geom` first); use a distinct --out-name e.g. qwen3vl4b-geom.
+    Precision levers: `--numeric-loss-weight 3` up-weights digit-token loss;
+    `--hbar-weight 3` oversamples horizontal_bar (the worst Stage-A slice).
 
     Uses .spawn() (fire-and-forget): the client returns immediately so a dropped
     laptop/SSH/stream can't tear down a multi-hour run. ALWAYS invoke with
@@ -404,6 +413,7 @@ def train(
         train_files=train_files, out_name=out_name, base=base,
         labelfree_weight=labelfree_weight, epochs=epochs, max_steps=max_steps,
         batch_size=batch_size, grad_accum=grad_accum, lora_r=lora_r, geometry=geometry,
+        hbar_weight=hbar_weight, numeric_loss_weight=numeric_loss_weight,
     )
     print(f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
           f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}")

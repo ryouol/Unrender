@@ -259,6 +259,32 @@ def test_geometry_data_builder_and_decode_scoring(tmp_path):
     assert rep["tracks"]["0.05"]["metrics"]["cell_accuracy_exact"] >= 0.9
 
 
+# --- precision levers (numeric-token loss + oversampling) -------------------
+
+def test_numeric_token_ids_and_copies():
+    """The precision-lever helpers (pure-Python, testable off the GPU box):
+    digit-bearing tokens are detected for loss up-weighting, and the fractional
+    oversample multiplier produces the right integer copy counts."""
+    from unrender.train.sft_lora import _numeric_token_ids, _copies
+
+    toks = ["the", "0.", "314", "abc", "Ġ5", "!", "100", "x"]  # ids 0..7
+
+    class _FakeTok:
+        def __len__(self):
+            return len(toks)
+        def convert_ids_to_tokens(self, i):
+            return toks[i]
+
+    assert _numeric_token_ids(_FakeTok()) == {1, 2, 4, 6}  # '0.', '314', 'Ġ5', '100'
+
+    rng = random.Random(0)
+    assert all(_copies(1.0, rng) == 1 for _ in range(30))   # no oversample
+    assert all(_copies(3.0, rng) == 3 for _ in range(30))   # integer oversample
+    vals = [_copies(1.5, rng) for _ in range(4000)]         # fractional -> mix of 1 and 2
+    assert set(vals) == {1, 2}
+    assert abs(sum(vals) / len(vals) - 1.5) < 0.08          # averages to the multiplier
+
+
 # --- output-tag uniqueness (Modal) ------------------------------------------
 
 def test_eval_tag_unique_per_config_and_preserves_resume_name():

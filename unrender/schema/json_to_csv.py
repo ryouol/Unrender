@@ -22,8 +22,8 @@ def chart_to_csv(data: ChartData) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
 
-    x_label = (data.x_axis.label if data.x_axis else None) or "x"
-    y_label = (data.y_axis.label if data.y_axis else None) or "value"
+    x_label = data.x_axis.label or "x"
+    y_label = data.y_axis.label or "value"
 
     if data.chart_type == "pie":
         writer.writerow(["category", "value"])

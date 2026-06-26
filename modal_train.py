@@ -94,6 +94,22 @@ train_image = (
     .add_local_python_source("unrender")
 )
 
+# Frontier-API image: just the eval scorer's deps + the Gemini SDK (no torch — a
+# Gemini call needs no GPU stack). rapidfuzz pin matches train_image so the score
+# is identical to the base/LoRA arms (cell@5_exact doesn't use it, but series_name
+# does). add_local_python_source must be the LAST build step.
+gemini_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "google-genai",
+        "pydantic>=2.5",
+        "tqdm>=4.66",
+        "rapidfuzz>=3.6",
+        "pillow>=10.0",
+    )
+    .add_local_python_source("unrender")
+)
+
 
 # --- helpers shared by the eval/sweep functions (run inside the container) -----
 
@@ -176,6 +192,134 @@ def gen_geometry_data(train_files: str = "v1,v0"):
             base_seed=seeds[t],
             hard=(t == "v1"),
         )
+    VOL.commit()
+
+
+@app.function(image=train_image, cpu=1.0, memory=2048, timeout=600)
+def probe_real_urls():
+    """TEMP diagnostic: which OWID slugs exist, their data column, and the USA row
+    coverage (Code==USA) — so the real set is built from confirmed slugs only."""
+    import csv as _csv
+    import io
+    import urllib.request
+
+    def get(url):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (unrender)"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+
+    slugs = [
+        "life-expectancy", "population", "gdp-per-capita-worldbank",
+        "co-emissions-per-capita", "share-of-individuals-using-the-internet",
+        "human-development-index", "annual-co2-emissions-per-country",
+        "gdp-per-capita-maddison", "energy-use-per-capita",
+    ]
+    for slug in slugs:
+        url = f"https://ourworldindata.org/grapher/{slug}.csv"
+        try:
+            text = get(url).decode("utf-8", "replace")
+            rows = list(_csv.reader(io.StringIO(text)))
+            header = rows[0]
+            usa = [r for r in rows[1:] if len(r) > 2 and r[1].strip() == "USA"]
+            yrs = sorted(int(r[2]) for r in usa if r[2].strip().isdigit())
+            span = f"{yrs[0]}..{yrs[-1]} ({len(yrs)})" if yrs else "NO USA ROWS"
+            # is the last-col value numeric for USA?
+            sample = usa[len(usa) // 2] if usa else None
+            print(f"  OK {slug}: cols={header} usa_years={span} sample={sample}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ERR {slug}: {type(e).__name__}: {e}")
+
+
+@app.function(image=train_image, volumes={V: VOL}, cpu=2.0, memory=4096, timeout=1800)
+def fetch_real_data(dirname: str = "real_v0"):
+    """Source the REAL-chart transfer eval INSIDE Modal — the dev sandbox has no
+    egress, but a Modal container does. Downloads each curated FRED/OWID chart PNG
+    plus its OFFICIAL data CSV, reads ground truth straight from the CSV (never
+    estimated off the pixels), and writes images + a test.jsonl (with /vol-absolute
+    image paths) to {V}/data/<dirname>/. Then eval with `--data <dirname>`. CPU/~free.
+    See data/real_v0/README.md."""
+    import json
+    import urllib.request
+    from pathlib import Path
+
+    # OWID only: FRED is unreachable from Modal egress (DNS fails / datacenter IPs
+    # time out). The local tool (unrender.eval.fetch_real_set) still does FRED for a
+    # machine that can reach it; here we use OWID, which resolves and serves cleanly.
+    from unrender.eval.fetch_real_set import (
+        OWID, _OWID_COUNTRY, _OWID_HI, _OWID_LO, _owid_urls, _is_png, make_line_label, parse_owid_csv)
+    from unrender.eval.build_real_set import label_to_chartdata
+    from unrender.data_gen.split_dataset import _row
+    from unrender.schema.chart_schema import canonical_json
+
+    root = Path(f"{V}/data/{dirname}")
+    imgs = root / "images"
+    imgs.mkdir(parents=True, exist_ok=True)
+
+    def get(url: str) -> bytes:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (unrender real-set)"})
+        with urllib.request.urlopen(req, timeout=45) as r:
+            return r.read()
+
+    def add(out_id, png_url, csv_url, parse, title, ylab, yunit, sname, source, rows):
+        png = get(png_url)
+        if not _is_png(png):  # bad slug/param => an HTML error page; never write a fake chart
+            print(f"  ! {out_id}: non-PNG ({len(png)}B) from {png_url} — skip")
+            return
+        pts = parse(get(csv_url).decode("utf-8", "replace"))
+        if len(pts) < 3:
+            print(f"  ! {out_id}: only {len(pts)} points — skip ({csv_url})")
+            return
+        label = make_line_label(out_id, title, ylab, yunit, sname, pts, source)
+        gt = label_to_chartdata(label, out_id)  # validate; fail loud on a bad value
+        (imgs / f"{out_id}.png").write_bytes(png)
+        meta = {"labels_shown": False, "chart_type": "line", "augmented": False, "source": source}
+        rows.append(_row(f"{root}/images/{out_id}.png", canonical_json(gt), meta))
+        print(f"  ✓ {out_id}: {len(pts)} pts  ({title})")
+
+    rows = []
+    print(f"OWID ({len(OWID)}):")
+    for out_id, slug, title, ylab, yunit in OWID:
+        png_url, csv_url = _owid_urls(slug)
+        src = (f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
+               f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}")
+        try:
+            add(out_id, png_url, csv_url, parse_owid_csv, title, ylab, yunit, title, src, rows)
+        except Exception as e:  # noqa: BLE001 — one bad source shouldn't abort the batch
+            print(f"  ! {out_id}: {type(e).__name__}: {e}")
+
+    (root / "test.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    VOL.commit()
+    print(f"\nfetched {len(rows)}/{len(OWID)} real charts -> {root}/test.jsonl")
+    return len(rows)
+
+
+@app.function(
+    image=gemini_image,
+    volumes={V: VOL},
+    secrets=[modal.Secret.from_name("gemini-real")],
+    cpu=2.0,
+    memory=8192,
+    timeout=2 * 3600,
+)
+def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0"):
+    """Frontier (Gemini) baseline on a set, run INSIDE Modal because the dev sandbox
+    has no egress (Modal containers do). Reads GOOGLE_API_KEY from the 'gemini-real'
+    secret; SAME EXTRACTION_PROMPT + table decoder + cell@5_exact metric as the
+    base/LoRA arms, so the number is directly comparable. Results -> Volume."""
+    import subprocess
+
+    from unrender.eval.run_baselines import run
+    from unrender.prompts import EXTRACTION_PROMPT
+
+    out_dir = f"{V}/outputs/eval_{dirname}__gemini"
+    pred = run(provider="gemini", model=model, data=f"{V}/data/{dirname}/test.jsonl",
+               out=out_dir, limit=0, seed=0, prompt=EXTRACTION_PROMPT)
+    VOL.commit()
+    try:
+        subprocess.run(["python", "-m", "unrender.eval.score", "--predictions", str(pred)],
+                       check=True, cwd="/root")
+    except Exception as e:  # noqa: BLE001 — predictions are committed; re-score locally
+        print(f"⚠ in-container scoring failed ({e}); predictions ARE saved — re-score locally.")
     VOL.commit()
 
 
@@ -272,10 +416,13 @@ def eval_model(
         gen_config["max_new_tokens"] = max_new_tokens
 
     out_dir = f"{V}/outputs/{out_name or _eval_tag(mp, data, subset, gen_config)}"
+    # "v0"/"v1" -> the synthetic splits; "real_*" -> a hand-labeled real-chart set
+    # (data/real_v0, uploaded to the Volume) for the transfer eval. See data/real_v0/README.md.
+    data_sub = data if data.startswith("real") else f"synthetic_{data}"
     pred = run(
         provider="hf",
         model=mp,
-        data=f"{V}/data/synthetic_{data}/test.jsonl",
+        data=f"{V}/data/{data_sub}/test.jsonl",
         out=out_dir,
         limit=limit,
         seed=0,
@@ -497,6 +644,25 @@ def smoke():
     loads back). Total ~$0.5, mostly the one-time base-model download."""
     train_model.remote(train_files="v1", out_name="smoke", max_steps=30)
     eval_model.remote(model_path="runs/smoke/merged", data="v1", limit=5)
+
+
+@app.local_entrypoint()
+def fetch_real(dirname: str = "real_v0"):
+    """Build the real-chart transfer eval on the Volume (FRED/OWID downloaded inside
+    Modal, GT read from the official CSVs). Blocking — CPU, ~free, ~1-2 min. Then:
+        modal run modal_train.py::evaluate --model runs/qwen3vl4b-lora/merged --data real_v0
+    """
+    n = fetch_real_data.remote(dirname)
+    print(f"done: {n} real charts on the Volume at data/{dirname}/ (eval with --data {dirname})")
+
+
+@app.local_entrypoint()
+def gemini_real(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0"):
+    """Run the Gemini frontier baseline on the real-chart set (inside Modal).
+        modal run modal_train.py::gemini_real
+    Then pull/score: outputs/eval_<dirname>__gemini on the Volume."""
+    eval_gemini.remote(model, dirname)
+    print(f"gemini done -> outputs/eval_{dirname}__gemini on the Volume")
 
 
 @app.local_entrypoint()

@@ -103,6 +103,10 @@ class ChartSpec:
     y_top: Optional[float] = None        # unrounded value-axis maximum
     tick_suffix: Optional[str] = None    # "K" / "M" / "B" value-axis tick suffix
     minor_ticks: bool = False
+    # --- v2 knobs (synthetic_v2); all default to the frozen v0/v1 behavior ---
+    tick_format: Optional[str] = None    # "comma" (1,200,000) / "plain" (full raw digits)
+    x_numeric: bool = False              # line charts: continuous numeric x-axis, sparse auto ticks
+    theme: Optional[str] = None          # "owid" / "dark" / "news" rendering style
 
     def to_chart_data(self) -> ChartData:
         """Build the exact ground-truth label from this spec."""
@@ -199,8 +203,18 @@ def _title(rng: random.Random, metric: str, dim: str) -> Optional[str]:
     return template.format(metric=metric, dim=dim)
 
 
-def _values(rng: random.Random, n_series: int, n_cat: int, allow_negative: bool, decimals: int):
-    scale = rng.choice([1, 10, 100, 1000, 10_000, 100_000, 1_000_000])
+# v0/v1 magnitude ceiling: max value < 1e6. The 2026-07-01 sweep showed real
+# charts live at 1e8-1e9 (population, total CO2) and the model scored 0% there —
+# it had never emitted an 8-10 digit number. v2 extends the range to 1e9.
+_SCALES = [1, 10, 100, 1000, 10_000, 100_000, 1_000_000]
+_V2_SCALES = _SCALES + [10_000_000, 100_000_000, 1_000_000_000]
+
+
+def _values(rng: random.Random, n_series: int, n_cat: int, allow_negative: bool, decimals: int,
+            scales: List[int] = _SCALES):
+    # NOTE: the draw ORDER here (choice, then random per cell) is frozen — v0/v1
+    # regenerate byte-identically because `scales` defaults to the original list.
+    scale = rng.choice(scales)
     out: List[List[float]] = []
     for _ in range(n_series):
         row = []
@@ -214,14 +228,18 @@ def _values(rng: random.Random, n_series: int, n_cat: int, allow_negative: bool,
     return out
 
 
-def random_spec(rng: random.Random, hard: bool = False) -> ChartSpec:
+def random_spec(rng: random.Random, hard: bool = False, v2: bool = False) -> ChartSpec:
     """Produce one fully-specified random chart.
 
     hard=True enables the eval-v1 escalations (denser data, truncated/unrounded
-    value axes, K/M/B ticks, similar palettes, smaller figures). The hard path is
-    a separate function so the easy path's RNG sequence is byte-identical to
-    eval-v0 — regenerating v0 from the recipe still reproduces it exactly.
+    value axes, K/M/B ticks, similar palettes, smaller figures). v2=True is the
+    2026-07 real-transfer escalation (magnitudes to 1e9, real-world axis formats,
+    continuous year x-axes, themes). Each mode is a separate function so the
+    frozen paths' RNG sequences stay byte-identical — regenerating v0/v1 from
+    their recipes still reproduces them exactly.
     """
+    if v2:
+        return _v2_spec(rng)
     if hard:
         return _hard_spec(rng)
     chart_type = _weighted_chart_type(rng)
@@ -339,4 +357,124 @@ def _hard_spec(rng: random.Random) -> ChartSpec:
         decimals=decimals,
         thousands_sep=rng.random() < 0.3,
         y_baseline=y_baseline, y_top=y_top, tick_suffix=tick_suffix,
+    )
+
+
+_V2_THEMES = [None, None, None, "owid", "dark", "news"]  # 50% themed
+
+# Dark-theme-safe palettes (visual audit 2026-07-06): the standard palettes'
+# darkest entries (#22223b, #252525, #08306b, ...) are near-invisible on the
+# dark theme's #1c1e26 background — a bar the model literally cannot see is
+# garbage supervision. Bright sets + the LIGHT ends of the mono ramps (which
+# keep the "similar shades" difficulty without vanishing).
+_DARK_THEME_PALETTES = [
+    ["#4fc3f7", "#ffb74d", "#81c784", "#e57373", "#ba68c8"],  # bright material
+    ["#8ab4f8", "#f28b82", "#fdd663", "#81c995", "#ff8bcb"],  # dark-mode classics
+] + [list(reversed(p))[:5] for p in _MONO_PALETTES]           # light-first ramps
+
+
+def _v2_spec(rng: random.Random) -> ChartSpec:
+    """synthetic_v2 (2026-07, see FRONTIER_PLAN.md): everything the sweep showed
+    real charts have and v0/v1 lack — values up to 1e9 rendered with real-world
+    axis formats (K/M/B suffixes incl. the previously-unreachable B, comma
+    grouping, full raw digits, mpl offset), continuous numeric year x-axes with
+    sparse auto ticks, and OWID/dark/news themes. Density mixes easy and hard.
+    Separate RNG path so it can't perturb the frozen v0/v1 sequences."""
+    chart_type = _weighted_chart_type(rng)
+    is_multi = chart_type in MULTI_SERIES_TYPES
+    is_pie = chart_type == "pie"
+
+    dense = rng.random() < 0.55
+    if is_pie:
+        n_series, n_cat = 1, rng.randint(3, 8)
+    elif is_multi:
+        n_series, n_cat = (rng.randint(4, 6), rng.randint(4, 10)) if dense else (rng.randint(2, 4), rng.randint(3, 8))
+    else:
+        n_series, n_cat = 1, (rng.randint(15, 40) if dense else rng.randint(3, 12))
+
+    metric = rng.choice(_METRICS)
+    categories, dim = _categories(rng, n_cat)
+
+    decimals = rng.choice([0, 0, 0, 1, 2])
+    allow_negative = (not is_pie) and chart_type in ("bar", "horizontal_bar", "line", "multi_line") and rng.random() < 0.15
+    values = _values(rng, n_series, n_cat, allow_negative, decimals, scales=_V2_SCALES)
+    flat = [v for row in values for v in row] or [0.0, 1.0]
+    if max(abs(v) for v in flat) >= 1000:
+        # big-magnitude charts are integer-valued in the real world
+        values = [[int(round(v)) for v in row] for row in values]
+        decimals = 0
+        flat = [v for row in values for v in row]
+    if is_pie:
+        values = [[max(abs(v), 1) for v in values[0]]]
+        flat = values[0]
+
+    series_names = _series_names(rng, n_series) if is_multi else [metric if rng.random() < 0.5 else None]
+    has_unit = rng.random() < 0.45
+    unit = rng.choice(_UNITS) if has_unit else None
+    rotate = rng.choice([0, 30, 45, 90]) if n_cat > 6 else rng.choice([0, 0, 45])
+
+    # Value-axis rendering: spread big numbers across the REAL formats a model
+    # must read — suffix ticks (K/M/B), comma grouping, full raw digits, or the
+    # matplotlib default (which shows offset "1e8"-style notation when large).
+    vmin, vmax = min(flat), max(flat)
+    y_baseline = y_top = tick_suffix = tick_format = None
+    if not is_pie:
+        if vmin > 0 and rng.random() < 0.5:
+            y_baseline = round(vmin * rng.uniform(0.5, 0.9), 4)
+        if rng.random() < 0.6:
+            y_top = round(vmax * rng.uniform(1.02, 1.12), 4)
+        if vmax >= 1e4:
+            r = rng.random()
+            if r < 0.40:
+                # Fractional thresholds, NOT >= 1e9: values are rng.random()*scale
+                # so vmax is always strictly below the scale — a >= 1e9 gate would
+                # make "B" unreachable (the exact dead-branch bug v1 had). A chart
+                # topping out at 0.6e9 legitimately reads "0.2B .. 0.6B" on its axis.
+                tick_suffix = "B" if vmax >= 2.5e8 else "M" if vmax >= 2.5e5 else "K"
+            elif r < 0.65:
+                tick_format = "comma"
+            elif r < 0.85:
+                tick_format = "plain"
+            # else: matplotlib default (offset notation at large magnitudes)
+
+    # Continuous year x-axis (the OWID/FRED look): numeric years on a real axis
+    # with sparse auto ticks, instead of every category printed as a label.
+    x_numeric = chart_type in ("line", "multi_line") and dim == "Year" and rng.random() < 0.6
+
+    theme = rng.choice(_V2_THEMES)
+    palette = rng.choice(_MONO_PALETTES) if (is_multi and dense) else rng.choice(_PALETTES)
+    if theme == "dark":
+        palette = rng.choice(_DARK_THEME_PALETTES)  # visual audit: no invisible marks
+
+    value_labels_shown = rng.random() < 0.45  # ~55% label-free
+    if value_labels_shown and vmax >= 1e7 and (n_cat > 12 or n_series * n_cat > 24):
+        # Visual audit: 8-10-digit printed labels at this density collide into
+        # unreadable ink — supervision noise, not signal. Flip to label-free;
+        # sparse big-magnitude charts keep their printed labels.
+        value_labels_shown = False
+
+    return ChartSpec(
+        chart_type=chart_type,
+        title=_title(rng, metric, dim),
+        x_label=None if is_pie else (dim if rng.random() < 0.85 else None),
+        y_label=None if is_pie else (metric if rng.random() < 0.85 else None),
+        y_unit=None if is_pie else unit,
+        categories=categories,
+        series_names=series_names,
+        values=values,
+        value_labels_shown=value_labels_shown,
+        palette=palette,
+        grid=rng.random() < 0.55,
+        legend_loc=rng.choice(_LEGEND_LOCS),
+        font_family=rng.choice(_FONTS),
+        dpi=rng.choice([72, 96, 100, 150, 200]),
+        figsize=(round(rng.uniform(3.6, 9.5), 1), round(rng.uniform(2.8, 6.5), 1)),
+        rotate_xticks=rotate,
+        decimals=decimals,
+        thousands_sep=(rng.random() < 0.7) if vmax >= 1e4 else (rng.random() < 0.4),
+        y_baseline=y_baseline, y_top=y_top, tick_suffix=tick_suffix,
+        minor_ticks=rng.random() < 0.3,
+        tick_format=tick_format,
+        x_numeric=x_numeric,
+        theme=theme,
     )

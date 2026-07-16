@@ -141,6 +141,23 @@ def _load_subset_ids(name: str):
     )["ids"]
 
 
+def _parse_eval_specs(spec: str):
+    """"real_v0,common300,v2:300" -> ordered eval descriptors for the post-train
+    chain. Forms: "common300" (the frozen v1 subset), "real_v0" (a real set dir),
+    "v0"/"v1"/"v2" (a synthetic test split); an optional ":N" caps the row count
+    (e.g. "v2:300"). Pure string parsing -> unit-testable."""
+    out = []
+    for part in (s.strip() for s in spec.split(",") if s.strip()):
+        name, _, lim = part.partition(":")
+        d = {"limit": int(lim) if lim else 0}
+        if name == "common300":
+            d.update(data="v1", subset="common300")
+        else:
+            d.update(data=name, subset="")
+        out.append(d)
+    return out
+
+
 def _eval_tag(mp: str, data: str, subset: str, gen_config: dict) -> str:
     """Stable, collision-free output dir name per (model, split, subset, decoder),
     so base/LoRA/8B and each sweep arm land in distinct folders. The plain
@@ -176,6 +193,35 @@ def generate_data(n: int = 5000):
     VOL.commit()
 
 
+@app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=4 * 3600)
+def generate_data_v2(n: int = 20000, seed: int = 9012):
+    """synthetic_v2 (FRONTIER_PLAN P1): magnitudes to 1e9, real-world axis formats,
+    continuous year x-axes, themes; 20k charts by default (data scale is the moat
+    and CPU is cheap). Rows bake EXTRACTION_PROMPT (v1) for now — switch to the V2
+    prompt only when ALL compared arms are re-run on it (comparability rule)."""
+    from pathlib import Path
+
+    from unrender.data_gen.generate import generate
+    from unrender.data_gen.split_dataset import split
+
+    out = f"{V}/data/synthetic_v2"
+    # Completion sentinel: removed FIRST so an interrupted regen can't be mistaken
+    # for a finished one, written LAST so its presence proves the whole
+    # gen+split+commit ran. This is how a detached run (immune to the client/
+    # session dying) is verified afterwards — the recurring local-upload failure
+    # mode was session teardown, and server-side --detach + this sentinel sidesteps
+    # it entirely (no 6GB upload).
+    ready = Path(out) / "READY.json"
+    ready.unlink(missing_ok=True)
+    generate(n=n, out=out, base_seed=seed, hard=False, v2=True, workers=8)
+    split(out=out, val_size=500, test_size=1000)
+    n_img = len(list((Path(out) / "images").glob("*.png")))
+    import json as _json
+    ready.write_text(_json.dumps({"n": n, "seed": seed, "images": n_img, "v2_fixed": True}))
+    VOL.commit()
+    print(f"gen_v2 DONE: {n_img} images + splits + READY.json committed to {out}")
+
+
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
 def gen_geometry_data(train_files: str = "v1,v0"):
     """Build the geometry-supervision training targets (train.geom.jsonl) from the
@@ -195,39 +241,83 @@ def gen_geometry_data(train_files: str = "v1,v0"):
     VOL.commit()
 
 
-@app.function(image=train_image, cpu=1.0, memory=2048, timeout=600)
-def probe_real_urls():
-    """TEMP diagnostic: which OWID slugs exist, their data column, and the USA row
-    coverage (Code==USA) — so the real set is built from confirmed slugs only."""
-    import csv as _csv
-    import io
-    import urllib.request
+@app.function(image=train_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=3600)
+def preflight(train_files: str = "v2,v1,v0", val_files: str = "v2,v1,v0",
+              batch_size: int = 2, grad_accum: int = 4, epochs: float = 1.0,
+              labelfree_weight: float = 1.5, verify_all: str = ""):
+    """$0.02 insurance before a multi-hour train: verify ON THE VOLUME that
+    (1) every split file exists and parses, (2) every referenced image exists,
+    (3) images decode (ALL of `verify_all`'s sets — they went through
+    tar/upload/untar — plus a sample of the rest), (4) the longest targets fit
+    the 4096-token budget with room for image tokens, and (5) print the step/
+    time/cost estimate for the planned run. Fails loudly on any problem."""
+    import json
+    from pathlib import Path
 
-    def get(url):
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (unrender)"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.read()
+    from PIL import Image
 
-    slugs = [
-        "life-expectancy", "population", "gdp-per-capita-worldbank",
-        "co-emissions-per-capita", "share-of-individuals-using-the-internet",
-        "human-development-index", "annual-co2-emissions-per-country",
-        "gdp-per-capita-maddison", "energy-use-per-capita",
-    ]
-    for slug in slugs:
-        url = f"https://ourworldindata.org/grapher/{slug}.csv"
-        try:
-            text = get(url).decode("utf-8", "replace")
-            rows = list(_csv.reader(io.StringIO(text)))
-            header = rows[0]
-            usa = [r for r in rows[1:] if len(r) > 2 and r[1].strip() == "USA"]
-            yrs = sorted(int(r[2]) for r in usa if r[2].strip().isdigit())
-            span = f"{yrs[0]}..{yrs[-1]} ({len(yrs)})" if yrs else "NO USA ROWS"
-            # is the last-col value numeric for USA?
-            sample = usa[len(usa) // 2] if usa else None
-            print(f"  OK {slug}: cols={header} usa_years={span} sample={sample}")
-        except Exception as e:  # noqa: BLE001
-            print(f"  ERR {slug}: {type(e).__name__}: {e}")
+    def rows_of(tag, fname):
+        p = Path(f"{V}/data/synthetic_{tag}/{fname}")
+        assert p.exists(), f"MISSING split: {p}"
+        return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+
+    def img_path(r):
+        p = r["images"][0]
+        return p if Path(p).exists() else f"{V}/{p}"
+
+    tags = [t.strip() for t in train_files.split(",")]
+    n_records = 0
+    longest = []  # (len, target_text)
+    for tag in tags:
+        rows = rows_of(tag, "train.jsonl")
+        missing = [img_path(r) for r in rows if not Path(img_path(r)).exists()]
+        assert not missing, f"{tag}: {len(missing)} missing images, e.g. {missing[:3]}"
+        lf = sum(1 for r in rows if not (r.get("meta") or {}).get("labels_shown", True))
+        n_records += len(rows) + int(lf * (labelfree_weight - 1.0))
+        for r in rows:
+            t = r["messages"][1]["content"]
+            longest.append((len(t), t))
+        longest = sorted(longest, key=lambda x: -x[0])[:30]
+        # decode check, PARALLEL (a serial 20k-image pass over the Volume ran
+        # >30min and died to a client blip): full pass for `verify_all` sets,
+        # a spread sample for the rest. Full-set verification of fresh data
+        # should happen LOCALLY before upload; here it's transfer insurance.
+        import multiprocessing.dummy as mpd  # threads: PIL verify is I/O-bound here
+
+        check = rows if tag in verify_all.split(",") else rows[:: max(1, len(rows) // 200)]
+
+        def _verify(r):
+            try:
+                with Image.open(img_path(r)) as im:
+                    im.verify()
+                return None
+            except Exception as e:  # noqa: BLE001
+                return (img_path(r), str(e))
+
+        with mpd.Pool(16) as pool:
+            bad = [b for b in pool.map(_verify, check) if b]
+        assert not bad, f"{tag}: {len(bad)} corrupt images, e.g. {bad[:3]}"
+        print(f"  {tag}: {len(rows)} rows, images ok ({len(check)} decoded), label-free {lf}")
+    for tag in (t.strip() for t in val_files.split(",") if t.strip()):
+        assert Path(f"{V}/data/synthetic_{tag}/val.jsonl").exists(), f"MISSING val for {tag}"
+
+    # Token budget: prompt + longest target must leave headroom for image tokens
+    # under sft_lora's max_seq_length=4096. Use the merged fair model's processor
+    # from the Volume (no network).
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(f"{V}/runs/qwen3vl4b-table-fair/merged", trust_remote_code=True)
+    prompt_len = len(tok(rows_of(tags[0], "train.jsonl")[0]["messages"][0]["content"]).input_ids)
+    worst = max(len(tok(t).input_ids) for _, t in longest)
+    budget = 4096 - prompt_len - worst
+    print(f"  token budget: prompt={prompt_len} + worst_target={worst} -> {budget} left for image tokens")
+    assert budget >= 900, f"longest target leaves only {budget} tokens for the image — raise max_seq_length"
+
+    steps = int(n_records / (batch_size * grad_accum) * epochs)
+    for gpu, sps, rate in (("L4", 11.0, 0.80), ("A100", 3.7, 2.10)):
+        h = steps * sps / 3600
+        print(f"  estimate {gpu}: ~{steps} steps ≈ {h:.1f}h train ≈ ${h * rate:.0f} (+evals)")
+    print(f"PREFLIGHT PASS: ~{n_records} records, ~{steps} steps")
+    return {"records": n_records, "steps": steps}
 
 
 @app.function(image=train_image, volumes={V: VOL}, cpu=2.0, memory=4096, timeout=1800)
@@ -323,13 +413,69 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     VOL.commit()
 
 
+@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1200)
+def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/merged", revision: str = ""):
+    """Extract ONE chart image → ChartData JSON + CSV, SAME prompt/decoder as eval
+    (greedy). Cold start loads the merged model (~1–2 min); the call itself is seconds.
+    The `infer` entrypoint ships a local image's bytes here, so you can throw any chart
+    at the fine-tuned model with one command."""
+    import tempfile
+
+    from unrender.eval import providers as _providers
+    from unrender.eval.providers import hf_vlm_provider
+    from unrender.prompts import EXTRACTION_PROMPT
+    from unrender.schema.json_to_csv import chart_to_csv
+    from unrender.schema.validate import parse_chart_json
+
+    _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
+    _providers.HF_MODEL_CONFIG.clear()
+    if revision:
+        _providers.HF_MODEL_CONFIG["revision"] = revision
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as f:
+        f.write(image_bytes)
+        f.flush()
+        raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, _resolve_model(model_path))
+    pred, errs = parse_chart_json(raw)
+    return {"raw": raw, "json": pred.model_dump() if pred else None,
+            "csv": chart_to_csv(pred) if pred else None, "parse_errors": errs}
+
+
+@app.function(
+    image=train_image,
+    volumes={V: VOL},
+    secrets=[modal.Secret.from_name("hf-token")],
+    cpu=4.0,
+    memory=8192,
+    timeout=3600,
+)
+def publish_hf(repo_id: str, model_path: str = "runs/qwen3vl4b-table-fair/merged", private: bool = False):
+    """Push the merged fine-tune from the Volume to the Hugging Face Hub so anyone can
+    `from_pretrained` it. CPU-only (uploads the folder; no model load). Needs an
+    `hf-token` Modal secret carrying HF_TOKEN. NOT run by default — publishing makes
+    the weights public and is the owner's call (see the `publish` entrypoint)."""
+    import os
+    from pathlib import Path
+
+    from huggingface_hub import HfApi
+
+    src = _resolve_model(model_path)
+    if not Path(src).exists():
+        raise SystemExit(f"no merged model at {src} on the Volume — train it first")
+    api = HfApi(token=os.environ["HF_TOKEN"])
+    api.create_repo(repo_id, private=private, exist_ok=True)
+    api.upload_folder(repo_id=repo_id, folder_path=src,
+                      commit_message="Unrender chart->data LoRA (Qwen3-VL-4B, merged 16bit)")
+    print(f"published {src} -> https://huggingface.co/{repo_id}")
+
+
 @app.function(
     image=train_image,
     volumes={V: VOL},
     gpu=GPU,
     cpu=4.0,
     memory=32768,
-    timeout=12 * 3600,
+    timeout=24 * 3600,  # train (~4k steps on the v2 mix) + the chained evals
 )
 def train_model(
     train_files: str = "v1,v0",
@@ -344,6 +490,12 @@ def train_model(
     geometry: bool = False,
     hbar_weight: float = 1.0,
     numeric_loss_weight: float = 1.0,
+    val_files: str = "",
+    val_size: int = 256,
+    n_evals: int = 5,
+    type_weights: str = "",
+    eval_after: str = "",
+    common300_ids=None,
 ):
     from unrender.train.sft_lora import train
 
@@ -353,13 +505,27 @@ def train_model(
     # numeric_loss_weight up-weights digit-token loss (the precision levers).
     fname = "train.geom.jsonl" if geometry else "train.jsonl"
     paths = [f"{V}/data/synthetic_{t.strip()}/{fname}" for t in train_files.split(",")]
+    # val_files (e.g. "v1,v0") enables best-checkpoint selection on eval_loss — the
+    # fairness fix for the table arms. "" disables it (smoke, or a deliberate
+    # final-ckpt run). val mirrors the train fname (val.jsonl / val.geom.jsonl), so
+    # geometry+val would need a val.geom.jsonl (gen_geom only builds train.geom.jsonl)
+    # — table arms use the committed val.jsonl that's already on the Volume.
+    val_fname = fname.replace("train", "val", 1)
+    val_paths = (
+        [f"{V}/data/synthetic_{t.strip()}/{val_fname}" for t in val_files.split(",") if t.strip()]
+        if val_files else None
+    )
     train(
         train_paths=paths,
+        val_paths=val_paths,
+        val_size=val_size,
+        n_evals=n_evals,
         out=f"{V}/runs/{out_name}",
         base=base,
         data_root=V,
         labelfree_weight=labelfree_weight,
         hbar_weight=hbar_weight,
+        type_weights=type_weights,
         numeric_loss_weight=numeric_loss_weight,
         epochs=epochs,
         max_steps=max_steps,
@@ -369,16 +535,27 @@ def train_model(
     )
     VOL.commit()
 
+    # One-shot chain (eval_after="real_v0,common300,v2:300"): run the evals in
+    # THIS container right after the merge commits — no human needed between
+    # train and results. Each eval is resumable and failure-isolated: a crash
+    # here never loses the trained model (committed above), and the remaining
+    # evals still run.
+    for spec in _parse_eval_specs(eval_after):
+        ids = common300_ids if spec["subset"] == "common300" else None
+        print(f"\n=== chained eval: {spec} ===")
+        try:
+            _eval_impl(model_path=f"runs/{out_name}/merged", data=spec["data"],
+                       limit=spec["limit"], subset=spec["subset"], subset_ids=ids)
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠ chained eval {spec} failed ({e}) — model + earlier evals are safe; "
+                  f"re-run standalone: modal run --detach modal_train.py::evaluate "
+                  f"--model runs/{out_name}/merged --data {spec['data']}"
+                  + (f" --subset {spec['subset']}" if spec["subset"] else "")
+                  + (f" --limit {spec['limit']}" if spec["limit"] else ""))
+    VOL.commit()
 
-@app.function(
-    image=train_image,
-    volumes={V: VOL},
-    gpu=GPU,
-    cpu=4.0,
-    memory=32768,
-    timeout=20 * 3600,
-)
-def eval_model(
+
+def _eval_impl(
     model_path: str,
     data: str = "v1",
     limit: int = 0,
@@ -390,14 +567,10 @@ def eval_model(
     revision: str = "",
     decode: str = "table",
 ):
-    """Run a model over a test split through the SAME harness as the frontier
-    baselines, then print the sliced score report. ``model_path`` is a Volume
-    run dir OR an HF hub id (``Qwen/Qwen3-VL-4B-Instruct``) for the base-model
-    controls (item 1). ``subset_ids`` (resolved locally by the entrypoint from a
-    name like ``common300``) restricts to that frozen id list; ``subset`` is kept
-    only to label the output dir. ``repetition_penalty``/``max_new_tokens``
-    override decoding (item 2). Resumable: predictions.jsonl persists on the
-    Volume, so a re-run skips done ids."""
+    """The eval body, as a plain function so BOTH the standalone eval_model
+    function AND the post-train chain inside train_model can run it (same
+    container, same GPU — the one-shot flow). Resumable: predictions.jsonl
+    persists on the Volume, so a re-run skips done ids."""
     import subprocess
     from pathlib import Path
 
@@ -465,6 +638,39 @@ def eval_model(
             + (f" --decode {decode}" if decode != "table" else "")
         )
     VOL.commit()
+
+
+@app.function(
+    image=train_image,
+    volumes={V: VOL},
+    gpu=GPU,
+    cpu=4.0,
+    memory=32768,
+    timeout=20 * 3600,
+)
+def eval_model(
+    model_path: str,
+    data: str = "v1",
+    limit: int = 0,
+    out_name: str = "",
+    subset: str = "",
+    subset_ids=None,
+    repetition_penalty: float = 0.0,
+    max_new_tokens: int = 0,
+    revision: str = "",
+    decode: str = "table",
+):
+    """Run a model over a test split through the SAME harness as the frontier
+    baselines, then print the sliced score report. ``model_path`` is a Volume
+    run dir OR an HF hub id (``Qwen/Qwen3-VL-4B-Instruct``) for the base-model
+    controls (item 1). ``subset_ids`` (resolved locally by the entrypoint from a
+    name like ``common300``) restricts to that frozen id list; ``subset`` is kept
+    only to label the output dir. See _eval_impl for the body."""
+    _eval_impl(
+        model_path=model_path, data=data, limit=limit, out_name=out_name,
+        subset=subset, subset_ids=subset_ids, repetition_penalty=repetition_penalty,
+        max_new_tokens=max_new_tokens, revision=revision, decode=decode,
+    )
 
 
 @app.function(
@@ -631,6 +837,31 @@ def gen(n: int = 5000):
 
 
 @app.local_entrypoint()
+def check(train_files: str = "v2,v1,v0", val_files: str = "v2,v1,v0", epochs: float = 1.0,
+          verify_all: str = "v2"):
+    """Pre-train preflight (CPU, ~$0.02): data integrity + token budget + cost
+    estimate for the one-shot. Run this, read PASS, then launch ::train.
+    `verify_all` sets get EVERY image decoded (default v2 — the freshest set);
+    others are sampled. Pass verify_all="" for the fast sampled-only pass."""
+    print(preflight.remote(train_files=train_files, val_files=val_files, epochs=epochs,
+                           verify_all=verify_all))
+
+
+@app.local_entrypoint()
+def gen_v2(n: int = 20000, seed: int = 9012):
+    """Regenerate synthetic_v2 ON the Volume (CPU, ~$1-2, ~5-8 min). Use with
+    `modal run --detach` — .spawn() returns immediately and the work runs
+    server-side, so it CANNOT be killed by the client/session dying (the failure
+    mode that killed the 6GB upload three times). Verify afterward: a committed
+    data/synthetic_v2/READY.json means it finished. Then (GATED, GPU):
+        modal run --detach modal_train.py::train --train-files v2,v1,v0 --out-name qwen3vl4b-v2
+    """
+    call = generate_data_v2.spawn(n=n, seed=seed)
+    print(f"submitted gen_v2 (FunctionCall {call.object_id}); returns now — use --detach. "
+          f"Done when data/synthetic_v2/READY.json exists on the Volume.")
+
+
+@app.local_entrypoint()
 def gen_geom(train_files: str = "v1,v0"):
     """Build geometry-supervision targets on the Volume (CPU, ~$0.3). Run once
     before `train ... --geometry`."""
@@ -639,10 +870,13 @@ def gen_geom(train_files: str = "v1,v0"):
 
 @app.local_entrypoint()
 def smoke():
-    """End-to-end insurance before spending real hours: 30 train steps, save +
-    merge, then eval 5 images through the hf provider (proves the merged model
-    loads back). Total ~$0.5, mostly the one-time base-model download."""
-    train_model.remote(train_files="v1", out_name="smoke", max_steps=30)
+    """End-to-end insurance before spending real hours: 30 train steps WITH the
+    val/best-checkpoint path on (val-size 64 so it's cheap), save + merge, then
+    eval 5 images through the hf provider (proves the merged = best-checkpoint
+    model loads back). Exercising val here means the first time the eval +
+    load_best_model_at_end code runs is NOT the multi-hour paid run. Total ~$0.5,
+    mostly the one-time base-model download."""
+    train_model.remote(train_files="v1", out_name="smoke", max_steps=30, val_files="v1", val_size=64)
     eval_model.remote(model_path="runs/smoke/merged", data="v1", limit=5)
 
 
@@ -666,6 +900,37 @@ def gemini_real(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
 
 
 @app.local_entrypoint()
+def infer(image: str, model: str = "runs/qwen3vl4b-table-fair/merged", revision: str = ""):
+    """Extract the data from ONE chart image with the fine-tuned model:
+        modal run modal_train.py::infer --image path/to/chart.png
+    Prints the ChartData JSON + CSV. Defaults to the best model (table-fair); pass
+    --model unsloth/Qwen3-VL-4B-Instruct --revision <sha> to try the base."""
+    import json as _json
+    from pathlib import Path
+
+    p = Path(image)
+    if not p.is_file():
+        egs = sorted(Path("data/real_v0/images").glob("*.png"))[:3]
+        hint = ("\n  try: " + "  ".join(str(e) for e in egs)) if egs else ""
+        raise SystemExit(f"no image at {image!r} — pass --image <path to a real chart PNG>.{hint}")
+    out = infer_one.remote(p.read_bytes(), model, revision)
+    if out["json"]:
+        print("\n=== JSON ===\n" + _json.dumps(out["json"], indent=2, ensure_ascii=False))
+        print("\n=== CSV ===\n" + (out["csv"] or ""))
+    else:
+        print(f"\n⚠ unparseable output ({out['parse_errors']}). Raw:\n{out['raw'][:2000]}")
+
+
+@app.local_entrypoint()
+def publish(repo_id: str, model: str = "runs/qwen3vl4b-table-fair/merged", private: bool = False):
+    """Publish the merged fine-tune to the Hugging Face Hub (makes it public + usable
+    via `from_pretrained`). Needs an `hf-token` Modal secret (HF_TOKEN=hf_...):
+        modal run modal_train.py::publish --repo-id <your-user>/unrender-qwen3vl4b-4b
+    NOT part of any automated flow — run it yourself when you want to publish."""
+    publish_hf.remote(repo_id=repo_id, model_path=model, private=private)
+
+
+@app.local_entrypoint()
 def train(
     train_files: str = "v1,v0",
     out_name: str = "qwen3vl4b-lora",
@@ -679,11 +944,30 @@ def train(
     geometry: bool = False,
     hbar_weight: float = 1.0,
     numeric_loss_weight: float = 1.0,
+    val_files: str = "v1,v0",
+    n_evals: int = 5,
+    type_weights: str = "",
+    eval_after: str = "",
 ):
-    """`--geometry` trains the geometry-supervision arm on train.geom.jsonl
-    (run `gen_geom` first); use a distinct --out-name e.g. qwen3vl4b-geom.
-    Precision levers: `--numeric-loss-weight 3` up-weights digit-token loss;
-    `--hbar-weight 3` oversamples horizontal_bar (the worst Stage-A slice).
+    """Defaults to the FAIR protocol: `--val-files v1,v0` selects the best
+    checkpoint on val eval_loss (set `--val-files ""` for a final-ckpt run).
+
+    THE ONE-SHOT (P2, refine-logs/FRONTIER_PLAN.md — train on v2 then auto-eval
+    real_v0 + common300 + 300 v2-test rows in the same container, ~$11-13 total):
+        UNRENDER_GPU=A100 modal run --detach modal_train.py::train \\
+            --train-files v2,v1,v0 --val-files v2,v1,v0 --epochs 1.0 \\
+            --out-name qwen3vl4b-v2 --eval-after real_v0,common300,v2:300
+    Crash-safe: a relaunch of the SAME command resumes from the latest
+    checkpoint (sft_lora._latest_checkpoint) and finished evals resume too.
+
+    The numeric-loss-on-table pivot (refine-logs/NUMERIC_TABLE_PLAN.md):
+        modal run --detach modal_train.py::train --out-name qwen3vl4b-table-fair    --numeric-loss-weight 1
+        modal run --detach modal_train.py::train --out-name qwen3vl4b-table-numloss --numeric-loss-weight 3
+
+    `--geometry` trains the geometry-supervision arm on train.geom.jsonl (run
+    `gen_geom` first; geometry+val needs a val.geom.jsonl). Precision levers:
+    `--numeric-loss-weight 3` up-weights digit-token loss; `--hbar-weight 3`
+    oversamples horizontal_bar (the worst Stage-A slice).
 
     Uses .spawn() (fire-and-forget): the client returns immediately so a dropped
     laptop/SSH/stream can't tear down a multi-hour run. ALWAYS invoke with
@@ -702,16 +986,23 @@ def train(
         geometry=geometry,
         hbar_weight=hbar_weight,
         numeric_loss_weight=numeric_loss_weight,
+        val_files=val_files,
+        n_evals=n_evals,
+        type_weights=type_weights,
+        eval_after=eval_after,
+        # resolve the frozen id list LOCALLY (the repo ships it; the container doesn't)
+        common300_ids=_load_subset_ids("common300") if "common300" in eval_after else None,
     )
     print(
         f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
         f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}"
+        + (f"\nchained evals after training: {eval_after}" if eval_after else "")
     )
 
 
 @app.local_entrypoint()
 def evaluate(
-    model: str = "runs/qwen3vl4b-lora/merged",
+    model: str = "runs/qwen3vl4b-table-fair/merged",
     data: str = "v1",
     limit: int = 0,
     subset: str = "",

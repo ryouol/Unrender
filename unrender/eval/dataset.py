@@ -23,11 +23,30 @@ class EvalSample:
     meta: dict            # slice keys: labels_shown, chart_type, augmented
 
 
+def _resolve_image(image: str, jsonl_path: str) -> str:
+    """Image paths are either absolute (Modal-generated sets: /vol/...) or
+    repo-root-relative (locally-generated sets: data/synthetic_v2/images/x.png).
+    For the relative case, anchor on the JSONL's own location — it lives at
+    <root>/data/<set>/<split>.jsonl, so <root> is its 3rd parent. Works
+    unchanged on the Mac (root=".") and in a Modal container (root="/vol").
+    When neither exists, return the path UNCHANGED: flows that never open the
+    image (mock providers, re-scoring saved predictions on a machine without
+    the images) must keep working; a real provider fails loudly at open."""
+    if Path(image).exists():
+        return image
+    p = Path(jsonl_path).resolve()
+    if len(p.parents) >= 3:
+        alt = p.parents[2] / image
+        if alt.exists():
+            return str(alt)
+    return image
+
+
 def load_eval_samples(path: str, limit: int = 0) -> List[EvalSample]:
     rows = read_jsonl(path, limit=limit)
     samples = []
     for r in rows:
-        image = r["images"][0]
+        image = _resolve_image(r["images"][0], path)
         gt_json = r["messages"][1]["content"]
         samples.append(
             EvalSample(

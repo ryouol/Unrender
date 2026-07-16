@@ -31,6 +31,22 @@ Rules:
 - Return JSON only.""".replace("{TYPES}", " | ".join(CHART_TYPES))
 
 
+# v2 prompt (FRONTIER_PLAN P1): the same schema with two extra rules targeting
+# the measured failure modes — suffix/comma-formatted numbers (which used to
+# invalidate whole charts) and paraphrased x labels (killed by fuzzy matching).
+# COMPARABILITY RULE: numbers are only comparable within one prompt version.
+# Use this for synthetic_v2 training and any re-baselined comparison set; never
+# mix v1-prompt and v2-prompt results in the same table.
+EXTRACTION_PROMPT_V2 = EXTRACTION_PROMPT.replace(
+    "- Do not describe the chart.",
+    """- Write every value as a plain number: no thousands separators, no % or currency signs, and expand K/M/B/T suffixes (an axis reading 1.2B means 1200000000).
+- Copy each x/category label EXACTLY as printed on the chart.
+- Emit exactly one point per category shown; never add or drop categories.
+- Do not describe the chart.""")
+if "1200000000" not in EXTRACTION_PROMPT_V2:  # the .replace anchor must never drift silently
+    raise RuntimeError("EXTRACTION_PROMPT_V2 composition failed")
+
+
 # Geometry-supervision prompt (the "measure, don't guess" arm). The model emits a
 # compact GEOMETRY PROGRAM — the plotting box, every value-axis tick paired with
 # its printed value, and each mark's position — from which a deterministic

@@ -15,6 +15,7 @@ Matching is robust to ordering and minor label noise:
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from typing import Dict, List, Optional
 
@@ -27,12 +28,28 @@ _NAME_ALIGN_THRESHOLD = 55  # looser, for pairing predicted series to GT series
 _NAME_F1_THRESHOLD = 85   # stricter, for counting a series name as correct
 _LABEL_MATCH_THRESHOLD = 90  # title / axis label correctness
 
+# Ruler-side x normalization (2026-07-01, see CHANGELOG): "1,200" == "1200" and
+# "January" == "Jan". Applied SYMMETRICALLY to GT and prediction for every model,
+# so it changes the measurement, not any one system's advantage. A numerically
+# correct cell should not die because the model spelled the month out.
+_GROUPED_KEY_RE = re.compile(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+_MONTH_ABBREV = {m: m[:3] for m in (
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december")}
+_MONTH_ABBREV["sept"] = "sep"  # common 4-letter variant
+
 
 def _norm(v) -> str:
-    """Normalize a label/x value to a comparable string (case/space-folded)."""
+    """Normalize a label/x value to a comparable string (case/space-folded,
+    thousands-commas collapsed, month names abbreviated)."""
     if v is None:
         return ""
-    return " ".join(x_key(v).strip().lower().split())
+    s = " ".join(x_key(v).strip().lower().split())
+    if _GROUPED_KEY_RE.fullmatch(s):
+        s = s.replace(",", "")
+    if any(w in _MONTH_ABBREV for w in s.split()):
+        s = " ".join(_MONTH_ABBREV.get(w, w) for w in s.split())
+    return s
 
 
 def _value_correct(pred_y: float, gt_y: float, tol: float, scale: float) -> bool:

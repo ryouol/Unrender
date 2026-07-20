@@ -16,9 +16,72 @@ product*, not a bigger model.
 
 - [x] **Phase 1 — Synthetic data engine** (built, runs on a MacBook)
 - [x] **Phase 2 — Eval harness + frontier baselines** (scorer + provider runners + comparison report)
-- [x] Phase 3 — FineTune Qwen
-- [ ] Phase 4 — Deploy: Hugging Face Space demo + inference API
+- [x] **Phase 3 — LoRA fine-tune + integrity audit** — the 4B LoRA (fair val/best-checkpoint protocol) scores **38.9% `cell@5_exact`** on the 300-chart hard held-out set vs **13.5%** for the pinned base — **+25.5pp, 95% CI [+22.7, +28.6]** — and **67% vs 31%** on real OWID charts. Pinned base control, leak-free split, and paired bootstrap all done. Receipts: [`RESULTS.md`](RESULTS.md).
+- [~] **Phase 4 — Deploy** — one-command inference works (`modal run modal_train.py::infer`); public Hugging Face weights + demo still to publish.
 - [ ] Phase 5 — Launch with reproducible receipts (weights, dataset, eval, demo)
+
+> **Where the bet stands** (full numbers + caveats in [`RESULTS.md`](RESULTS.md)): fine-tuning
+> decisively beats the base model and transfers to real charts. Against frontier it is **at
+> parity with GPT-5.5** and **behind Claude and Gemini** on the hard synthetic set — so "narrow
+> model beats frontier" is **partly demonstrated** (vs GPT-5.5, and on real charts modulo a
+> contamination caveat), not yet a clean sweep. `synthetic_v2` (values to 1e9, real axis formats)
+> is built and staged for the next retrain but **not yet trained** — today's numbers are the
+> v0+v1 model.
+
+## Results
+
+Hard held-out set **common300** (`cell@5_exact` = ground-truth points recovered within 5%):
+
+| System | cell@5_exact |
+|---|---:|
+| pinned base Qwen3-VL-4B | 13.5% |
+| **table-LoRA (this project)** | **38.9%** |
+
+Fine-tuning beats the base by **+25.5pp** (95% CI [+22.7, +28.6], paired bootstrap, PASS), and
+drops invalid JSON from 9% to 0%. Paired against each frontier model on the charts both answered:
+**parity with GPT-5.5** (+1.2pp, N=63), behind **Claude-fable-5** (−5.8pp, N=86) and
+**Gemini-3.1-Pro** (−28.3pp, N=64).
+
+Real-world transfer (**real_v0**, 8 OWID line charts, all label-free, ground truth from the
+official CSVs): **table-LoRA 67% vs base 31%.** Gemini scores 100% here, but that is
+**memorization of famous public series, not chart-reading** — so the real-chart head-to-head is
+not valid until a contamination-resistant set exists. Every number is regenerated from saved
+predictions by `python analysis/scoreboard.py` → [`RESULTS.md`](RESULTS.md).
+
+## Use the model
+
+The fine-tuned weights live on a Modal Volume (`unrender-vol`), so inference runs serverless —
+**no local GPU needed.** Extract the data from one chart image in a single command:
+
+```bash
+pip install modal && modal setup                         # once (Modal account + CLI)
+modal run modal_train.py::infer --image path/to/chart.png
+```
+
+It prints the strict-JSON `ChartData` and the CSV. Under the hood it loads the merged model on a
+GPU worker, runs the same greedy decode + JSON repair as the eval harness, and returns:
+
+```
+=== JSON ===
+{"chart_type": "line", "title": "Life expectancy",
+ "x_axis": {"label": "Year", "unit": null},
+ "y_axis": {"label": "Years", "unit": null},
+ "series": [{"name": "USA", "points": [{"x": "2000", "y": 76.8}, {"x": "2001", "y": 76.9}, ...]}]}
+=== CSV ===
+Year,Years
+2000,76.8
+2001,76.9
+...
+```
+
+- Defaults to the best model (`runs/qwen3vl4b-table-fair/merged`); pass `--model` to try another,
+  or `--model unsloth/Qwen3-VL-4B-Instruct --revision <sha>` for the base.
+- Pull the weights to run them yourself: `modal volume get unrender-vol runs/qwen3vl4b-table-fair`,
+  then load `.../merged` with `transformers` (`AutoModelForImageTextToText` — see
+  `unrender/eval/providers.py::hf_vlm_provider`).
+- **Publishing (optional, not done):** `modal_train.py::publish` pushes the merged model to the
+  Hugging Face Hub from the Volume (needs an `HF_TOKEN` Modal secret) so anyone can
+  `from_pretrained` it. Left unrun — the weights are private until you publish.
 
 ## Pipeline
 
@@ -48,7 +111,7 @@ are formatted *from* the label).
 | Module | Role |
 |---|---|
 | `unrender/prompts.py` | The one canonical extraction prompt (train = eval = inference) |
-| `unrender/schema/` | Pydantic `ChartData` schema, JSON validation/repair, CSV export |
+| `unrender/schema/` | Pydantic `ChartData` schema, JSON validation + repair (fences, truncation, `"1.2B"`/`"1,200"`/`"12%"` number coercion), CSV export |
 | `unrender/data_gen/chart_specs.py` | Random-but-coherent chart specs (the ground truth) |
 | `unrender/data_gen/render.py` | matplotlib rendering for all 7 chart types |
 | `unrender/data_gen/augment.py` | Degradations (blur, JPEG, rescale, rotate, noise) for the synthetic→real gap |
@@ -58,6 +121,8 @@ are formatted *from* the label).
 | `unrender/eval/providers.py` | Model providers (OpenAI / Anthropic / Gemini / local HF + mock) |
 | `unrender/eval/run_baselines.py` | Run a model over the eval set → predictions (resumable, saves raw) |
 | `unrender/eval/score.py` · `report.py` | Score predictions → report; aggregate → comparison table |
+| `unrender/eval/paired_bootstrap.py` | Paired chart-level bootstrap (base-vs-LoRA gate: gap + 95% CI) |
+| `unrender/eval/ensemble.py` | Self-consistency vote over k sampled runs (no-retrain inference lever) |
 
 Chart types: `bar`, `horizontal_bar`, `grouped_bar`, `stacked_bar`, `line`,
 `multi_line`, `pie`.
@@ -116,9 +181,13 @@ the scorer reads those files — so you re-score for free when you tweak a metri
 and never re-pay an API. Runs are resumable (failed samples are retried, not
 frozen in).
 
-The **frozen eval set lives at `data/synthetic_v0/`** (tag `eval-v0`): 1000
-held-out test charts, pre-registered so results can't be tuned after the fact.
-Regenerate it byte-for-byte from the recipe in `data/synthetic_v0/README.md`.
+Frozen eval sets are committed (test/val splits + a byte-exact regen recipe per
+`data/*/README.md`), pre-registered so results can't be tuned after the fact: `data/synthetic_v0/`
+(tag `eval-v0`, easy) and `data/synthetic_v1/` (hard) — the headline runs on **common300**, a
+frozen, table-level-deduped, leak-free 300-chart subset of the v1 test set
+(`unrender/eval/subsets/common300.json`). `data/synthetic_v2/` (values to 1e9 + real-world axis
+formats/themes) is staged for the next retrain. A real-world set (`data/real_v0/`, OWID charts
+with official-CSV ground truth) closes the synthetic-only gap.
 
 ```bash
 pip install -e ".[eval]"          # adds rapidfuzz + openai/anthropic/google-genai
@@ -158,10 +227,10 @@ label-free, do **not** train yet — escalate the generator (truncated y-axes,
 dense multi-series, harder degradations) and re-baseline until the eval contains
 a gap worth attacking.
 
-The `hf` provider runs the base open model (and later your fine-tune) on the GPU
-box; its predictions drop into the same scorer. Still to add for full
-credibility: a small **real-world** test set (FRED / Our World in Data charts
-whose CSVs are downloadable) so the claim isn't "only on my own synthetic data."
+The `hf` provider runs the base open model or your fine-tune on the GPU box; its
+predictions drop into the same scorer. The **real-world** test set (`data/real_v0/`: Our World in
+Data charts whose CSVs are downloadable, ground truth read from the official CSV — never
+pixel-estimated) is built, so the claim isn't "only on my own synthetic data."
 
 ## Fine-tune (Phase 3)
 
@@ -178,12 +247,24 @@ reproduce byte-for-byte), Unsloth LoRA training, and eval through the same
 harness as the frontier baselines. Per-second billing, nothing to terminate.
 
 ```bash
-pip install modal && modal setup            # once
-modal run modal_train.py::gen               # once: v0+v1 -> Volume (CPU, ~$0.3)
-modal run modal_train.py::smoke             # 30-step train + tiny eval (~$0.5)
-modal run --detach modal_train.py::train    # real run (L4 ~$2-4; UNRENDER_GPU=A100 for 8B)
-modal run --detach modal_train.py::evaluate # merged model over the 1000-chart test
-modal volume get unrender-vol outputs ./outputs/modal   # pull predictions/report
+pip install modal && modal setup                  # once
+modal run modal_train.py::gen                      # v0+v1 data -> Volume (CPU, ~$0.3)
+modal run modal_train.py::check                    # preflight: data integrity + token budget + $ estimate
+modal run modal_train.py::smoke                    # 30-step train + tiny eval, exercises val/best-ckpt (~$0.5)
+# the fair-protocol LoRA that produced today's model (val + best-checkpoint on eval_loss):
+modal run --detach modal_train.py::train --train-files v1,v0 --val-files v1,v0 --out-name qwen3vl4b-table-fair
+modal run --detach modal_train.py::evaluate --model runs/qwen3vl4b-table-fair/merged --subset common300
+modal volume get unrender-vol outputs ./outputs/modal   # pull predictions/reports
+```
+
+The staged next run adds `synthetic_v2` and chains eval into one shot (crash-safe — re-running the
+same command resumes from the latest checkpoint):
+
+```bash
+modal run modal_train.py::gen_v2                   # synthetic_v2 -> Volume (or build locally + upload)
+UNRENDER_GPU=A100 modal run --detach modal_train.py::train \
+    --train-files v2,v1,v0 --val-files v2,v1,v0 --epochs 1.0 --out-name qwen3vl4b-v2 \
+    --eval-after real_v0,common300 --type-weights multi_line:2,stacked_bar:2,horizontal_bar:2
 ```
 
 **Or on any rented GPU box** (RunPod/Vast, ~$5–25/run), from the repo root:
@@ -195,14 +276,15 @@ pip install -e ".[train]"             # CUDA-only deps (Unsloth/TRL/bitsandbytes
 python -m unrender.data_gen.generate      --n 5000 --out data/synthetic_v1 --seed 5678 --hard
 python -m unrender.data_gen.split_dataset --out data/synthetic_v1
 
-# LoRA fine-tune (v0+v1 mixed; label-free charts oversampled 1.5x):
+# LoRA fine-tune (v0+v1 mixed; label-free oversampled 1.5x; best checkpoint on a val set):
 python -m unrender.train.sft_lora \
     --train data/synthetic_v1/train.jsonl data/synthetic_v0/train.jsonl \
-    --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-lora
+    --val   data/synthetic_v1/val.jsonl   data/synthetic_v0/val.jsonl \
+    --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-table-fair
 #   --max-steps 30 first for a cheap smoke run; --base Qwen/Qwen3-VL-8B-Instruct for launch.
 
 # eval the merged model through the SAME scorer as the frontier baselines:
-python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-lora/merged \
+python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-table-fair/merged \
     --data data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
 python -m unrender.eval.score --predictions outputs/eval_v1/unrender-lora/predictions.jsonl
 ```

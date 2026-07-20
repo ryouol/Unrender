@@ -15,6 +15,7 @@ Matching is robust to ordering and minor label noise:
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from typing import Dict, List, Optional
 
@@ -27,12 +28,28 @@ _NAME_ALIGN_THRESHOLD = 55  # looser, for pairing predicted series to GT series
 _NAME_F1_THRESHOLD = 85   # stricter, for counting a series name as correct
 _LABEL_MATCH_THRESHOLD = 90  # title / axis label correctness
 
+# Ruler-side x normalization (2026-07-01, see CHANGELOG): "1,200" == "1200" and
+# "January" == "Jan". Applied SYMMETRICALLY to GT and prediction for every model,
+# so it changes the measurement, not any one system's advantage. A numerically
+# correct cell should not die because the model spelled the month out.
+_GROUPED_KEY_RE = re.compile(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+_MONTH_ABBREV = {m: m[:3] for m in (
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december")}
+_MONTH_ABBREV["sept"] = "sep"  # common 4-letter variant
+
 
 def _norm(v) -> str:
-    """Normalize a label/x value to a comparable string (case/space-folded)."""
+    """Normalize a label/x value to a comparable string (case/space-folded,
+    thousands-commas collapsed, month names abbreviated)."""
     if v is None:
         return ""
-    return " ".join(x_key(v).strip().lower().split())
+    s = " ".join(x_key(v).strip().lower().split())
+    if _GROUPED_KEY_RE.fullmatch(s):
+        s = s.replace(",", "")
+    if any(w in _MONTH_ABBREV for w in s.split()):
+        s = " ".join(_MONTH_ABBREV.get(w, w) for w in s.split())
+    return s
 
 
 def _value_correct(pred_y: float, gt_y: float, tol: float, scale: float) -> bool:
@@ -154,6 +171,11 @@ def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05,
     """
     n_gt = sum(len(s.points) for s in gt.series)
     has_title, has_x, has_y = int(bool(gt.title)), int(bool(gt.x_axis.label)), int(bool(gt.y_axis.label))
+    # Label-free pies are scored on PROPORTIONS (see below), so their points are a
+    # proxy metric, NOT exact numeric extraction. Compute the flag up front and
+    # bucket those points separately (n_proxy_*) so aggregate() can report an
+    # exact-only headline that never silently pools the proxy (audit finding B).
+    pie_prop = gt.chart_type == "pie" and labels_shown is False
 
     if pred is None:  # unparseable output — total miss
         return {
@@ -163,10 +185,10 @@ def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05,
             "y_label_total": has_y, "y_label_hit": 0,
             "series_name_f1": 0.0,
             "n_gt_points": n_gt, "n_correct_points": 0, "chart_exact": 0,
+            "n_proxy_points": n_gt if pie_prop else 0, "n_proxy_correct": 0,
             "abs_errors": [], "rel_errors": [],
         }
 
-    pie_prop = gt.chart_type == "pie" and labels_shown is False
     n_correct, abs_e, rel_e = 0, [], []
     for g_series, p_series in _align_series(pred.series, gt.series):
         if p_series is None:
@@ -197,6 +219,8 @@ def score_sample(pred: Optional[ChartData], gt: ChartData, tol: float = 0.05,
         "y_label_total": has_y, "y_label_hit": int(has_y and _label_hit(pred.y_axis.label, gt.y_axis.label)),
         "series_name_f1": _series_name_f1(pred.series, gt.series),
         "n_gt_points": n_gt, "n_correct_points": n_correct,
+        "n_proxy_points": n_gt if pie_prop else 0,
+        "n_proxy_correct": n_correct if pie_prop else 0,
         "chart_exact": int(ct_ok and n_gt > 0 and n_correct == n_gt),
         "abs_errors": abs_e, "rel_errors": rel_e,
     }
@@ -213,6 +237,13 @@ def aggregate(samples: List[Dict]) -> Dict:
 
     total_pts = sum(s["n_gt_points"] for s in samples)
     correct_pts = sum(s["n_correct_points"] for s in samples)
+    # Split exact-numeric from label-free-pie proportion proxy (audit B): the
+    # headline cell_accuracy pools both for continuity, but cell_accuracy_exact is
+    # the honest "exact numeric extraction" number, and pie_proportion_accuracy
+    # isolates the proxy. (.get for back-compat with pre-split saved samples.)
+    proxy_pts = sum(s.get("n_proxy_points", 0) for s in samples)
+    proxy_correct = sum(s.get("n_proxy_correct", 0) for s in samples)
+    exact_pts, exact_correct = total_pts - proxy_pts, correct_pts - proxy_correct
     all_abs = [e for s in samples for e in s["abs_errors"]]
     all_rel = [e for s in samples for e in s["rel_errors"]]
 
@@ -220,7 +251,9 @@ def aggregate(samples: List[Dict]) -> Dict:
         "n": n,
         "schema_valid_rate": rate(sum(s["schema_valid"] for s in samples), n),
         "chart_type_acc": rate(sum(s["chart_type_correct"] for s in samples), n),
-        "cell_accuracy": rate(correct_pts, total_pts),          # <- headline
+        "cell_accuracy": rate(correct_pts, total_pts),              # <- headline (all points)
+        "cell_accuracy_exact": rate(exact_correct, exact_pts),      # exact-numeric only (excl. label-free pies)
+        "pie_proportion_accuracy": rate(proxy_correct, proxy_pts),  # label-free-pie proxy (proportions)
         "chart_exact_rate": rate(sum(s["chart_exact"] for s in samples), n),
         "title_acc": rate(sum(s["title_hit"] for s in samples), sum(s["title_total"] for s in samples)),
         "x_label_acc": rate(sum(s["x_label_hit"] for s in samples), sum(s["x_label_total"] for s in samples)),
@@ -229,4 +262,6 @@ def aggregate(samples: List[Dict]) -> Dict:
         "mae": statistics.mean(all_abs) if all_abs else 0.0,
         "median_rel_err": statistics.median(all_rel) if all_rel else 0.0,
         "total_points": total_pts,
+        "exact_points": exact_pts,
+        "proxy_points": proxy_pts,
     }

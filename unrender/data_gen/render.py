@@ -34,9 +34,11 @@ def _axis_text(label, unit=None):
 
 
 def _apply_value_axis(ax, spec, horizontal):
-    """eval-v1 hardening of the value axis: truncated baseline, unrounded max,
-    and K/M/B tick suffixes. No-op unless the spec sets those knobs."""
-    if spec.y_baseline is None and spec.y_top is None and not spec.tick_suffix:
+    """eval-v1/v2 hardening of the value axis: truncated baseline, unrounded max,
+    K/M/B tick suffixes, v2 tick formats (comma-grouped / full raw digits), and
+    minor ticks. No-op unless the spec sets those knobs."""
+    if (spec.y_baseline is None and spec.y_top is None and not spec.tick_suffix
+            and not spec.tick_format and not spec.minor_ticks):
         return
     get_lim, set_lim = (ax.get_xlim, ax.set_xlim) if horizontal else (ax.get_ylim, ax.set_ylim)
     axis = ax.xaxis if horizontal else ax.yaxis
@@ -49,16 +51,57 @@ def _apply_value_axis(ax, spec, horizontal):
         div = {"K": 1e3, "M": 1e6, "B": 1e9}[spec.tick_suffix]
         suffix = spec.tick_suffix
         axis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v / div:g}{suffix}"))
+    elif spec.tick_format == "comma":
+        from matplotlib.ticker import FuncFormatter
+        axis.set_major_formatter(FuncFormatter(lambda v, _p: f"{v:,.0f}" if abs(v) >= 1 else f"{v:g}"))
+    elif spec.tick_format == "plain":
+        from matplotlib.ticker import ScalarFormatter
+        f = ScalarFormatter(useOffset=False)
+        f.set_scientific(False)  # full raw digits, however long (real-chart look)
+        axis.set_major_formatter(f)
+    if spec.minor_ticks:
+        from matplotlib.ticker import AutoMinorLocator
+        axis.set_minor_locator(AutoMinorLocator())
+
+
+# v2 themes: real-world chart looks (see FRONTIER_PLAN.md P1). Colors/spines/
+# grid only — data artists are untouched, so ground truth is unaffected.
+_THEME_RC = {
+    "owid": {"axes.spines.top": False, "axes.spines.right": False, "axes.spines.left": False,
+             "axes.edgecolor": "#999999", "xtick.color": "#555555", "ytick.color": "#555555",
+             "text.color": "#3a3a3a", "axes.labelcolor": "#3a3a3a"},
+    "dark": {"figure.facecolor": "#1c1e26", "axes.facecolor": "#1c1e26", "savefig.facecolor": "#1c1e26",
+             "text.color": "#e8e8e8", "axes.labelcolor": "#e8e8e8", "axes.titlecolor": "#ffffff",
+             "xtick.color": "#cccccc", "ytick.color": "#cccccc", "axes.edgecolor": "#777777",
+             "legend.facecolor": "#2a2d38", "legend.edgecolor": "#555555"},
+    "news": {"axes.spines.top": False, "axes.spines.right": False, "axes.titlelocation": "left",
+             "axes.titleweight": "bold", "axes.titlesize": 13, "axes.edgecolor": "#333333"},
+}
 
 
 def render_chart(spec: ChartSpec) -> Image.Image:
     """Draw the chart described by `spec` and return it as a PIL RGB image."""
-    # Scope the font choice so it can't leak into the next render in this worker.
-    with plt.rc_context({"font.family": spec.font_family}):
+    # Scope font + theme so they can't leak into the next render in this worker.
+    rc = {"font.family": spec.font_family, **_THEME_RC.get(spec.theme or "", {})}
+    with plt.rc_context(rc):
         return _draw_chart(spec)
 
 
 def _draw_chart(spec: ChartSpec) -> Image.Image:
+    """Build the figure and rasterize it to a PIL image at spec.dpi."""
+    fig, ax = _build_figure(spec)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=spec.dpi)
+    plt.close(fig)
+    buf.seek(0)
+    return Image.open(buf).convert("RGB")
+
+
+def _build_figure(spec: ChartSpec):
+    """Draw `spec` onto a fresh fig/ax and return (fig, ax) — everything up to
+    rasterization. Shared by _draw_chart (which saves+closes) and the geometry
+    capture in geometry.py (which reads back artist transforms), so the captured
+    geometry is guaranteed to match the rendered pixels. Caller owns plt.close."""
     fig, ax = plt.subplots(figsize=spec.figsize)
 
     n_cat = len(spec.categories)
@@ -104,15 +147,25 @@ def _draw_chart(spec: ChartSpec) -> Image.Image:
         ax.legend(loc=spec.legend_loc, fontsize=8)
 
     elif ct in ("line", "multi_line"):
+        # v2 continuous mode: numeric years on a real axis with sparse auto ticks
+        # (the OWID/FRED look) instead of every category printed as a label.
+        xs = [float(c) for c in spec.categories] if spec.x_numeric else x
         for i, row in enumerate(spec.values):
-            ax.plot(x, row, marker="o", label=spec.series_names[i], color=colors[i % len(colors)])
+            ax.plot(xs, row, marker="o", label=spec.series_names[i], color=colors[i % len(colors)])
             if spec.value_labels_shown:
-                for xi, v in zip(x, row):
+                for xi, v in zip(xs, row):
                     ax.annotate(fmt(v), (xi, v), textcoords="offset points", xytext=(0, 6),
                                 ha="center", fontsize=7)
-        ax.set_xticks(x)
-        ax.set_xticklabels(spec.categories, rotation=spec.rotate_xticks,
-                           ha="right" if spec.rotate_xticks else "center")
+        if spec.x_numeric:
+            from matplotlib.ticker import MaxNLocator
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins="auto"))
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{int(v)}"))
+            if spec.rotate_xticks:
+                ax.tick_params(axis="x", labelrotation=spec.rotate_xticks)
+        else:
+            ax.set_xticks(x)
+            ax.set_xticklabels(spec.categories, rotation=spec.rotate_xticks,
+                               ha="right" if spec.rotate_xticks else "center")
         if len(spec.values) > 1:
             ax.legend(loc=spec.legend_loc, fontsize=8)
 
@@ -142,12 +195,13 @@ def _draw_chart(spec: ChartSpec) -> Image.Image:
             ax.set_xlabel(_axis_text(spec.x_label))
             ax.set_ylabel(_axis_text(spec.y_label, spec.y_unit))
         if spec.grid:
-            ax.grid(axis="x" if ct == "horizontal_bar" else "y", linestyle="--", alpha=0.5)
+            g_axis = "x" if ct == "horizontal_bar" else "y"
+            if spec.theme == "owid":  # OWID's signature solid light gridlines
+                ax.grid(axis=g_axis, color="#dddddd", linestyle="-", alpha=1.0)
+                ax.set_axisbelow(True)
+            else:
+                ax.grid(axis=g_axis, linestyle="--", alpha=0.5)
         _apply_value_axis(ax, spec, horizontal=(ct == "horizontal_bar"))
 
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=spec.dpi)
-    plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).convert("RGB")
+    return fig, ax

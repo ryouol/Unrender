@@ -41,10 +41,10 @@ def _cap_long_side(img: Image.Image, max_side: int) -> Image.Image:
 
 
 def _make_one(args_tuple):
-    index, base_seed, images_dir, labels_dir, augment, max_side, hard, aug_frac = args_tuple
+    index, base_seed, images_dir, labels_dir, augment, max_side, hard, aug_frac, v2 = args_tuple
     rng = random.Random(base_seed + index)
 
-    spec = random_spec(rng, hard=hard)
+    spec = random_spec(rng, hard=hard, v2=v2)
     img = render_chart(spec)
     did_augment = augment and rng.random() < aug_frac
     if did_augment:
@@ -77,6 +77,7 @@ def generate(
     max_side: int = 1280,
     start_index: int = 0,
     hard: bool = False,
+    v2: bool = False,
 ) -> Path:
     out_dir = Path(out)
     images_dir = out_dir / "images"
@@ -85,9 +86,9 @@ def generate(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     workers = workers or max(1, (os.cpu_count() or 4) - 2)
-    aug_frac = 0.95 if hard else _AUGMENT_FRACTION  # heavier augmentation on the hard split
+    aug_frac = 0.95 if (hard or v2) else _AUGMENT_FRACTION  # heavier augmentation on hard/v2
     tasks = [
-        (i, base_seed, str(images_dir), str(labels_dir), augment, max_side, hard, aug_frac)
+        (i, base_seed, str(images_dir), str(labels_dir), augment, max_side, hard, aug_frac, v2)
         for i in range(start_index, start_index + n)
     ]
 
@@ -103,7 +104,12 @@ def generate(
             import multiprocessing as mp
 
             with mp.Pool(workers) as pool:
-                for entry in tqdm(pool.imap_unordered(_make_one, tasks, chunksize=8), total=len(tasks)):
+                # imap (ordered), NOT imap_unordered: the manifest MUST be written in
+                # index order so the dataset — and therefore split_dataset's seeded
+                # shuffle — is reproducible across runs. imap_unordered wrote in
+                # worker-completion order, which silently desynced the local and Modal
+                # test splits (only 494/1000 overlap; see modal_v1_split.json).
+                for entry in tqdm(pool.imap(_make_one, tasks, chunksize=8), total=len(tasks)):
                     mf.write(json.dumps(entry) + "\n")
 
     print(f"Done. Manifest: {manifest_path}")
@@ -120,6 +126,8 @@ def main():
     p.add_argument("--start-index", type=int, default=0, help="first sample index (for appending)")
     p.add_argument("--no-augment", action="store_true", help="disable image degradations")
     p.add_argument("--hard", action="store_true", help="eval-v1 hard mode (denser, truncated axes, K/M/B, ...)")
+    p.add_argument("--v2", action="store_true",
+                   help="synthetic_v2 mode (magnitudes to 1e9, real-world axis formats, year axes, themes)")
     args = p.parse_args()
 
     generate(
@@ -131,6 +139,7 @@ def main():
         max_side=args.max_side,
         start_index=args.start_index,
         hard=args.hard,
+        v2=args.v2,
     )
 
 

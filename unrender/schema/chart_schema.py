@@ -6,6 +6,7 @@ and the unit the scorer compares on. Keep it small and strict.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import List, Optional, Union
 
@@ -80,3 +81,22 @@ def x_key(x) -> str:
     if isinstance(x, float) and x.is_integer():
         x = int(x)
     return str(x)
+
+
+def data_table_signature(data: ChartData) -> str:
+    """Hash of the underlying DATA TABLE only — chart_type plus each series' name
+    and its (x, y) points — ignoring title / axis labels / styling.
+
+    Two charts with the same numbers but different cosmetics collide, which is
+    exactly the leak that matters: a held-out chart whose answer table equals a
+    TRAIN chart's is memorizable and would inflate apparent skill. Use to dedup
+    across train/val/test (audit finding G — the generator splits on image id, so
+    this is the table-level guard that catches a re-rendered duplicate).
+    """
+    payload = [data.chart_type]
+    for s in data.series:
+        pts = sorted((x_key(p.x), round(float(p.y), 6)) for p in s.points)
+        payload.append([s.name or "", pts])
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()[:16]

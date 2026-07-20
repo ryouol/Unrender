@@ -26,3 +26,10 @@ outputs/
 .pytest_cache/
 .DS_Store
 wandb/
+
+# Agent / session tooling (ARIS skills, traces, helper scripts) — not the
+# research project itself; kept on disk for reference, out of the repo.
+.agents/
+.aris/
+.claude/
+AGENTS.md

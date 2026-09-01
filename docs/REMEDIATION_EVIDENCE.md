@@ -1,10 +1,11 @@
 # Exact-review remediation evidence
 
-This record covers the remediation of the independent review performed against
-commit `13375b55dd3e89c067a1edb622e937f2c3a1b1a3`. It records repository evidence,
-not a claim that the service is approved for public or commercial launch. The
-final commit SHA belongs in the handoff or pull request after a read-only review
-of that exact tree.
+This record covers the remediation of independent reviews performed against
+commits `13375b55dd3e89c067a1edb622e937f2c3a1b1a3` and
+`f038311271c4513bba9dea37796bd15553bbc0f8`. It records repository evidence, not
+a claim that the service is approved for public or commercial launch. The final
+commit SHA belongs in the handoff or pull request after a read-only review of
+that exact tree.
 
 ## Implemented boundaries
 
@@ -35,14 +36,38 @@ of that exact tree.
 - PyMuPDF was removed from product code and exact locks. PDF rendering now uses
   locked `pypdfium2`/PDFium with shipped notices, SBOM, and policy-drift checks.
 
+## `f038311` finding map
+
+The second review in this record reported 2 High, 8 Medium, and 5 actionable Low
+findings. Each repository-controlled finding maps to an implementation and an
+adversarial regression:
+
+| Finding | Implemented boundary and regression |
+|---|---|
+| H1 — cross-tab principal privacy | Account session generations and `/api/me` principal markers combine with BroadcastChannel/storage/focus/visibility/pageshow coordination. Every private DOM/blob/poll/controller is synchronously reset; a localStorage-persisted logout barrier blocks reconciliation until explicit reauthentication; old auth/selection epochs cannot write. A Node two-tab/new-tab harness and a real shared-session Chromium journey cover logout, account replacement, and delayed responses. |
+| H2 — deletion retained original upload | The immediate job-delete transaction queues the job source and the last-reference upload source, then removes both rows. Shared-upload, storage-outage, preview-denial, retry, and outbox-drain tests cover the lifecycle. |
+| M1 — correction transport cap | The correction route has a result-contract-plus-envelope byte limit. Tests accept a service-valid result near 1 MiB, accept the exact route boundary, and reject the next byte with `413`. |
+| M2 — ledger emergency capacity | Database admission reserves one future ledger append for every outstanding refundable obligation plus its mandatory terminal/audit rows. N-job reservation, billing, cancellation, failure, recovery, and exact-pressure tests preserve refunds. |
+| M3 — browser submission idempotency | Paid browser creation requires a durable account/upload/page/crop-bound `Idempotency-Key`; ambiguous retries reuse the key until one response is confirmed. Missing, changed, same-key retry, and concurrent double-submit tests prove one job/charge. |
+| M4 — result-history reservation | Initial, API, and reprocess attempts reserve an attempt-fenced worst-case result byte budget before credit/provider work. Success settles actual bytes; pre-dispatch termination releases it. Capacity rejection is deterministic and uncharged; startup never invents an unadmitted reservation for legacy/corrupt attempts. |
+| M5 — maximum-result editor expansion | The editor holds the strict 10,000-row contract sparsely, renders 100 rows per page, and keeps mounted cells at or below 500. Node and real Chromium performance assertions cover 50 series × 200 points. |
+| M6 — crash-durable source publication | Staging, upload rename, and job copy fsync file bytes plus source/destination namespaces before SQLite references. Durable reservation records protect live crash remnants; fault injection at publication checkpoints verifies restart reconciliation. |
+| M7 — global retained bytes/free space | Transactional cross-process reservations cover staging, uploads, job copies, worst-case results, pending deletion, database files, and configured headroom; minimum free space also fails closed. Multi-tenant/concurrent/low-free/restart tests exercise admission and cleanup. |
+| M8 — central database-row admission | All service append paths use one transactional row-admission boundary with tenant/global budgets and mandatory terminal/refund/audit reserves. Static source assertions and exact-pressure lifecycle tests cover success, cancellation, failure, billing, and recovery. |
+| L1 — API-key secret lifetime | Close, cancel, copy, dismiss, timeout, logout, and account switch clear the one-time secret synchronously; browser regressions exercise each path. |
+| L2 — per-selection stale writes | Each job selection owns an epoch and `AbortController`; source, result, version, audit, correction, and mutation handlers verify it before every async write. Delayed old-selection tests cannot replace the current job. |
+| L3 — invalid provider success log | Provider output is decoded and validated against `ChartData` plus product constraints before any success lifecycle record. Invalid output terminates as `model_output_invalid` and never emits success. |
+| L4 — backup/restore durability | Backup and restore fsync files, manifests, staging/final trees, and parent namespaces before reporting success. Fault/durability tests exercise publication and restore. |
+| L5 — session control | The controlled-pilot choice is bounded global revocation: sign out deletes all account sessions and increments the session generation, immediately invalidating old cookies across tabs. Per-device inventory and security-event notification remain explicitly outside the pilot and required before broader launch. |
+
 ## Exact local gates on 2026-09-01
 
 | Gate | Result |
 |---|---|
-| Python suite | **PASS** — 139 passed, 1 skipped; the single warning is Starlette TestClient's httpx deprecation |
+| Python suite | **PASS** — 160 passed, 1 skipped; the single warning is Starlette TestClient's httpx deprecation |
 | Ruff format, general lint, and `S` security rules | **PASS** |
 | Mypy and compileall | **PASS** — 13 typed source files checked |
-| Browser syntax and auth-epoch adversarial harness | **PASS** |
+| Browser syntax plus auth-epoch and two-tab adversarial harnesses | **PASS** |
 | GitHub Actions workflow lint | **PASS** |
 | Runtime dependency consistency | **PASS** — `pip check` reported no broken requirements |
 | Runtime, development, and build vulnerability audits | **PASS** — no known vulnerabilities found |
@@ -52,6 +77,15 @@ of that exact tree.
 | Compose configuration | **PASS** |
 | Exact-lock sdist/wheel build, install, import, and notice packaging | **PASS** |
 | Local image build | **BLOCKED** — Docker daemon was not running; CI contains the production image build and smoke |
+
+The current real-browser pass used local Chrome for Testing 147 because the
+in-app browser had no available runtime in this task. Two tabs shared one
+browser context; logout synchronously cleared private state and a held old-job
+response could not repopulate it after account replacement. A maximum-contract
+50-series/10,000-row result mounted 454 cells and 100 table rows in 2.4 ms. The
+1280×720 desktop and 390×844 mobile views completed without page-level overflow;
+mobile document and viewport widths were both 390 px. This is implementation QA,
+not a formal cross-browser, accessibility, or performance certification.
 
 The default dependency gate passing means the known repository-controlled
 PyMuPDF issue is technically remediated. It does not substitute for counsel's

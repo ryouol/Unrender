@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,34 @@ class Storage:
         self.root = settings.storage_dir
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.root, 0o700)
+        self._publication_fault_hook: Callable[[str], None] | None = None
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(path, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _private_directory(self, path: Path) -> None:
+        missing: list[Path] = []
+        candidate = path
+        while candidate != self.root.parent and not candidate.exists():
+            missing.append(candidate)
+            candidate = candidate.parent
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for directory in reversed(missing):
+            os.chmod(directory, 0o700)
+            self._fsync_directory(directory)
+            self._fsync_directory(directory.parent)
+        os.chmod(path, 0o700)
+
+    def _publication_checkpoint(self, stage: str) -> None:
+        hook = self._publication_fault_hook
+        if hook is not None:
+            hook(stage)
 
     def inspect(self, content: bytes) -> UploadInspection:
         if not content:
@@ -81,18 +110,28 @@ class Storage:
         mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[image_format]
         return UploadInspection(mime, 1, len(content), digest)
 
-    def stage_upload(self, source: BinaryIO) -> StagedUpload:
+    def stage_upload(self, source: BinaryIO, *, destination: Path | None = None) -> StagedUpload:
         """Copy one request spool to bounded private storage without a second RAM copy."""
 
         staging = self.root / "staging"
-        staging.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(staging, 0o700)
-        descriptor, raw_path = tempfile.mkstemp(prefix="upload-", suffix=".tmp", dir=staging)
-        path = Path(raw_path)
+        self._private_directory(staging)
+        if destination is None:
+            descriptor, raw_path = tempfile.mkstemp(prefix="upload-", suffix=".tmp", dir=staging)
+            path = Path(raw_path)
+        else:
+            if destination.parent != staging or destination.is_symlink():
+                raise ValueError("Upload staging destination is outside private storage")
+            descriptor = os.open(
+                destination,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+            )
+            path = destination
+        self._fsync_directory(staging)
         total = 0
         digest = hashlib.sha256()
         try:
-            with os.fdopen(descriptor, "wb") as destination:
+            with os.fdopen(descriptor, "wb") as staged_file:
                 while chunk := source.read(1024 * 1024):
                     total += len(chunk)
                     if total > self.settings.max_upload_bytes:
@@ -101,14 +140,17 @@ class Storage:
                             f"{self.settings.max_upload_bytes // (1024 * 1024)} MB limit"
                         )
                     digest.update(chunk)
-                    destination.write(chunk)
-                destination.flush()
-                os.fsync(destination.fileno())
+                    staged_file.write(chunk)
+                staged_file.flush()
+                os.fsync(staged_file.fileno())
             os.chmod(path, 0o600)
+            self._fsync_directory(staging)
+            self._publication_checkpoint("staging_file_durable")
             inspection = self._inspect_path(path, byte_size=total, digest=digest.hexdigest())
             return StagedUpload(path=path, inspection=inspection)
         except Exception:
             path.unlink(missing_ok=True)
+            self._fsync_directory(staging)
             raise
 
     def _inspect_path(self, path: Path, *, byte_size: int, digest: str) -> UploadInspection:
@@ -157,13 +199,17 @@ class Storage:
 
     def commit_staged_upload(self, *, user_id: str, upload_id: str, staged: Path) -> Path:
         directory = self.root / "uploads" / user_id
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(directory, 0o700)
+        self._private_directory(directory)
         destination = directory / f"{upload_id}.source"
         if staged.parent != self.root / "staging" or staged.is_symlink():
             raise ValueError("Upload staging path is outside private storage")
         os.replace(staged, destination)
         os.chmod(destination, 0o600)
+        with destination.open("rb") as published:
+            os.fsync(published.fileno())
+        self._fsync_directory(staged.parent)
+        self._fsync_directory(directory)
+        self._publication_checkpoint("upload_published")
         return destination
 
     def save_upload(self, *, user_id: str, upload_id: str, content: bytes) -> Path:
@@ -172,13 +218,22 @@ class Storage:
 
     def copy_to_job(self, *, user_id: str, job_id: str, source: Path) -> Path:
         directory = self.root / "jobs" / user_id
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(directory, 0o700)
+        self._private_directory(directory)
         destination = directory / f"{job_id}.source"
         temporary = destination.with_suffix(".tmp")
-        shutil.copyfile(source, temporary)
-        os.chmod(temporary, 0o600)
-        temporary.replace(destination)
+        try:
+            with source.open("rb") as input_file, temporary.open("xb") as output_file:
+                shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+                output_file.flush()
+                os.fsync(output_file.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, destination)
+            self._fsync_directory(directory)
+            self._publication_checkpoint("job_copy_published")
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            self._fsync_directory(directory)
+            raise
         return destination
 
     def page_png(
@@ -256,13 +311,16 @@ class Storage:
         root = self.root.resolve()
         if root not in candidate.parents:
             raise ValueError("Refusing to delete a path outside product storage")
+        existed = candidate.exists()
         candidate.unlink(missing_ok=True)
+        if existed:
+            self._fsync_directory(candidate.parent)
 
     def object_paths(self, *, older_than_seconds: int | None = None) -> list[Path]:
         """List only product-managed source objects for reconciliation."""
 
         paths: list[Path] = []
-        for namespace in ("uploads", "jobs"):
+        for namespace in ("uploads", "jobs", "staging"):
             directory = self.root / namespace
             if directory.exists():
                 for path in directory.rglob("*"):

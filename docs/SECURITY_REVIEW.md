@@ -5,7 +5,7 @@ Scope: the FastAPI product surface in `unrender/product/`, its browser client, S
 
 ## Outcome
 
-No open Critical or High repository finding is known after remediation. The first independent review of immutable pre-remediation HEAD `007db52` found three High, multiple Medium, and two Low/documentation issues. A second exact-tree review of immutable HEAD `8733a00` found one High, three Medium, and two Low defense-in-depth issues; the current working tree remediates each repository-controlled item below. A fresh independent review of the final committed tree remains required before merge. Three Low/Medium deployment risks remain explicit controlled-beta gates because they require the chosen edge, storage platform, or an external test environment.
+No open Critical or High repository finding is known after remediation. The first independent review of immutable pre-remediation HEAD `007db52` found three High, multiple Medium, and two Low/documentation issues. A second exact-tree review of immutable HEAD `8733a00` found one High, three Medium, and two Low defense-in-depth issues. The review of `13375b5` found the concurrency/resource boundaries documented below. The latest exact-tree review of `f038311` found 2 High, 8 Medium, and 5 actionable Low issues; the current working tree maps and remediates every repository-controlled item below. A fresh independent review of the final committed tree remains required before merge. Two Low/Medium deployment risks remain explicit controlled-beta gates because they require the chosen edge, storage platform, or an external test environment.
 
 Evidence run locally:
 
@@ -248,6 +248,42 @@ read-only review listed in `docs/LAUNCH_READINESS.md`.
   drift checks. Swagger/OpenAPI is not advertised, finite numbers fail closed, outer 500s
   retain CSP/nosniff, imports are lazy, health is cheap, and live-mode test webhooks fail.
 
+## Fourth exact-tree remediation pass
+
+The exact review of commit `f038311` found two cross-principal/data-lifecycle High
+issues, eight resource/durability Medium issues, and five actionable browser/provider/
+operations Low issues. The complete one-to-one test map is recorded in
+`docs/REMEDIATION_EVIDENCE.md`; the security consequences are summarized here.
+
+- **Cross-tab principal isolation and global revocation (High/Low):** sessions now carry
+  an account generation and `/api/me` returns a one-way principal marker. Browser tabs
+  coordinate through BroadcastChannel, storage, focus, visibility, and pageshow; any
+  logout/account change synchronously aborts controllers and clears private blobs,
+  sources, results, audit, versions, credentials, forms, and timers. Auth and selection
+  epochs fence every delayed write, and a persisted logout barrier blocks a race that
+  could otherwise restore the old principal before server revocation commits. Sign out
+  invalidates all account sessions. Per-device inventory/notification remains outside
+  the controlled pilot rather than being implied as shipped.
+- **Reference-aware deletion and durable publication (High/Medium):** deleting a job
+  immediately denies its preview and, when it owns the last upload reference, removes
+  that upload row and queues both sources in the same transaction. Shared sources stay
+  live; storage failure leaves retryable outbox records. New source bytes, backup trees,
+  restore trees, manifests, and their namespaces are fsynced before database/publication
+  success, with crash checkpoints and restart reconciliation.
+- **Pre-spend capacity invariants (Medium):** paid browser submissions require durable
+  account/upload/page/crop idempotency. Initial/API/reprocess attempts reserve fenced
+  worst-case result bytes before credit/provider use. Cross-process storage admission
+  counts staging, copies, pending deletion, result expansion, database headroom, and
+  minimum free space. Central row admission preserves one ledger append per outstanding
+  refundable obligation plus every mandatory terminal, audit, and refund row, so normal
+  capacity pressure cannot strand money or lifecycle truth.
+- **Bounded transport/render/provider surfaces (Medium/Low):** correction transport
+  accepts the maximum valid result plus envelope and rejects the next byte. A paged
+  editor holds the 10,000-row contract with at most 500 mounted cells. One-time API-key
+  secrets clear on every exit path, each selection aborts stale async writes, and model
+  output is schema/product-validated before success logging; invalid output becomes
+  `model_output_invalid`.
+
 ## Open deployment findings
 
 ### 20. Hostile document scanning and edge timeouts are deployment controls
@@ -270,17 +306,6 @@ read-only review listed in `docs/LAUNCH_READINESS.md`.
 - Fix: select a deployment platform, enforce per-IP/account limits at its trusted edge, and move shared limits to a managed store before horizontal scaling.
 - Mitigation: the documented controlled beta is one node; upload bytes and stored volume have separate tenant bounds.
 - False positive notes: direct deployments preserve client IP; trusted-proxy behavior is platform-specific and intentionally not guessed in app code.
-
-### 22. Sessions lack user-facing inventory and global revocation
-
-- Rule ID: FASTAPI-SESSION-001
-- Severity: Low
-- Location: `unrender/product/service.py:253-302`, session methods; browser account UI
-- Evidence: logout revokes the current hashed session and expiry cleanup exists, but users cannot view other sessions or sign out everywhere.
-- Impact: a copied session remains usable until expiry unless the operator deletes it.
-- Fix: add session inventory, global revocation, security-event notification, and optionally MFA/SSO before a broad paid launch.
-- Mitigation: sessions are random and hashed, use HttpOnly/SameSite cookies, use Secure in production, expire after a configurable period, and require CSRF for mutations.
-- False positive notes: the risk is lower for a small design-partner beta with short retention and controlled accounts.
 
 ## External gates
 

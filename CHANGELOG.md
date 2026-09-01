@@ -8,6 +8,9 @@
 - Added strict request/origin/host controls, CSRF, security headers, safe file decoding limits, parameterized SQLite transactions, spreadsheet-formula neutralization, checkout allowlisting, and dependency/secret/security review evidence.
 - Added a non-root container, hashed runtime dependency lock, pull-request CI, operations/security/legal/launch documentation, and desktop/mobile browser QA evidence.
 - Preserved the research data-generation, evaluation, and training workflows; the product API calls them only through an explicit inference-provider boundary.
+- Hardened cross-tab account privacy with generation-bound principals, global session revocation, synchronous browser state erasure, and auth/selection response fencing.
+- Made job/upload deletion reference-aware and retryable, made source publication and backup/restore namespace-durable, and added cross-process retained-byte/free-space reservations.
+- Reserved worst-case result and mandatory database/ledger capacity before spend, required durable browser idempotency, bounded the maximum-result editor DOM, and validated provider output before success logging.
 
 ## eval-v1 (scorer fixes + hard generator)
 

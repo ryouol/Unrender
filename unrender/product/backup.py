@@ -20,6 +20,38 @@ class BackupError(RuntimeError):
     pass
 
 
+def _fsync_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_tree(root: Path) -> None:
+    for path in _safe_files(root):
+        _fsync_file(path)
+    directories = sorted(
+        (path for path in root.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for directory in directories:
+        _fsync_directory(directory)
+    _fsync_directory(root)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -173,6 +205,10 @@ def create_backup(settings: Settings, destination: Path) -> Path:
                 source = database.connect()
                 target = sqlite3.connect(output_db)
                 try:
+                    if source.execute("SELECT 1 FROM storage_reservations LIMIT 1").fetchone():
+                        raise BackupError(
+                            "A source publication is in flight; drain writes and retry the backup"
+                        )
                     source.backup(target)
                     target.commit()
                     committed = _committed_storage_paths(target, settings.storage_dir)
@@ -190,15 +226,19 @@ def create_backup(settings: Settings, destination: Path) -> Path:
                     )
                 manifest = _manifest(temporary, source_data_dir=data_dir)
                 manifest_path = temporary / "manifest.json"
-                manifest_path.write_text(
-                    json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-                )
+                with manifest_path.open("x", encoding="utf-8") as manifest_file:
+                    manifest_file.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+                    manifest_file.flush()
+                    os.fsync(manifest_file.fileno())
                 os.chmod(manifest_path, 0o600)
+                _fsync_tree(temporary)
         except TimeoutError as exc:
             raise BackupError(
                 "A product mutation is active; drain writes and retry the coordinated backup"
             ) from exc
+        _fsync_directory(destination.parent)
         os.rename(temporary, destination)
+        _fsync_directory(destination.parent)
         return destination
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -263,6 +303,8 @@ def restore_backup(source: Path, target_data_dir: Path) -> Path:
             conn.execute("PRAGMA foreign_keys=ON")
             if conn.execute("PRAGMA foreign_key_check").fetchone():
                 raise BackupError("Restored database failed foreign_key_check")
+            if conn.execute("SELECT 1 FROM storage_reservations LIMIT 1").fetchone():
+                raise BackupError("Recovery set contains an incomplete source publication")
             old_data_root = _manifest_source_root(manifest)
             _validate_restored_storage(
                 conn,
@@ -286,8 +328,14 @@ def restore_backup(source: Path, target_data_dir: Path) -> Path:
                 conn.commit()
         finally:
             conn.close()
-        (temporary / "manifest.json").unlink()
+        _fsync_file(database_path)
+        manifest_path = temporary / "manifest.json"
+        manifest_path.unlink()
+        _fsync_directory(temporary)
+        _fsync_tree(temporary)
+        _fsync_directory(target.parent)
         os.rename(temporary, target)
+        _fsync_directory(target.parent)
         return target
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)

@@ -11,8 +11,8 @@ FastAPI transport ── security headers, origin check, streamed-body limits
         ▼
 Product service ─── tenant checks, lifecycle, credits, audit
    │          │
-   │          ├── SQLite (WAL): users, jobs, versions, ledger, idempotency, deletion outbox
-   │          └── private 0700/0600 data volume: uploads and job sources
+   │          ├── SQLite (WAL): users, jobs, versions, ledger, reservations, deletion outbox
+   │          └── private 0700/0600 data volume: staging, uploads, and job sources
    ▼
 Durable worker ─── page render/crop ─── extractor boundary
                                             │
@@ -28,9 +28,10 @@ The transport layer parses HTTP and owns cookies/headers. `ProductService` owns 
 - Files are addressed with server-generated UUIDs under a configured storage root; original names are display metadata only.
 - Upload type is derived from file content, not the client MIME header. Images are decoded and dimension-limited; PDFs are opened, password checked, and page-limited.
 - The ASGI boundary counts streamed chunks without retaining a second body copy. Accepted multipart data is framework-spooled and copied once through a bounded reader; per-route concurrency ceilings protect upload/render work and password KDFs.
-- Customer uploads require available credit and remain under per-tenant bandwidth, outstanding-upload, and total stored-byte limits. Job copies count toward stored bytes. Result history has separate per-job version and per-tenant byte ceilings; list routes return metadata pages and load one selected body explicitly.
+- Customer uploads require available credit and remain under per-tenant bandwidth, outstanding-upload, and total stored-byte limits. Durable cross-process reservations account for staging, upload publication, job copies, worst-case result expansion, pending deletion, database headroom, and minimum free space before bytes or spend are admitted. Result history has separate per-job version and per-tenant byte ceilings; list routes return metadata pages and load one selected body explicitly.
 - Public API submissions reserve upload, job, and credit in one SQLite transaction. A tenant-scoped request hash makes `Idempotency-Key` retries replay the saved response and rejects changed or expired reuse. Full responses expire on a configured horizon, then compact tombstones preserve the expired outcome for a separately configured retention period; clients must not recycle keys after that documented period.
-- State changes through the browser require a valid session and CSRF header. Cross-origin state changes are rejected.
+- Paid browser submissions also require a durable account/upload/page/crop-bound `Idempotency-Key`; ambiguous retries reuse it until the server confirms one outcome. State changes through the browser require a valid session and CSRF header. Cross-origin state changes are rejected.
+- Sessions carry an account generation. `/api/me` exposes a generation-bound one-way principal marker; browser tabs coordinate through BroadcastChannel/storage and lifecycle reconciliation, wipe all private state before async work, and fence every response with auth and selection epochs. Sign out increments the generation and revokes all account sessions.
 - Stripe events are applied only after signature verification and are idempotent by event ID. Configuration rejects live-mode secret keys.
 - Each anonymous sample session is a distinct ephemeral demo tenant. Server-side capability checks permit only the exact saved fixture and deny arbitrary upload, API-key, and billing surfaces.
 
@@ -62,9 +63,9 @@ The exact saved fixture is the only zero-credit job. It is hash-matched and repl
 
 ## Persistence and recovery
 
-SQLite runs in WAL mode with foreign keys, a busy timeout, a cross-process migration lock, crash-atomic schema transactions, and short business transactions. Startup reconciliation is serialized, ignores files younger than its safety grace, and rechecks ownership before deletion. Sources are copied into job-owned storage before upload expiry. Sessions and prepared uploads expire independently; completed jobs follow the configured retention window. File removal is first committed to a deletion outbox, retried by housekeeping, and supplemented by storage reconciliation so a transient volume failure does not erase the only deletion record.
+SQLite runs in WAL mode with foreign keys, a busy timeout, a cross-process migration lock, crash-atomic schema transactions, and short business transactions. Startup reconciliation is serialized, ignores files younger than its safety grace, rechecks ownership before deletion, and preserves live durable storage reservations. Source bytes and containing namespaces are fsynced before SQLite references. Sources are copied into job-owned storage before upload expiry. Sessions and prepared uploads expire independently; completed jobs follow the configured retention window. Job deletion removes the last-reference upload row in the same immediate transaction and queues both source paths; shared uploads remain. File removal is first committed to a deletion outbox, retried by housekeeping, and supplemented by storage reconciliation so a transient volume failure does not erase the only deletion record or restore preview access.
 
-Sessions, API credentials, jobs, uploads, result versions, audit detail, credit ledger, idempotency records, billing events, provider attempts, and total tenant/global database rows all have admission or retention bounds. Old audit detail is aggregated into bounded job/account rollups. Jobs, keys, and audit detail use stable cursor pagination so an active credential cannot disappear behind a fixed first-page cap.
+Sessions, API credentials, jobs, uploads, result versions, audit detail, credit ledger, idempotency records, billing events, provider attempts, and total tenant/global database rows all pass through centralized transactional admission or retention bounds. Admission preserves reserved capacity for every refundable obligation plus mandatory terminal, audit, and refund rows. Old audit detail is aggregated into bounded job/account rollups. Jobs, keys, and audit detail use stable cursor pagination so an active credential cannot disappear behind a fixed first-page cap. The browser editor pages a maximum-contract result into at most 500 mounted cells rather than expanding every point into the DOM.
 
 This topology is appropriate for a controlled single-node beta. Do not mount one SQLite database over multiple application hosts. Scale-out requires:
 

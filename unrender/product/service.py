@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -40,7 +41,6 @@ from unrender.schema.chart_schema import CHART_TYPES, ChartData
 _SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 _NUMERIC_CELL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
-_MAX_RESULT_JSON_BYTES = 1_000_000
 logger = logging.getLogger("unrender.product")
 
 
@@ -58,12 +58,25 @@ class WorkerClaim:
         return self.row[key]
 
 
+@dataclass(frozen=True)
+class ReservedStagedUpload:
+    staged: StagedUpload
+    reservation_id: str
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
 def timestamp(value: datetime | None = None) -> str:
     return (value or utcnow()).isoformat().replace("+00:00", "Z")
+
+
+def truncate_utf8(value: object, byte_limit: int) -> str:
+    encoded = str(value).encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return encoded.decode("utf-8")
+    return encoded[:byte_limit].decode("utf-8", errors="ignore")
 
 
 def public_job(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, Any]:
@@ -127,6 +140,10 @@ class ProductService:
         self.settings.data_dir.chmod(0o700)
         self.database.initialize()
         with self.database.startup_lock():
+            # Never invent capacity for a pre-v7 or corrupted in-flight attempt. The
+            # fenced pre-dispatch check fails it closed and refunds eligible spend;
+            # a retry must pass the current transactional admission boundary.
+            self.cleanup_storage_reservations()
             self._retire_legacy_shared_demo()
             self.reconcile_storage()
             self.drain_deletion_queue()
@@ -202,7 +219,8 @@ class ProductService:
                     job_id=job_id,
                     count=job_count - self.settings.max_audit_events_per_job + 1,
                 )
-        conn.execute(
+        self._insert_row(
+            conn,
             "INSERT INTO audit_events(id,user_id,job_id,event_type,details_json,created_at) "
             "VALUES (?,?,?,?,?,?)",
             (
@@ -213,6 +231,8 @@ class ProductService:
                 json.dumps(details or {}, separators=(",", ":")),
                 timestamp(),
             ),
+            user_id=user_id,
+            mandatory=True,
         )
 
     def _rollup_audit_events(self, conn: sqlite3.Connection, *, user_id: str, before: str) -> None:
@@ -243,7 +263,9 @@ class ProductService:
     ) -> None:
         for row in rows:
             job_id = row["job_id"]
-            conn.execute(
+            conn.execute("DELETE FROM audit_events WHERE id=?", (row["id"],))
+            self._insert_row(
+                conn,
                 "INSERT INTO audit_rollups("
                 "user_id,job_id,job_scope,event_type,day,event_count,first_at,last_at"
                 ") VALUES (?,?,?,?,'archive',1,?,?) "
@@ -259,8 +281,9 @@ class ProductService:
                     row["created_at"],
                     row["created_at"],
                 ),
+                user_id=user_id,
+                mandatory=True,
             )
-            conn.execute("DELETE FROM audit_events WHERE id=?", (row["id"],))
 
     def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
         tables = (
@@ -275,6 +298,7 @@ class ProductService:
             "api_idempotency",
             "provider_attempts",
             "pending_deletions",
+            "storage_reservations",
         )
         total = 0
         for table in tables:
@@ -297,19 +321,399 @@ class ProductService:
                 )
         return total
 
-    def _assert_database_capacity(self, conn: sqlite3.Connection, user_id: str) -> None:
-        if self._database_row_count(conn, user_id) >= self.settings.max_database_rows_per_user:
-            raise ProductError(
-                "database_quota_reached",
-                "This workspace has reached its retained-record limit; delete old work and retry",
-                429,
+    def _future_terminal_rows(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
+        if user_id is None:
+            rows = conn.execute(
+                "SELECT status,provider_dispatched,recovery_count FROM jobs"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT status,provider_dispatched,recovery_count FROM jobs WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
+        total = 0
+        for row in rows:
+            remaining_recoveries = max(
+                0, self.settings.max_recovery_attempts - int(row["recovery_count"])
             )
-        if self._database_row_count(conn) >= self.settings.max_database_rows_global:
+            if row["status"] == "queued":
+                # claim audit + dispatch/result/terminal rows, plus one recovery audit and
+                # another claim audit for each allowed pre-dispatch lease recovery.
+                total += 5 + (2 * remaining_recoveries)
+            elif row["status"] == "running" and not row["provider_dispatched"]:
+                total += 4 + (2 * remaining_recoveries)
+            elif row["status"] == "running":
+                total += 2
+        return total
+
+    def _new_job_future_rows(self) -> int:
+        return 5 + (2 * self.settings.max_recovery_attempts)
+
+    def _admit_database_rows(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str | None,
+        additional_rows: int = 1,
+        mandatory: bool = False,
+        new_future_rows: int = 0,
+    ) -> None:
+        if additional_rows < 0 or new_future_rows < 0:
+            raise ValueError("Database admission deltas cannot be negative")
+        global_rows = self._database_row_count(conn)
+        if global_rows + additional_rows > self.settings.max_database_rows_global:
             raise ProductError(
                 "service_capacity_reached",
                 "The service has reached its retained-record safety limit",
                 503,
             )
+        if not mandatory and (
+            global_rows
+            + additional_rows
+            + self.settings.mandatory_database_rows_global
+            + self._future_terminal_rows(conn)
+            + new_future_rows
+            > self.settings.max_database_rows_global
+        ):
+            raise ProductError(
+                "service_capacity_reached",
+                "The service is preserving database capacity for in-flight terminal records",
+                503,
+            )
+        if user_id is None:
+            return
+        user_rows = self._database_row_count(conn, user_id)
+        if user_rows + additional_rows > self.settings.max_database_rows_per_user:
+            raise ProductError(
+                "database_quota_reached",
+                "This workspace has reached its retained-record limit; delete old work and retry",
+                429,
+            )
+        if not mandatory and (
+            user_rows
+            + additional_rows
+            + self.settings.mandatory_database_rows_per_user
+            + self._future_terminal_rows(conn, user_id)
+            + new_future_rows
+            > self.settings.max_database_rows_per_user
+        ):
+            raise ProductError(
+                "database_quota_reached",
+                "This workspace is preserving database capacity for in-flight terminal records",
+                429,
+            )
+
+    def _insert_row(
+        self,
+        conn: sqlite3.Connection,
+        sql: str,
+        parameters: tuple[object, ...],
+        *,
+        user_id: str | None,
+        mandatory: bool = False,
+        new_future_rows: int = 0,
+    ) -> sqlite3.Cursor:
+        self._admit_database_rows(
+            conn,
+            user_id=user_id,
+            mandatory=mandatory,
+            new_future_rows=new_future_rows,
+        )
+        return conn.execute(sql, parameters)
+
+    def _assert_database_capacity(self, conn: sqlite3.Connection, user_id: str) -> None:
+        self._admit_database_rows(conn, user_id=user_id)
+
+    def _retained_storage_bytes(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT "
+            "COALESCE((SELECT SUM(byte_size) FROM uploads),0) + "
+            "COALESCE((SELECT SUM(source_byte_size) FROM jobs),0) + "
+            "COALESCE((SELECT SUM(byte_size) FROM pending_deletions),0) + "
+            "COALESCE((SELECT SUM(byte_count) FROM storage_reservations),0) + "
+            "COALESCE((SELECT SUM(retained_byte_reservation) FROM jobs),0) + "
+            "COALESCE((SELECT SUM(LENGTH(CAST(chart_json AS BLOB))) FROM result_versions),0) + "
+            "COALESCE((SELECT SUM(LENGTH(CAST(COALESCE(raw_result,'') AS BLOB)) + "
+            "LENGTH(CAST(COALESCE(original_result_json,'') AS BLOB)) + "
+            "LENGTH(CAST(COALESCE(current_result_json,'') AS BLOB))) FROM jobs),0) AS bytes"
+        ).fetchone()
+        database_bytes = 0
+        for path in (
+            self.settings.database_path,
+            Path(f"{self.settings.database_path}-wal"),
+            Path(f"{self.settings.database_path}-shm"),
+        ):
+            try:
+                database_bytes += path.stat().st_size
+            except OSError:
+                continue
+        return int(row["bytes"]) + database_bytes + self.settings.database_headroom_bytes
+
+    def _unrealized_storage_reservations(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT COALESCE((SELECT SUM(byte_count) FROM storage_reservations),0) + "
+            "COALESCE((SELECT SUM(retained_byte_reservation) FROM jobs),0) AS bytes"
+        ).fetchone()
+        return int(row["bytes"])
+
+    def _assert_retained_byte_capacity(
+        self, conn: sqlite3.Connection, *, additional_bytes: int
+    ) -> None:
+        if additional_bytes < 0:
+            raise ValueError("Storage admission delta cannot be negative")
+        if (
+            self._retained_storage_bytes(conn) + additional_bytes
+            > self.settings.max_storage_bytes_global
+        ):
+            raise ProductError(
+                "service_storage_capacity_reached",
+                "The service has reached its global retained-byte limit",
+                503,
+            )
+        free = shutil.disk_usage(self.settings.data_dir).free
+        required_free = (
+            self.settings.min_free_storage_bytes
+            + self.settings.database_headroom_bytes
+            + self._unrealized_storage_reservations(conn)
+            + additional_bytes
+        )
+        if free < required_free:
+            raise ProductError(
+                "storage_free_space_guard",
+                "The service is preserving its minimum disk and database headroom",
+                503,
+            )
+
+    def _reserve_result_capacity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        job_id: str | None,
+        attempt: int,
+    ) -> None:
+        """Reserve the worst-case durable result expansion before any billable work."""
+
+        if attempt <= 0:
+            raise ValueError("Result-capacity reservations require a positive attempt")
+        usage = conn.execute(
+            "SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB))),0) AS history_bytes "
+            "FROM result_versions WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        reserved = int(
+            conn.execute(
+                "SELECT COALESCE(SUM(result_reservation_bytes),0) AS bytes FROM jobs "
+                "WHERE user_id=? AND (? IS NULL OR id<>?)",
+                (user_id, job_id, job_id),
+            ).fetchone()["bytes"]
+        )
+        if (
+            int(usage["history_bytes"]) + reserved + self.settings.max_result_json_bytes
+            > self.settings.max_history_bytes_per_user
+        ):
+            raise ProductError(
+                "history_storage_quota_reached",
+                "This workspace cannot reserve another maximum-size result version",
+                413,
+            )
+        if job_id is not None:
+            versions = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM result_versions WHERE job_id=? AND user_id=?",
+                    (job_id, user_id),
+                ).fetchone()["count"]
+            )
+            if versions >= self.settings.max_result_versions_per_job:
+                raise ProductError(
+                    "version_quota_reached",
+                    "This extraction has reached its retained version limit",
+                    429,
+                )
+        self._assert_retained_byte_capacity(
+            conn, additional_bytes=self.settings.result_publication_reservation_bytes
+        )
+
+    @staticmethod
+    def _idempotency_digest(namespace: str, key: str) -> str:
+        if not _IDEMPOTENCY_KEY.fullmatch(key):
+            raise ProductError(
+                "idempotency_key_required",
+                "Provide an Idempotency-Key of 8-128 letters, numbers, '.', '_', ':', or '-'",
+                422,
+            )
+        return hashlib.sha256(f"{namespace}:{key}".encode()).hexdigest()
+
+    def _create_idempotency_record(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        stored_key: str,
+        request_sha256: str,
+        now: datetime,
+    ) -> None:
+        created_at = timestamp(now)
+        conn.execute(
+            "UPDATE api_idempotency SET response_json=NULL,expired_at=expires_at "
+            "WHERE user_id=? AND expires_at<=? AND expired_at IS NULL",
+            (user_id, created_at),
+        )
+        conn.execute(
+            "DELETE FROM api_idempotency WHERE user_id=? AND expired_at<?",
+            (
+                user_id,
+                timestamp(now - timedelta(days=self.settings.idempotency_tombstone_days)),
+            ),
+        )
+        count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM api_idempotency WHERE user_id=?", (user_id,)
+            ).fetchone()["count"]
+        )
+        if count >= self.settings.max_idempotency_records_per_user:
+            raise ProductError(
+                "idempotency_quota_reached",
+                "This account has reached its retained request-key limit",
+                429,
+            )
+        self._insert_row(
+            conn,
+            "INSERT INTO api_idempotency("
+            "user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,"
+            "expires_at,expired_at) VALUES (?,?,?,NULL,?,NULL,?,NULL)",
+            (
+                user_id,
+                stored_key,
+                request_sha256,
+                created_at,
+                timestamp(now + timedelta(hours=self.settings.idempotency_ttl_hours)),
+            ),
+            user_id=user_id,
+        )
+
+    def _reserve_storage_bytes(
+        self,
+        *,
+        user_id: str,
+        byte_count: int,
+        kind: str,
+        storage_path: Path | None = None,
+    ) -> str:
+        reservation_id = self._id()
+        now = utcnow()
+        with self.database.transaction(immediate=True) as conn:
+            self._assert_retained_byte_capacity(conn, additional_bytes=byte_count)
+            self._insert_row(
+                conn,
+                "INSERT INTO storage_reservations("
+                "id,user_id,kind,byte_count,storage_path,created_at,expires_at"
+                ") VALUES (?,?,?,?,?,?,?)",
+                (
+                    reservation_id,
+                    user_id,
+                    kind,
+                    byte_count,
+                    str(storage_path) if storage_path is not None else None,
+                    timestamp(now),
+                    timestamp(
+                        now + timedelta(seconds=self.settings.storage_reservation_ttl_seconds)
+                    ),
+                ),
+                user_id=user_id,
+            )
+        return reservation_id
+
+    def _resize_storage_reservation(
+        self,
+        *,
+        user_id: str,
+        reservation_id: str,
+        byte_count: int,
+        kind: str,
+        storage_path: Path | None = None,
+    ) -> None:
+        with self.database.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT byte_count FROM storage_reservations WHERE id=? AND user_id=?",
+                (reservation_id, user_id),
+            ).fetchone()
+            if not row:
+                raise ProductError(
+                    "storage_reservation_lost",
+                    "The durable storage reservation expired before publication",
+                    503,
+                )
+            delta = byte_count - int(row["byte_count"])
+            if delta > 0:
+                self._assert_retained_byte_capacity(conn, additional_bytes=delta)
+            conn.execute(
+                "UPDATE storage_reservations SET kind=?,byte_count=?,storage_path=? WHERE id=? "
+                "AND user_id=?",
+                (
+                    kind,
+                    byte_count,
+                    str(storage_path) if storage_path is not None else None,
+                    reservation_id,
+                    user_id,
+                ),
+            )
+
+    def _release_storage_reservation(self, *, user_id: str, reservation_id: str) -> None:
+        with self.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
+                (reservation_id, user_id),
+            )
+
+    def _stage_upload_with_reservation(
+        self, *, user_id: str, source: BinaryIO
+    ) -> ReservedStagedUpload:
+        staging_path = self.storage.root / "staging" / f"upload-{uuid.uuid4().hex}.tmp"
+        reservation_id = self._reserve_storage_bytes(
+            user_id=user_id,
+            byte_count=self.settings.max_upload_bytes,
+            kind="staging",
+            storage_path=staging_path,
+        )
+        try:
+            staged = self.storage.stage_upload(source, destination=staging_path)
+            self._resize_storage_reservation(
+                user_id=user_id,
+                reservation_id=reservation_id,
+                byte_count=staged.inspection.byte_size,
+                kind="staging",
+                storage_path=staged.path,
+            )
+            return ReservedStagedUpload(staged=staged, reservation_id=reservation_id)
+        except Exception:
+            self._release_storage_reservation(user_id=user_id, reservation_id=reservation_id)
+            raise
+
+    def cleanup_storage_reservations(self) -> int:
+        now = timestamp()
+        paths: list[str] = []
+        with self.database.transaction(immediate=True) as conn:
+            expired = conn.execute(
+                "SELECT id,user_id,storage_path,byte_count FROM storage_reservations "
+                "WHERE expires_at<=?",
+                (now,),
+            ).fetchall()
+            for row in expired:
+                if row["storage_path"]:
+                    path = str(row["storage_path"])
+                    paths.append(path)
+                    self._queue_deletion(
+                        conn,
+                        path,
+                        "expired_storage_reservation",
+                        user_id=str(row["user_id"]) if row["user_id"] else None,
+                        byte_size=int(row["byte_count"]),
+                    )
+                conn.execute("DELETE FROM storage_reservations WHERE id=?", (row["id"],))
+        if paths:
+            self.drain_deletion_queue(paths=paths)
+        return len(expired)
 
     def _change_credits(
         self,
@@ -319,6 +723,7 @@ class ProductService:
         delta: int,
         reason: str,
         idempotency_key: str,
+        mandatory: bool = False,
     ) -> int:
         existing = conn.execute(
             "SELECT balance_after FROM credit_ledger WHERE idempotency_key=?",
@@ -331,16 +736,22 @@ class ProductService:
                 "SELECT COUNT(*) AS count FROM credit_ledger WHERE user_id=?", (user_id,)
             ).fetchone()["count"]
         )
-        reserve_guard = self.settings.max_credit_ledger_records_per_user - 2
+        refundable = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM jobs WHERE user_id=? "
+                "AND reservation_active=1 AND provider_dispatched=0",
+                (user_id,),
+            ).fetchone()["count"]
+        )
         if ledger_count >= self.settings.max_credit_ledger_records_per_user or (
-            delta < 0 and ledger_count >= reserve_guard
+            not mandatory
+            and ledger_count + 1 + refundable > self.settings.max_credit_ledger_records_per_user
         ):
             raise ProductError(
                 "credit_ledger_capacity_reached",
                 "Credit activity is paused until an operator archives this account ledger",
                 503,
             )
-        self._assert_database_capacity(conn, user_id)
         user = conn.execute("SELECT credit_balance FROM users WHERE id=?", (user_id,)).fetchone()
         if not user:
             raise ProductError("user_not_found", "Account no longer exists", 404)
@@ -348,12 +759,15 @@ class ProductService:
         if balance < 0:
             raise ProductError("credits_required", "This extraction needs one chart credit", 402)
         conn.execute("UPDATE users SET credit_balance=? WHERE id=?", (balance, user_id))
-        conn.execute(
+        self._insert_row(
+            conn,
             "INSERT INTO credit_ledger("
             "id,user_id,delta,balance_after,reason,idempotency_key,created_at"
             ") "
             "VALUES (?,?,?,?,?,?,?)",
             (self._id(), user_id, delta, balance, reason, idempotency_key, timestamp()),
+            user_id=user_id,
+            mandatory=mandatory,
         )
         return balance
 
@@ -381,12 +795,14 @@ class ProductService:
                         "The service has reached its retained-record safety limit",
                         503,
                     )
-                conn.execute(
+                self._insert_row(
+                    conn,
                     "INSERT INTO users("
                     "id,email,password_hash,account_kind,credit_balance,created_at"
                     ") "
                     "VALUES (?,?,?,?,?,?)",
                     (user_id, normalized_email, password_hash, account_kind, 0, now),
+                    user_id=None,
                 )
                 if initial_credits:
                     self._change_credits(
@@ -483,23 +899,32 @@ class ProductService:
         with self.database.transaction(immediate=True) as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at<=?", (timestamp(now),))
             self._assert_database_capacity(conn, user_id)
+            user = conn.execute(
+                "SELECT session_generation FROM users WHERE id=?", (user_id,)
+            ).fetchone()
+            if not user:
+                raise ProductError("user_not_found", "Account not found", 404)
             sessions = conn.execute(
                 "SELECT id FROM sessions WHERE user_id=? ORDER BY created_at DESC,id DESC",
                 (user_id,),
             ).fetchall()
             for stale in sessions[self.settings.max_sessions_per_user - 1 :]:
                 conn.execute("DELETE FROM sessions WHERE id=?", (stale["id"],))
-            conn.execute(
-                "INSERT INTO sessions(id,user_id,token_hash,csrf_hash,expires_at,created_at) "
-                "VALUES (?,?,?,?,?,?)",
+            self._insert_row(
+                conn,
+                "INSERT INTO sessions("
+                "id,user_id,token_hash,csrf_hash,session_generation,expires_at,created_at"
+                ") VALUES (?,?,?,?,?,?,?)",
                 (
                     self._id(),
                     user_id,
                     token_hash(session_token),
                     token_hash(csrf_token),
+                    int(user["session_generation"]),
                     timestamp(now + timedelta(hours=self.settings.session_ttl_hours)),
                     timestamp(now),
                 ),
+                user_id=user_id,
             )
             self._audit(conn, user_id=user_id, event_type="session_created")
         return {"session": session_token, "csrf": csrf_token}
@@ -510,7 +935,8 @@ class ProductService:
         with self.database.connect() as conn:
             return conn.execute(
                 "SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id "
-                "WHERE sessions.token_hash=? AND sessions.expires_at>?",
+                "WHERE sessions.token_hash=? AND sessions.expires_at>? "
+                "AND sessions.session_generation=users.session_generation",
                 (token_hash(session_token), timestamp()),
             ).fetchone()
 
@@ -519,7 +945,10 @@ class ProductService:
             return False
         with self.database.connect() as conn:
             row = conn.execute(
-                "SELECT csrf_hash FROM sessions WHERE token_hash=? AND expires_at>?",
+                "SELECT sessions.csrf_hash FROM sessions "
+                "JOIN users ON users.id=sessions.user_id "
+                "WHERE sessions.token_hash=? AND sessions.expires_at>? "
+                "AND sessions.session_generation=users.session_generation",
                 (token_hash(session_token), timestamp()),
             ).fetchone()
         return bool(row and row["csrf_hash"] == token_hash(csrf_token))
@@ -534,8 +963,12 @@ class ProductService:
                 "JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=?",
                 (token_hash(session_token),),
             ).fetchone()
-            conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(session_token),))
             if row:
+                conn.execute("DELETE FROM sessions WHERE user_id=?", (row["user_id"],))
+                conn.execute(
+                    "UPDATE users SET session_generation=session_generation+1 WHERE id=?",
+                    (row["user_id"],),
+                )
                 self._audit(conn, user_id=row["user_id"], event_type="session_revoked")
                 if row["account_kind"] == "demo":
                     active = conn.execute(
@@ -560,6 +993,10 @@ class ProductService:
             "credit_pack_size": self.settings.credit_pack_size,
             "demo_mode": self.settings.extractor_backend == "replay",
             "demo_account": user["account_kind"] == "demo",
+            "session_generation": int(user["session_generation"]),
+            "principal_marker": hashlib.sha256(
+                f"{user['id']}:{user['session_generation']}".encode()
+            ).hexdigest()[:32],
         }
 
     def prepare_upload(self, *, user_id: str, filename: str, content: bytes) -> dict[str, Any]:
@@ -691,11 +1128,11 @@ class ProductService:
         require_credit: bool,
         fixture_sha256: str | None = None,
     ) -> dict[str, Any]:
-        staged = self.storage.stage_upload(io.BytesIO(content))
+        reserved = self._stage_upload_with_reservation(user_id=user_id, source=io.BytesIO(content))
         return self._prepare_staged_upload(
             user_id=user_id,
             filename=filename,
-            staged=staged,
+            reserved=reserved,
             require_credit=require_credit,
             fixture_sha256=fixture_sha256,
         )
@@ -707,7 +1144,7 @@ class ProductService:
         return self._prepare_staged_upload(
             user_id=user_id,
             filename=filename,
-            staged=self.storage.stage_upload(source),
+            reserved=self._stage_upload_with_reservation(user_id=user_id, source=source),
             require_credit=True,
         )
 
@@ -716,21 +1153,33 @@ class ProductService:
         *,
         user_id: str,
         filename: str,
-        staged: StagedUpload,
+        reserved: ReservedStagedUpload,
         require_credit: bool,
         fixture_sha256: str | None = None,
     ) -> dict[str, Any]:
+        staged = reserved.staged
         inspection = staged.inspection
         try:
             self._consume_upload_bytes(user_id, inspection.byte_size)
         except Exception:
-            staged.path.unlink(missing_ok=True)
+            self.storage.delete(staged.path)
+            self._release_storage_reservation(
+                user_id=user_id, reservation_id=reserved.reservation_id
+            )
             raise
         upload_id = self._id()
         safe_name = Path(filename or "chart").name[:180]
         path: Path | None = None
         now = utcnow()
+        expected_path = self.storage.root / "uploads" / user_id / f"{upload_id}.source"
         try:
+            self._resize_storage_reservation(
+                user_id=user_id,
+                reservation_id=reserved.reservation_id,
+                byte_count=inspection.byte_size,
+                kind="upload",
+                storage_path=expected_path,
+            )
             with self.database.transaction(immediate=True) as conn:
                 self._assert_database_capacity(conn, user_id)
                 self._assert_upload_capacity(
@@ -743,7 +1192,8 @@ class ProductService:
                 path = self.storage.commit_staged_upload(
                     user_id=user_id, upload_id=upload_id, staged=staged.path
                 )
-                conn.execute(
+                self._insert_row(
+                    conn,
                     "INSERT INTO uploads("
                     "id,user_id,original_name,mime_type,storage_path,byte_size,sha256,"
                     "page_count,created_at,expires_at"
@@ -761,6 +1211,11 @@ class ProductService:
                         timestamp(now),
                         timestamp(now + timedelta(hours=self.settings.upload_ttl_hours)),
                     ),
+                    user_id=user_id,
+                )
+                conn.execute(
+                    "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
+                    (reserved.reservation_id, user_id),
                 )
                 self._audit(
                     conn,
@@ -769,10 +1224,12 @@ class ProductService:
                     details={"upload_id": upload_id, "mime": inspection.mime_type},
                 )
         except Exception:
-            if path is not None:
-                self.storage.delete(path)
-            else:
-                staged.path.unlink(missing_ok=True)
+            expected = path if path is not None else expected_path
+            self.storage.delete(expected)
+            self.storage.delete(staged.path)
+            self._release_storage_reservation(
+                user_id=user_id, reservation_id=reserved.reservation_id
+            )
             raise
         return {
             "id": upload_id,
@@ -825,16 +1282,8 @@ class ProductService:
         upload_id: str,
         page_index: int,
         crop: dict[str, float] | None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        upload = self.upload(user_id=user_id, upload_id=upload_id)
-        if self.is_demo_user(user_id) and not self._is_free_demo_fixture(str(upload["sha256"])):
-            raise ProductError(
-                "demo_fixture_only",
-                "The isolated sample session can run only the saved verification fixture",
-                403,
-            )
-        if not 0 <= page_index < int(upload["page_count"]):
-            raise ProductError("invalid_page", "Selected page does not exist")
         if crop:
             try:
                 values = {key: float(crop[key]) for key in ("x", "y", "width", "height")}
@@ -850,21 +1299,107 @@ class ProductService:
                 crop = values
             except (KeyError, TypeError, ValueError) as exc:
                 raise ProductError("invalid_crop", "Crop must stay within the source") from exc
+        effective_key = idempotency_key or f"trusted-{uuid.uuid4().hex}"
+        stored_key = self._idempotency_digest("browser-job", effective_key)
+        request_sha256 = hashlib.sha256(
+            json.dumps(
+                {"upload_id": upload_id, "page_index": page_index, "crop": crop},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        with self.database.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM api_idempotency WHERE user_id=? AND idempotency_key=?",
+                (user_id, stored_key),
+            ).fetchone()
+        if existing:
+            return self._idempotent_response(existing, request_sha256=request_sha256)
+        upload = self.upload(user_id=user_id, upload_id=upload_id)
+        if self.is_demo_user(user_id) and not self._is_free_demo_fixture(str(upload["sha256"])):
+            raise ProductError(
+                "demo_fixture_only",
+                "The isolated sample session can run only the saved verification fixture",
+                403,
+            )
+        if not 0 <= page_index < int(upload["page_count"]):
+            raise ProductError("invalid_page", "Selected page does not exist")
         job_id = self._id()
         source_path: Path | None = None
-        now = timestamp()
         credit_cost = 0 if self._is_free_demo_fixture(str(upload["sha256"])) else 1
+        expected_source_path = self.storage.root / "jobs" / user_id / f"{job_id}.source"
+        copy_reservation = self._reserve_storage_bytes(
+            user_id=user_id,
+            byte_count=int(upload["byte_size"]),
+            kind="job_copy",
+            storage_path=expected_source_path,
+        )
         try:
             with self.database.transaction(immediate=True) as conn:
+                existing = conn.execute(
+                    "SELECT * FROM api_idempotency WHERE user_id=? AND idempotency_key=?",
+                    (user_id, stored_key),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
+                        (copy_reservation, user_id),
+                    )
+                    return self._idempotent_response(existing, request_sha256=request_sha256)
+                live_upload = conn.execute(
+                    "SELECT * FROM uploads WHERE id=? AND user_id=? AND expires_at>?",
+                    (upload_id, user_id, timestamp()),
+                ).fetchone()
+                if not live_upload:
+                    raise ProductError("upload_not_found", "Upload expired or was not found", 404)
                 self._assert_job_capacity(
                     conn,
                     user_id=user_id,
-                    incoming_bytes=int(upload["byte_size"]),
+                    incoming_bytes=int(live_upload["byte_size"]),
+                )
+                self._reserve_result_capacity(conn, user_id=user_id, job_id=None, attempt=1)
+                now_value = utcnow()
+                now = timestamp(now_value)
+                self._create_idempotency_record(
+                    conn,
+                    user_id=user_id,
+                    stored_key=stored_key,
+                    request_sha256=request_sha256,
+                    now=now_value,
                 )
                 source_path = self.storage.copy_to_job(
                     user_id=user_id,
                     job_id=job_id,
-                    source=Path(upload["storage_path"]),
+                    source=Path(live_upload["storage_path"]),
+                )
+                self._insert_row(
+                    conn,
+                    "INSERT INTO jobs("
+                    "id,user_id,upload_id,source_name,source_mime,source_path,"
+                    "source_sha256,source_byte_size,page_index,crop_json,status,progress_stage,"
+                    "reservation_active,result_reservation_bytes,result_reservation_attempt,"
+                    "retained_byte_reservation,created_at,updated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,'queued','Waiting for extraction',?,?,?,?,?,?)",
+                    (
+                        job_id,
+                        user_id,
+                        upload_id,
+                        live_upload["original_name"],
+                        live_upload["mime_type"],
+                        str(source_path),
+                        live_upload["sha256"],
+                        live_upload["byte_size"],
+                        page_index,
+                        json.dumps(crop, separators=(",", ":")) if crop else None,
+                        credit_cost,
+                        self.settings.max_result_json_bytes,
+                        1,
+                        self.settings.result_publication_reservation_bytes,
+                        now,
+                        now,
+                    ),
+                    user_id=user_id,
+                    new_future_rows=(self._new_job_future_rows() + 1 + int(bool(credit_cost))),
                 )
                 if credit_cost:
                     self._change_credits(
@@ -874,28 +1409,6 @@ class ProductService:
                         reason="job_reserved",
                         idempotency_key=f"job:{job_id}:reserve:1",
                     )
-                conn.execute(
-                    "INSERT INTO jobs("
-                    "id,user_id,upload_id,source_name,source_mime,source_path,"
-                    "source_sha256,source_byte_size,page_index,crop_json,status,progress_stage,"
-                    "reservation_active,created_at,updated_at"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?,'queued','Waiting for extraction',?,?,?)",
-                    (
-                        job_id,
-                        user_id,
-                        upload_id,
-                        upload["original_name"],
-                        upload["mime_type"],
-                        str(source_path),
-                        upload["sha256"],
-                        upload["byte_size"],
-                        page_index,
-                        json.dumps(crop, separators=(",", ":")) if crop else None,
-                        credit_cost,
-                        now,
-                        now,
-                    ),
-                )
                 self._audit(
                     conn,
                     user_id=user_id,
@@ -907,11 +1420,28 @@ class ProductService:
                         "credits_reserved": credit_cost,
                     },
                 )
+                row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                response = public_job(row)
+                conn.execute(
+                    "UPDATE api_idempotency SET response_json=?,completed_at=? "
+                    "WHERE user_id=? AND idempotency_key=?",
+                    (
+                        json.dumps(response, separators=(",", ":")),
+                        timestamp(),
+                        user_id,
+                        stored_key,
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
+                    (copy_reservation, user_id),
+                )
         except Exception:
-            if source_path is not None:
-                self.storage.delete(source_path)
+            expected = source_path if source_path is not None else expected_source_path
+            self.storage.delete(expected)
+            self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
             raise
-        return self.get_job(user_id=user_id, job_id=job_id)
+        return response
 
     def _idempotent_response(
         self,
@@ -964,11 +1494,13 @@ class ProductService:
         idempotency_key: str,
     ) -> dict[str, Any]:
         """Atomically persist, reserve, and queue one public API request."""
-
+        self.require_customer_account(user_id, "API extraction")
         return self._submit_api_staged_extraction(
             user_id=user_id,
             filename=filename,
-            staged=self.storage.stage_upload(io.BytesIO(content)),
+            reserved=self._stage_upload_with_reservation(
+                user_id=user_id, source=io.BytesIO(content)
+            ),
             page_index=page_index,
             idempotency_key=idempotency_key,
         )
@@ -982,10 +1514,11 @@ class ProductService:
         page_index: int,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        self.require_customer_account(user_id, "API extraction")
         return self._submit_api_staged_extraction(
             user_id=user_id,
             filename=filename,
-            staged=self.storage.stage_upload(source),
+            reserved=self._stage_upload_with_reservation(user_id=user_id, source=source),
             page_index=page_index,
             idempotency_key=idempotency_key,
         )
@@ -995,19 +1528,21 @@ class ProductService:
         *,
         user_id: str,
         filename: str,
-        staged: StagedUpload,
+        reserved: ReservedStagedUpload,
         page_index: int,
         idempotency_key: str,
     ) -> dict[str, Any]:
         """Atomically commit one bounded request spool, reservation, and queue row."""
+        staged = reserved.staged
 
-        try:
-            self.require_customer_account(user_id, "API extraction")
-        except Exception:
-            staged.path.unlink(missing_ok=True)
-            raise
+        def abandon_staging() -> None:
+            self.storage.delete(staged.path)
+            self._release_storage_reservation(
+                user_id=user_id, reservation_id=reserved.reservation_id
+            )
+
         if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
-            staged.path.unlink(missing_ok=True)
+            abandon_staging()
             raise ProductError(
                 "idempotency_key_required",
                 "Provide an Idempotency-Key of 8-128 letters, numbers, '.', '_', ':', or '-'",
@@ -1016,7 +1551,7 @@ class ProductService:
         stored_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
         inspection = staged.inspection
         if not 0 <= page_index < inspection.page_count:
-            staged.path.unlink(missing_ok=True)
+            abandon_staging()
             raise ProductError("invalid_page", "Selected page does not exist")
         safe_name = Path(filename or "chart").name[:180]
         request_sha256 = hashlib.sha256(
@@ -1036,16 +1571,41 @@ class ProductService:
                 (user_id, stored_key),
             ).fetchone()
         if existing:
-            staged.path.unlink(missing_ok=True)
+            abandon_staging()
             return self._idempotent_response(existing, request_sha256=request_sha256)
 
         try:
             self._consume_upload_bytes(user_id, inspection.byte_size)
         except Exception:
-            staged.path.unlink(missing_ok=True)
+            abandon_staging()
             raise
         upload_id = self._id()
         job_id = self._id()
+        expected_upload = self.storage.root / "uploads" / user_id / f"{upload_id}.source"
+        expected_source = self.storage.root / "jobs" / user_id / f"{job_id}.source"
+        copy_reservation: str | None = None
+        try:
+            self._resize_storage_reservation(
+                user_id=user_id,
+                reservation_id=reserved.reservation_id,
+                byte_count=inspection.byte_size,
+                kind="upload",
+                storage_path=expected_upload,
+            )
+            copy_reservation = self._reserve_storage_bytes(
+                user_id=user_id,
+                byte_count=inspection.byte_size,
+                kind="job_copy",
+                storage_path=expected_source,
+            )
+        except Exception:
+            abandon_staging()
+            if copy_reservation is not None:
+                self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
+            raise
+        if copy_reservation is None:  # pragma: no cover - guarded by reservation success above
+            abandon_staging()
+            raise RuntimeError("Job source reservation was not created")
         upload_path: Path | None = None
         source_path: Path | None = None
         try:
@@ -1055,9 +1615,12 @@ class ProductService:
                     (user_id, stored_key),
                 ).fetchone()
                 if existing:
-                    staged.path.unlink(missing_ok=True)
+                    self.storage.delete(staged.path)
+                    conn.execute(
+                        "DELETE FROM storage_reservations WHERE id IN (?,?) AND user_id=?",
+                        (reserved.reservation_id, copy_reservation, user_id),
+                    )
                     return self._idempotent_response(existing, request_sha256=request_sha256)
-                self._assert_database_capacity(conn, user_id)
                 self._assert_upload_capacity(
                     conn,
                     user_id=user_id,
@@ -1069,42 +1632,15 @@ class ProductService:
                     user_id=user_id,
                     incoming_bytes=inspection.byte_size,
                 )
+                self._reserve_result_capacity(conn, user_id=user_id, job_id=None, attempt=1)
                 now = utcnow()
                 created_at = timestamp(now)
-                conn.execute(
-                    "UPDATE api_idempotency SET response_json=NULL,expired_at=expires_at "
-                    "WHERE user_id=? AND expires_at<=? AND expired_at IS NULL",
-                    (user_id, created_at),
-                )
-                conn.execute(
-                    "DELETE FROM api_idempotency WHERE user_id=? AND expired_at<?",
-                    (
-                        user_id,
-                        timestamp(now - timedelta(days=self.settings.idempotency_tombstone_days)),
-                    ),
-                )
-                idempotency_count = conn.execute(
-                    "SELECT COUNT(*) AS count FROM api_idempotency WHERE user_id=?",
-                    (user_id,),
-                ).fetchone()["count"]
-                if int(idempotency_count) >= self.settings.max_idempotency_records_per_user:
-                    raise ProductError(
-                        "idempotency_quota_reached",
-                        "This account has reached its retained request-key limit",
-                        429,
-                    )
-                conn.execute(
-                    "INSERT INTO api_idempotency("
-                    "user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,"
-                    "expires_at,expired_at"
-                    ") VALUES (?,?,?,NULL,?,NULL,?,NULL)",
-                    (
-                        user_id,
-                        stored_key,
-                        request_sha256,
-                        created_at,
-                        timestamp(now + timedelta(hours=self.settings.idempotency_ttl_hours)),
-                    ),
+                self._create_idempotency_record(
+                    conn,
+                    user_id=user_id,
+                    stored_key=stored_key,
+                    request_sha256=request_sha256,
+                    now=now,
                 )
                 upload_path = self.storage.commit_staged_upload(
                     user_id=user_id,
@@ -1116,7 +1652,8 @@ class ProductService:
                     job_id=job_id,
                     source=upload_path,
                 )
-                conn.execute(
+                self._insert_row(
+                    conn,
                     "INSERT INTO uploads("
                     "id,user_id,original_name,mime_type,storage_path,byte_size,sha256,"
                     "page_count,created_at,expires_at"
@@ -1133,20 +1670,17 @@ class ProductService:
                         created_at,
                         timestamp(now + timedelta(hours=self.settings.upload_ttl_hours)),
                     ),
-                )
-                self._change_credits(
-                    conn,
                     user_id=user_id,
-                    delta=-1,
-                    reason="job_reserved",
-                    idempotency_key=f"job:{job_id}:reserve:1",
                 )
-                conn.execute(
+                self._insert_row(
+                    conn,
                     "INSERT INTO jobs("
                     "id,user_id,upload_id,source_name,source_mime,source_path,"
                     "source_sha256,source_byte_size,page_index,crop_json,status,progress_stage,"
-                    "reservation_active,created_at,updated_at"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,NULL,'queued','Waiting for extraction',1,?,?)",
+                    "reservation_active,result_reservation_bytes,result_reservation_attempt,"
+                    "retained_byte_reservation,created_at,updated_at"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,NULL,'queued',"
+                    "'Waiting for extraction',1,?,?,?,?,?)",
                     (
                         job_id,
                         user_id,
@@ -1157,9 +1691,21 @@ class ProductService:
                         inspection.sha256,
                         inspection.byte_size,
                         page_index,
+                        self.settings.max_result_json_bytes,
+                        1,
+                        self.settings.result_publication_reservation_bytes,
                         created_at,
                         created_at,
                     ),
+                    user_id=user_id,
+                    new_future_rows=self._new_job_future_rows() + 3,
+                )
+                self._change_credits(
+                    conn,
+                    user_id=user_id,
+                    delta=-1,
+                    reason="job_reserved",
+                    idempotency_key=f"job:{job_id}:reserve:1",
                 )
                 self._audit(
                     conn,
@@ -1187,10 +1733,17 @@ class ProductService:
                     "WHERE user_id=? AND idempotency_key=?",
                     (encoded_response, timestamp(), user_id, stored_key),
                 )
+                conn.execute(
+                    "DELETE FROM storage_reservations WHERE id IN (?,?) AND user_id=?",
+                    (reserved.reservation_id, copy_reservation, user_id),
+                )
             return response
         except Exception:
-            staged.path.unlink(missing_ok=True)
-            failed_paths = [path for path in (source_path, upload_path) if path is not None]
+            self.storage.delete(staged.path)
+            failed_paths = [
+                source_path or expected_source,
+                upload_path or expected_upload,
+            ]
             for path in failed_paths:
                 try:
                     self.storage.delete(path)
@@ -1202,6 +1755,10 @@ class ProductService:
                             "api_submission_rollback",
                             user_id=user_id,
                         )
+            self._release_storage_reservation(
+                user_id=user_id, reservation_id=reserved.reservation_id
+            )
+            self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
             raise
 
     def list_jobs_page(
@@ -1387,13 +1944,28 @@ class ProductService:
         user_id: str,
         job_id: str,
         encoded_bytes: int = 0,
+        reservation_attempt: int | None = None,
     ) -> int:
+        if encoded_bytes < 0 or encoded_bytes > self.settings.max_result_json_bytes:
+            raise ProductError("invalid_result", "The chart result exceeds the service limit", 422)
         usage = conn.execute(
             "SELECT COALESCE(MAX(version),0) AS latest,COUNT(*) AS job_versions,"
             "(SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB))),0) "
-            "FROM result_versions WHERE user_id=?) AS user_bytes "
+            "FROM result_versions WHERE user_id=?) AS user_bytes,"
+            "(SELECT COALESCE(SUM(result_reservation_bytes),0) FROM jobs "
+            "WHERE user_id=?) AS reserved_bytes,"
+            "(SELECT CASE WHEN result_reservation_attempt=? THEN result_reservation_bytes "
+            "ELSE 0 END FROM jobs WHERE id=? AND user_id=?) AS own_reservation "
             "FROM result_versions WHERE job_id=? AND user_id=?",
-            (user_id, job_id, user_id),
+            (
+                user_id,
+                user_id,
+                reservation_attempt,
+                job_id,
+                user_id,
+                job_id,
+                user_id,
+            ),
         ).fetchone()
         if int(usage["job_versions"]) >= self.settings.max_result_versions_per_job:
             raise ProductError(
@@ -1401,7 +1973,13 @@ class ProductService:
                 "This extraction has reached its retained version limit",
                 429,
             )
-        if int(usage["user_bytes"]) + encoded_bytes > self.settings.max_history_bytes_per_user:
+        if (
+            int(usage["user_bytes"])
+            + int(usage["reserved_bytes"])
+            - int(usage["own_reservation"] or 0)
+            + encoded_bytes
+            > self.settings.max_history_bytes_per_user
+        ):
             raise ProductError(
                 "history_storage_quota_reached",
                 "This workspace has reached its result-history storage limit",
@@ -1418,6 +1996,7 @@ class ProductService:
         except (TypeError, ValueError) as exc:
             raise ProductError("invalid_result", "The edited table is not valid", 422) from exc
         encoded = chart.model_dump_json()
+        encoded_bytes = len(encoded.encode("utf-8"))
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
@@ -1430,15 +2009,22 @@ class ProductService:
                 conn,
                 user_id=user_id,
                 job_id=job_id,
-                encoded_bytes=len(encoded.encode("utf-8")),
+                encoded_bytes=encoded_bytes,
+            )
+            old_current_bytes = len(str(row["current_result_json"] or "").encode("utf-8"))
+            self._assert_retained_byte_capacity(
+                conn,
+                additional_bytes=encoded_bytes + max(0, encoded_bytes - old_current_bytes),
             )
             now = timestamp()
-            conn.execute(
+            self._insert_row(
+                conn,
                 "INSERT INTO result_versions("
                 "id,job_id,user_id,version,source,chart_json,created_at"
                 ") "
                 "VALUES (?,?,?,?,?,?,?)",
                 (self._id(), job_id, user_id, version, "correction", encoded, now),
+                user_id=user_id,
             )
             conn.execute(
                 "UPDATE jobs SET current_result_json=?,status='review',"
@@ -1479,7 +2065,7 @@ class ProductService:
                     raise ValueError("Chart coordinates must be finite")
                 if isinstance(point.x, str) and len(point.x) > 500:
                     raise ValueError("Chart labels are too long")
-        if len(chart.model_dump_json().encode()) > _MAX_RESULT_JSON_BYTES:
+        if len(chart.model_dump_json().encode()) > self.settings.max_result_json_bytes:
             raise ValueError("Chart result is too large")
 
     def approve(self, *, user_id: str, job_id: str) -> dict[str, Any]:
@@ -1538,20 +2124,28 @@ class ProductService:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] not in {"review", "approved", "failed", "cancelled"}:
                 raise ProductError("job_busy", "This extraction is already in progress", 409)
-            self._assert_database_capacity(conn, user_id)
-            estimated_result_bytes = (
-                len(str(row["current_result_json"]).encode())
-                if row["current_result_json"]
-                else _MAX_RESULT_JSON_BYTES
-            )
-            self._next_result_version(
-                conn,
-                user_id=user_id,
-                job_id=job_id,
-                encoded_bytes=estimated_result_bytes,
-            )
             attempt = int(row["attempt"]) + 1
             credit_cost = 0 if self._is_free_demo_fixture(row["source_sha256"]) else 1
+            self._reserve_result_capacity(conn, user_id=user_id, job_id=job_id, attempt=attempt)
+            now = timestamp()
+            conn.execute(
+                "UPDATE jobs SET status='queued',progress_stage='Waiting for extraction',"
+                "attempt=?,recovery_count=0,cancel_requested=0,reservation_active=?,error_code=NULL,"
+                "error_message=NULL,provider_dispatched=0,provider_dispatched_at=NULL,"
+                "worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
+                "result_reservation_bytes=?,result_reservation_attempt=?,"
+                "retained_byte_reservation=?,"
+                "updated_at=? WHERE id=?",
+                (
+                    attempt,
+                    credit_cost,
+                    self.settings.max_result_json_bytes,
+                    attempt,
+                    self.settings.result_publication_reservation_bytes,
+                    now,
+                    job_id,
+                ),
+            )
             if credit_cost:
                 self._change_credits(
                     conn,
@@ -1560,15 +2154,6 @@ class ProductService:
                     reason="job_reprocess_reserved",
                     idempotency_key=f"job:{job_id}:reserve:{attempt}",
                 )
-            now = timestamp()
-            conn.execute(
-                "UPDATE jobs SET status='queued',progress_stage='Waiting for extraction',"
-                "attempt=?,recovery_count=0,cancel_requested=0,reservation_active=?,error_code=NULL,"
-                "error_message=NULL,provider_dispatched=0,provider_dispatched_at=NULL,"
-                "worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
-                "updated_at=? WHERE id=?",
-                (attempt, credit_cost, now, job_id),
-            )
             self._audit(
                 conn,
                 user_id=user_id,
@@ -1626,10 +2211,12 @@ class ProductService:
                 raise ProductError(
                     "billing_user_invalid", "Demo sessions cannot receive credits", 422
                 )
-            conn.execute(
+            self._insert_row(
+                conn,
                 "INSERT INTO billing_events(event_id,event_type,payload_sha256,processed_at) "
                 "VALUES (?,?,?,?)",
                 (event_id, event_type, payload_sha256, timestamp()),
+                user_id=None,
             )
             self._change_credits(
                 conn,
@@ -1730,6 +2317,7 @@ class ProductService:
         return output.getvalue()
 
     def delete_job(self, *, user_id: str, job_id: str) -> bool:
+        deletion_paths: list[str] = []
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
@@ -1751,8 +2339,43 @@ class ProductService:
                 user_id=user_id,
                 byte_size=int(row["source_byte_size"]),
             )
+            deletion_paths.append(str(row["source_path"]))
+            if row["upload_id"]:
+                shared = conn.execute(
+                    "SELECT 1 FROM jobs WHERE upload_id=? AND id<>? LIMIT 1",
+                    (row["upload_id"], job_id),
+                ).fetchone()
+                if not shared:
+                    upload = conn.execute(
+                        "SELECT storage_path,byte_size FROM uploads WHERE id=? AND user_id=?",
+                        (row["upload_id"], user_id),
+                    ).fetchone()
+                    if upload:
+                        self._queue_deletion(
+                            conn,
+                            upload["storage_path"],
+                            "last_job_upload_deleted",
+                            user_id=user_id,
+                            byte_size=int(upload["byte_size"]),
+                        )
+                        deletion_paths.append(str(upload["storage_path"]))
+                        conn.execute(
+                            "DELETE FROM uploads WHERE id=? AND user_id=?",
+                            (row["upload_id"], user_id),
+                        )
             conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, user_id))
-        return self.drain_deletion_queue(paths=[str(row["source_path"])]) == 1
+        self.drain_deletion_queue(paths=deletion_paths)
+        with self.database.connect() as conn:
+            remaining = sum(
+                int(
+                    conn.execute(
+                        "SELECT COUNT(*) AS count FROM pending_deletions WHERE storage_path=?",
+                        (path,),
+                    ).fetchone()["count"]
+                )
+                for path in deletion_paths
+            )
+        return remaining == 0
 
     def _queue_deletion(
         self,
@@ -1769,15 +2392,25 @@ class ProductService:
                 byte_size = Path(storage_path).stat().st_size
             except OSError:
                 byte_size = 0
-        conn.execute(
+        existing = conn.execute(
+            "SELECT 1 FROM pending_deletions WHERE storage_path=?", (str(storage_path),)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE pending_deletions SET "
+                "user_id=COALESCE(?,user_id),byte_size=MAX(?,byte_size),reason=?,updated_at=? "
+                "WHERE storage_path=?",
+                (user_id, max(0, byte_size), reason[:80], now, str(storage_path)),
+            )
+            return
+        self._insert_row(
+            conn,
             "INSERT INTO pending_deletions("
             "storage_path,user_id,byte_size,reason,attempts,last_error,created_at,updated_at"
-            ") VALUES (?,?,?,?,0,NULL,?,?) "
-            "ON CONFLICT(storage_path) DO UPDATE SET "
-            "user_id=COALESCE(excluded.user_id,pending_deletions.user_id),"
-            "byte_size=MAX(excluded.byte_size,pending_deletions.byte_size),"
-            "reason=excluded.reason,updated_at=excluded.updated_at",
+            ") VALUES (?,?,?,?,0,NULL,?,?)",
             (str(storage_path), user_id, max(0, byte_size), reason[:80], now, now),
+            user_id=user_id,
+            mandatory=True,
         )
 
     def _queue_user_deletion(self, conn: sqlite3.Connection, user_id: str, reason: str) -> None:
@@ -1840,8 +2473,9 @@ class ProductService:
         return (
             conn.execute(
                 "SELECT 1 FROM uploads WHERE storage_path=? "
-                "UNION SELECT 1 FROM jobs WHERE source_path=? LIMIT 1",
-                (storage_path, storage_path),
+                "UNION SELECT 1 FROM jobs WHERE source_path=? "
+                "UNION SELECT 1 FROM storage_reservations WHERE storage_path=? LIMIT 1",
+                (storage_path, storage_path, storage_path),
             ).fetchone()
             is not None
         )
@@ -1881,10 +2515,12 @@ class ProductService:
                         "Revoke old credentials before creating another API key",
                         429,
                     )
-            conn.execute(
+            self._insert_row(
+                conn,
                 "INSERT INTO api_keys(id,user_id,name,prefix,key_hash,created_at) "
                 "VALUES (?,?,?,?,?,?)",
                 (self._id(), user_id, clean_name, prefix, digest, timestamp()),
+                user_id=user_id,
             )
             self._audit(
                 conn,
@@ -2160,6 +2796,21 @@ class ProductService:
             if current["cancel_requested"]:
                 self._finish_cancelled_claim_in_transaction(conn, current, claim)
                 return False
+            if (
+                int(current["result_reservation_bytes"]) != self.settings.max_result_json_bytes
+                or int(current["result_reservation_attempt"] or -1) != claim.attempt
+                or int(current["retained_byte_reservation"])
+                != self.settings.result_publication_reservation_bytes
+            ):
+                self._finish_failed_claim_in_transaction(
+                    conn,
+                    current,
+                    claim,
+                    "result_capacity_reservation_lost",
+                    "The durable result-capacity reservation was unavailable; no provider "
+                    "call was made.",
+                )
+                return False
             if self._provider_circuit_open(conn, claim.user_id):
                 self._finish_failed_claim_in_transaction(
                     conn,
@@ -2206,11 +2857,14 @@ class ProductService:
             ).rowcount
             if changed != 1:
                 return False
-            conn.execute(
+            self._insert_row(
+                conn,
                 "INSERT INTO provider_attempts("
                 "job_id,user_id,attempt,lease_generation,dispatched_at"
                 ") VALUES (?,?,?,?,?)",
                 (claim.job_id, claim.user_id, claim.attempt, claim.generation, now),
+                user_id=claim.user_id,
+                mandatory=True,
             )
             self._audit(
                 conn,
@@ -2296,17 +2950,26 @@ class ProductService:
             provider_started = time.monotonic()
             output = self.extractor.extract(image)
             provider_duration_ms = round((time.monotonic() - provider_started) * 1000)
+            try:
+                validated_chart = ChartData.model_validate(output.chart)
+                self._validate_product_chart(validated_chart)
+                raw_output = truncate_utf8(output.raw, self.settings.max_result_json_bytes)
+                extractor_name = truncate_utf8(output.extractor, 200)
+                model_version = truncate_utf8(output.model_version, 500)
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise ExtractionError(
+                    "model_output_invalid", "The provider returned an invalid chart result"
+                ) from exc
             logger.info(
                 "provider_call_succeeded",
                 extra={
                     "event_name": "provider_call_succeeded",
                     "job_id": job_id,
-                    "provider": output.extractor,
+                    "provider": extractor_name,
                     "duration_ms": provider_duration_ms,
                 },
             )
-            self._validate_product_chart(output.chart)
-            encoded = output.chart.model_dump_json()
+            encoded = validated_chart.model_dump_json()
             with self.database.transaction(immediate=True) as conn:
                 current = self._claim_row(conn, claim)
                 if not current:
@@ -2319,14 +2982,18 @@ class ProductService:
                     user_id=claim.user_id,
                     job_id=job_id,
                     encoded_bytes=len(encoded.encode("utf-8")),
+                    reservation_attempt=claim.attempt,
                 )
                 now = timestamp()
                 source = "extraction" if version == 1 else "reprocess"
-                conn.execute(
+                self._insert_row(
+                    conn,
                     "INSERT INTO result_versions("
                     "id,job_id,user_id,version,source,chart_json,created_at"
                     ") VALUES (?,?,?,?,?,?,?)",
                     (self._id(), job_id, claim.user_id, version, source, encoded, now),
+                    user_id=claim.user_id,
+                    mandatory=True,
                 )
                 changed = conn.execute(
                     "UPDATE jobs SET status='review',progress_stage='Ready for review',"
@@ -2334,13 +3001,16 @@ class ProductService:
                     "original_result_json=COALESCE(original_result_json,?),current_result_json=?,"
                     "error_code=NULL,error_message=NULL,approved_at=NULL,worker_owner=NULL,"
                     "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                    ",result_reservation_bytes=0,result_reservation_attempt=NULL,"
+                    "retained_byte_reservation=0 "
                     "WHERE id=? AND user_id=? AND attempt=? AND status='running' "
                     "AND worker_owner=? "
-                    "AND lease_token=? AND lease_generation=? AND lease_expires_at>?",
+                    "AND lease_token=? AND lease_generation=? AND lease_expires_at>? "
+                    "AND result_reservation_attempt=?",
                     (
-                        output.extractor,
-                        output.model_version,
-                        output.raw[:1_000_000],
+                        extractor_name,
+                        model_version,
+                        raw_output,
                         encoded,
                         encoded,
                         now,
@@ -2351,6 +3021,7 @@ class ProductService:
                         claim.token,
                         claim.generation,
                         now,
+                        claim.attempt,
                     ),
                 ).rowcount
                 if changed != 1:
@@ -2369,8 +3040,8 @@ class ProductService:
                     event_type="extraction_completed",
                     details={
                         "version": version,
-                        "extractor": output.extractor,
-                        "model": output.model_version,
+                        "extractor": extractor_name,
+                        "model": model_version,
                         "execution_generation": claim.generation,
                     },
                 )
@@ -2442,7 +3113,8 @@ class ProductService:
         changed = conn.execute(
             "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
             "error_code=?,error_message=?,worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,"
-            "heartbeat_at=NULL,updated_at=? WHERE id=? AND user_id=? AND attempt=? "
+            "heartbeat_at=NULL,result_reservation_bytes=0,result_reservation_attempt=NULL,"
+            "retained_byte_reservation=0,updated_at=? WHERE id=? AND user_id=? AND attempt=? "
             "AND status='running' AND worker_owner=? AND lease_token=? AND lease_generation=? "
             "AND lease_expires_at>?",
             (
@@ -2469,6 +3141,7 @@ class ProductService:
                 delta=1,
                 reason="job_failed_before_dispatch_refund",
                 idempotency_key=f"job:{claim.job_id}:refund:{claim.attempt}",
+                mandatory=True,
             )
         if charged:
             provider_changed = conn.execute(
@@ -2515,7 +3188,8 @@ class ProductService:
         changed = conn.execute(
             "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
             "worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
-            "updated_at=? "
+            "result_reservation_bytes=0,result_reservation_attempt=NULL,"
+            "retained_byte_reservation=0,updated_at=? "
             "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "
             "AND lease_token=? AND lease_generation=? AND lease_expires_at>?",
             (
@@ -2540,6 +3214,7 @@ class ProductService:
                 delta=1,
                 reason="job_cancelled_before_dispatch_refund",
                 idempotency_key=f"job:{claim.job_id}:refund:{claim.attempt}",
+                mandatory=True,
             )
         if charged:
             provider_changed = conn.execute(
@@ -2577,7 +3252,9 @@ class ProductService:
         )
         changed = conn.execute(
             "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
-            "updated_at=? WHERE id=? AND user_id=? AND attempt=? AND status='queued'",
+            "result_reservation_bytes=0,result_reservation_attempt=NULL,"
+            "retained_byte_reservation=0,updated_at=? "
+            "WHERE id=? AND user_id=? AND attempt=? AND status='queued'",
             (
                 status,
                 stage,
@@ -2596,6 +3273,7 @@ class ProductService:
                 delta=1,
                 reason="job_cancelled_before_dispatch_refund",
                 idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
+                mandatory=True,
             )
         self._audit(
             conn,
@@ -2633,7 +3311,9 @@ class ProductService:
                 for row in conn.execute(
                     "SELECT storage_path AS path FROM uploads "
                     "UNION SELECT source_path AS path FROM jobs "
-                    "UNION SELECT storage_path AS path FROM pending_deletions"
+                    "UNION SELECT storage_path AS path FROM pending_deletions "
+                    "UNION SELECT storage_path AS path FROM storage_reservations "
+                    "WHERE storage_path IS NOT NULL"
                 ).fetchall()
             }
         orphans = [
@@ -2731,7 +3411,9 @@ class ProductService:
                 changed = conn.execute(
                     "UPDATE jobs SET status=?,reservation_active=0,cancel_requested=0,"
                     "progress_stage=?,error_code=?,error_message=?,worker_owner=NULL,"
-                    "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                    "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
+                    "result_reservation_bytes=0,result_reservation_attempt=NULL,"
+                    "retained_byte_reservation=0,updated_at=? "
                     "WHERE id=? AND user_id=? AND attempt=? AND lease_generation=? "
                     "AND worker_owner IS ? AND lease_token IS ? AND status='running' "
                     "AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
@@ -2751,6 +3433,7 @@ class ProductService:
                             else "job_recovery_exhausted_refund"
                         ),
                         idempotency_key=f"job:{row['id']}:refund:{row['attempt']}",
+                        mandatory=True,
                     )
                 if charged:
                     provider_changed = conn.execute(
@@ -2784,6 +3467,7 @@ class ProductService:
         return recovered
 
     def cleanup_expired(self) -> dict[str, int]:
+        expired_reservations = self.cleanup_storage_reservations()
         now = timestamp()
         cutoff = timestamp(utcnow() - timedelta(days=self.settings.retention_days))
         demo_cutoff = timestamp(utcnow() - timedelta(hours=self.settings.session_ttl_hours))
@@ -2863,6 +3547,7 @@ class ProductService:
             "uploads": len(upload_paths),
             "jobs": len(job_paths),
             "demo_users": demo_users,
+            "storage_reservations": expired_reservations,
         }
 
     def rate_limit(
@@ -2888,10 +3573,14 @@ class ProductService:
                     (count, bucket_key, window),
                 )
             else:
-                if self._database_row_count(conn) >= self.settings.max_database_rows_global:
+                try:
+                    self._insert_row(
+                        conn,
+                        "INSERT INTO rate_limits(bucket_key,window_start,request_count) "
+                        "VALUES (?,?,?)",
+                        (bucket_key, window, count),
+                        user_id=None,
+                    )
+                except ProductError:
                     return False
-                conn.execute(
-                    "INSERT INTO rate_limits(bucket_key,window_start,request_count) VALUES (?,?,?)",
-                    (bucket_key, window, count),
-                )
         return count <= effective_limit

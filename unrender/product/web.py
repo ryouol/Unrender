@@ -107,22 +107,31 @@ class SecurityHeadersMiddleware:
 class BodyLimitMiddleware:
     """Bound streamed and chunked request bodies before framework parsing/spooling."""
 
-    def __init__(self, app: ASGIApp, *, upload_limit: int):
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        upload_limit: int,
+        result_limit: int = 1024 * 1024 + 64 * 1024,
+    ):
         self.app = app
         self.upload_limit = upload_limit
+        self.result_limit = result_limit
 
-    def _limit(self, path: str) -> int:
+    def _limit(self, path: str, method: str) -> int:
         if path in {"/api/uploads", "/api/v1/extractions"}:
             return self.upload_limit + 1024 * 1024
         if path == "/api/billing/webhook":
             return 1024 * 1024
+        if method == "PATCH" and path.startswith("/api/jobs/") and path.endswith("/result"):
+            return self.result_limit
         return 256 * 1024
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        limit = self._limit(str(scope.get("path", "")))
+        limit = self._limit(str(scope.get("path", "")), str(scope.get("method", "GET")).upper())
         total = 0
         response_started = False
         too_large = False
@@ -352,7 +361,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     allowed_hosts = [expected_host] if expected_host else []
     if settings.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
-    app.add_middleware(BodyLimitMiddleware, upload_limit=settings.max_upload_bytes)
+    app.add_middleware(
+        BodyLimitMiddleware,
+        upload_limit=settings.max_upload_bytes,
+        result_limit=settings.result_request_bytes,
+    )
     app.add_middleware(
         ConcurrencyLimitMiddleware,
         auth_limit=settings.max_concurrent_auth_requests,
@@ -633,12 +646,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(image, media_type="image/png")
 
     @app.post("/api/jobs", status_code=202)
-    def create_job(payload: JobCreate, user: Any = csrf_user_dependency):
+    def create_job(
+        payload: JobCreate,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        user: Any = csrf_user_dependency,
+    ):
+        if idempotency_key is None:
+            raise ProductError(
+                "idempotency_key_required",
+                "Provide an Idempotency-Key for safe retry of this job submission",
+                422,
+            )
         return service.create_job(
             user_id=user["id"],
             upload_id=payload.upload_id,
             page_index=payload.page_index,
             crop=payload.crop.model_dump() if payload.crop else None,
+            idempotency_key=idempotency_key,
         )
 
     @app.get("/api/jobs")

@@ -226,7 +226,7 @@ input, select {
 .job-error { margin-top: 16px; }
 .review-notice { margin-top: 16px; padding: 11px 12px; border-left: 3px solid var(--amber); background: var(--amber-light); color: #5e470c; }
 .review-layout { display: grid; grid-template-columns: minmax(360px, 0.95fr) minmax(480px, 1.05fr); gap: 18px; margin-top: 18px; }
-.source-pane, .result-pane, .audit-panel { border: 1px solid var(--line-strong); background: var(--surface); }
+.source-pane, .result-pane, .audit-panel { min-width: 0; border: 1px solid var(--line-strong); background: var(--surface); }
 .pane-heading { min-height: 48px; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .pane-heading h3 { margin: 0; font-size: 0.95rem; }
 .pane-heading span { color: var(--muted); font-size: 0.76rem; }
@@ -235,6 +235,8 @@ input, select {
 .result-loading { min-height: 520px; display: grid; place-items: center; padding: 24px; color: var(--muted); }
 #result-form { padding: 14px; }
 .metadata-grid { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px; padding-bottom: 14px; }
+.series-editor { margin: 0 0 12px; padding: 10px; border: 1px solid var(--line); }
+.series-editor-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; max-height: 190px; overflow: auto; }
 .table-scroll { max-height: 54vh; overflow: auto; border: 1px solid var(--line-strong); }
 .data-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
 .data-table th { position: sticky; top: 0; z-index: 1; padding: 8px; border-bottom: 1px solid var(--line-strong); border-right: 1px solid var(--line); background: #eceae4; text-align: left; }
@@ -243,6 +245,7 @@ input, select {
 .data-table .row-action { min-width: 70px; width: 70px; text-align: center; }
 .data-table .row-action button { border: 0; background: none; color: var(--red); text-decoration: underline; cursor: pointer; }
 .editor-actions { display: flex; justify-content: space-between; margin-top: 12px; }
+.editor-pagination, .key-secret-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
 .audit-panel { margin-top: 18px; }
 .history-actions { display: flex; align-items: center; gap: 14px; }
 .audit-panel ol { margin: 0; padding: 8px 18px 18px 38px; }

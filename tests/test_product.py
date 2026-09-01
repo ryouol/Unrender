@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import stat
 import subprocess
@@ -30,6 +31,8 @@ from openpyxl import load_workbook
 from PIL import Image
 
 from unrender.product import admin
+from unrender.product import backup as backup_module
+from unrender.product import service as service_module
 from unrender.product.backup import BackupError, create_backup, restore_backup
 from unrender.product.config import Settings
 from unrender.product.database import SCHEMA_VERSION, Database
@@ -905,42 +908,31 @@ def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
         service.reprocess(user_id=user_id, job_id=job["id"])
 
 
-def test_result_history_byte_quota_fails_closed_and_refunds(tmp_path: Path) -> None:
+def test_result_history_byte_quota_rejects_before_charge_or_provider(tmp_path: Path) -> None:
     service = service_for(
         tmp_path,
         seed_demo_account=False,
         max_history_bytes_per_user=1,
     )
     user_id = customer_id(service)
-    fixture = json.loads(
-        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
-    )
-    service.extractor = SimpleNamespace(
-        extract=lambda _: ExtractionOutput(
-            chart=ChartData.model_validate(fixture["result"]),
-            raw="history quota test",
-            extractor="test",
-            model_version="test-pinned",
-        )
-    )
     upload = service.prepare_upload(
         user_id=user_id,
         filename="verified.webp",
         content=png_bytes(color="navy"),
     )
-    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
-    assert service.account(user_id)["credits"] == 2
-    assert service.process_one()
-    failed = service.get_job(user_id=user_id, job_id=job["id"])
-    assert failed["status"] == "failed"
-    assert failed["error"]["code"] == "history_storage_quota_reached"
-    assert service.account(user_id)["credits"] == 2
-    with pytest.raises(ProductError, match="history storage limit"):
-        service.reprocess(user_id=user_id, job_id=job["id"])
-    assert service.account(user_id)["credits"] == 2
+    with pytest.raises(ProductError, match="maximum-size result"):
+        service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    assert service.account(user_id)["credits"] == 3
+    assert service.process_one() is False
     with service.database.connect() as conn:
         count = conn.execute("SELECT COUNT(*) AS count FROM result_versions").fetchone()["count"]
+        jobs = conn.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()["count"]
+        attempts = conn.execute("SELECT COUNT(*) AS count FROM provider_attempts").fetchone()[
+            "count"
+        ]
     assert count == 0
+    assert jobs == 0
+    assert attempts == 0
 
 
 def test_demo_sessions_are_isolated_and_cannot_create_customer_data(tmp_path: Path) -> None:
@@ -952,7 +944,7 @@ def test_demo_sessions_are_isolated_and_cannot_create_customer_data(tmp_path: Pa
         first_upload = client.post("/api/uploads/demo", headers=csrf_headers(client))
         first_job = client.post(
             "/api/jobs",
-            headers=csrf_headers(client),
+            headers={**csrf_headers(client), "Idempotency-Key": "demo-first-job"},
             json={"upload_id": first_upload.json()["id"], "page_index": 0},
         )
         assert first_job.status_code == 202
@@ -1018,6 +1010,7 @@ def test_failed_file_delete_stays_retryable_after_job_row_is_gone(
     job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
     service.cancel(user_id=user_id, job_id=job["id"])
     source_path = Path(service._job_row(user_id=user_id, job_id=job["id"])["source_path"])
+    upload_path = Path(service.upload(user_id=user_id, upload_id=upload["id"])["storage_path"])
     original_delete = service.storage.delete
 
     def fail_delete(_: str | Path) -> None:
@@ -1027,18 +1020,42 @@ def test_failed_file_delete_stays_retryable_after_job_row_is_gone(
     assert service.delete_job(user_id=user_id, job_id=job["id"]) is False
     with pytest.raises(ProductError, match="not found"):
         service.get_job(user_id=user_id, job_id=job["id"])
-    assert source_path.exists()
+    with pytest.raises(ProductError, match="not found"):
+        service.upload_preview(user_id=user_id, upload_id=upload["id"], page_index=0)
+    assert source_path.exists() and upload_path.exists()
     with service.database.connect() as conn:
         queued = conn.execute(
-            "SELECT attempts,last_error FROM pending_deletions WHERE storage_path=?",
-            (str(source_path),),
-        ).fetchone()
-    assert queued["attempts"] == 1
-    assert "OSError" in queued["last_error"]
+            "SELECT storage_path,attempts,last_error FROM pending_deletions "
+            "WHERE storage_path IN (?,?) ORDER BY storage_path",
+            (str(source_path), str(upload_path)),
+        ).fetchall()
+        assert conn.execute("SELECT 1 FROM uploads WHERE id=?", (upload["id"],)).fetchone() is None
+    assert len(queued) == 2
+    assert all(row["attempts"] == 1 and "OSError" in row["last_error"] for row in queued)
 
     monkeypatch.setattr(service.storage, "delete", original_delete)
-    assert service.drain_deletion_queue() >= 1
-    assert not source_path.exists()
+    assert service.drain_deletion_queue() == 2
+    assert not source_path.exists() and not upload_path.exists()
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM pending_deletions").fetchone()[0] == 0
+
+
+def test_job_delete_preserves_shared_upload_until_last_reference(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=2)
+    user_id = customer_id(service, "shared-upload@example.com")
+    upload = service.prepare_upload(
+        user_id=user_id, filename="shared.png", content=png_bytes(color="green")
+    )
+    first = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    second = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    service.cancel(user_id=user_id, job_id=first["id"])
+    service.cancel(user_id=user_id, job_id=second["id"])
+
+    assert service.delete_job(user_id=user_id, job_id=first["id"])
+    assert service.upload_preview(user_id=user_id, upload_id=upload["id"], page_index=0)
+    assert service.delete_job(user_id=user_id, job_id=second["id"])
+    with pytest.raises(ProductError, match="not found"):
+        service.upload_preview(user_id=user_id, upload_id=upload["id"], page_index=0)
 
 
 def test_retention_cleanup_queues_files_when_storage_is_temporarily_unavailable(
@@ -1315,7 +1332,7 @@ def test_http_flow_enforces_csrf_origin_headers_and_api_tenancy(tmp_path: Path) 
         assert upload.status_code == 201
         job = client.post(
             "/api/jobs",
-            headers=csrf_headers(client),
+            headers={**csrf_headers(client), "Idempotency-Key": "demo-http-job"},
             json={"upload_id": upload.json()["id"], "page_index": 0},
         )
         assert job.status_code == 202
@@ -1354,9 +1371,20 @@ def test_http_flow_enforces_csrf_origin_headers_and_api_tenancy(tmp_path: Path) 
             files={"file": ("customer.png", png_bytes(color="green"), "image/png")},
         )
         assert customer_upload.status_code == 201
-        customer_job = client.post(
+        account_response = client.get("/api/me")
+        assert account_response.status_code == 200
+        assert len(account_response.json()["principal_marker"]) == 32
+        missing_key = client.post(
             "/api/jobs",
             headers=csrf_headers(client),
+            json={"upload_id": customer_upload.json()["id"], "page_index": 0},
+        )
+        assert missing_key.status_code == 422
+        assert missing_key.json()["error"]["code"] == "idempotency_key_required"
+        assert client.get("/api/jobs").json()["items"] == []
+        customer_job = client.post(
+            "/api/jobs",
+            headers={**csrf_headers(client), "Idempotency-Key": "customer-http-job"},
             json={"upload_id": customer_upload.json()["id"], "page_index": 0},
         )
         assert customer_job.status_code == 202
@@ -1765,6 +1793,20 @@ def _paid_job(service: ProductService, user_id: str, *, color: str = "white") ->
     )
 
 
+def _install_successful_extractor(service: ProductService) -> None:
+    fixture = json.loads(
+        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+    )
+    service.extractor = SimpleNamespace(
+        extract=lambda _: ExtractionOutput(
+            chart=ChartData.model_validate(fixture["result"]),
+            raw="deterministic test output",
+            extractor="test",
+            model_version="test-pinned",
+        )
+    )
+
+
 def test_worker_leases_are_fresh_reaped_once_and_fence_every_terminal_mutation(
     tmp_path: Path,
 ) -> None:
@@ -2124,6 +2166,67 @@ def test_v4_to_v5_rolls_back_after_each_mutating_statement(
         assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
         assert row["response_json"] == "{}"
         assert row["expires_at"] == "2026-01-31T00:00:00.000Z"
+
+
+@pytest.mark.parametrize("crash_after", range(1, 9))
+def test_v6_to_v7_capacity_and_session_migration_is_atomic(
+    tmp_path: Path, crash_after: int
+) -> None:
+    database = Database(tmp_path / f"migration-v7-{crash_after}" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('v7-user','v7@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute("DROP TABLE storage_reservations")
+        for table, column in (
+            ("users", "session_generation"),
+            ("sessions", "session_generation"),
+            ("jobs", "result_reservation_bytes"),
+            ("jobs", "result_reservation_attempt"),
+            ("jobs", "retained_byte_reservation"),
+        ):
+            conn.execute(f'ALTER TABLE "{table}" DROP COLUMN "{column}"')
+        conn.execute("UPDATE schema_meta SET version=6")
+    statements = 0
+
+    def fault() -> None:
+        nonlocal statements
+        statements += 1
+        if statements == crash_after:
+            raise RuntimeError("injected v7 statement crash")
+
+    database._migration_fault_hook = fault
+    with pytest.raises(RuntimeError, match="v7 statement crash"):
+        database.initialize()
+    with database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
+        assert "session_generation" not in Database._columns(conn, "users")
+        assert "result_reservation_bytes" not in Database._columns(conn, "jobs")
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_reservations'"
+            ).fetchone()
+            is None
+        )
+        assert conn.execute("SELECT email FROM users WHERE id='v7-user'").fetchone()[0] == (
+            "v7@example.com"
+        )
+    database._migration_fault_hook = None
+    database.initialize()
+    database.initialize()
+    with database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
+        assert "session_generation" in Database._columns(conn, "users")
+        assert "result_reservation_bytes" in Database._columns(conn, "jobs")
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_reservations'"
+            ).fetchone()
+            is not None
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
 
 
 def test_v4_partial_rename_shape_is_resumed_without_losing_idempotency_rows(
@@ -2587,9 +2690,630 @@ def test_nonfinite_chart_coordinates_are_rejected() -> None:
         ChartData.model_validate(payload)
 
 
-def test_browser_auth_epoch_discards_delayed_old_account_responses() -> None:
+def test_correction_transport_accepts_max_contract_and_rejects_exact_overflow(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(tmp_path, seed_demo_account=False)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            json={"email": "large-result@example.com", "password": "long result password"},
+        )
+        assert registered.status_code == 201
+        upload = client.post(
+            "/api/uploads",
+            headers=csrf_headers(client),
+            files={"file": ("large.png", png_bytes(color="navy"), "image/png")},
+        )
+        job = client.post(
+            "/api/jobs",
+            headers={**csrf_headers(client), "Idempotency-Key": "large-result-job"},
+            json={"upload_id": upload.json()["id"], "page_index": 0},
+        )
+        assert job.status_code == 202
+        _install_successful_extractor(app.state.service)
+        assert app.state.service.process_one()
+        job_id = job.json()["id"]
+        result = {
+            "chart_type": "line",
+            "title": "Near transport maximum",
+            "x_axis": {"label": "x", "unit": None},
+            "y_axis": {"label": "y", "unit": None},
+            "series": [
+                {
+                    "name": "series",
+                    "points": [
+                        {"x": f"{index:05d}{'x' * 75}", "y": index} for index in range(10_000)
+                    ],
+                }
+            ],
+        }
+        body = json.dumps({"result": result}, separators=(",", ":")).encode()
+        assert 970_000 < len(body) <= settings.result_request_bytes
+        accepted = client.patch(
+            f"/api/jobs/{job_id}/result",
+            headers={**csrf_headers(client), "Content-Type": "application/json"},
+            content=body,
+        )
+        assert accepted.status_code == 200
+
+        exact = b"{}" + (b" " * (settings.result_request_bytes - 2))
+        assert len(exact) == settings.result_request_bytes
+        exact_response = client.patch(
+            f"/api/jobs/{job_id}/result",
+            headers={**csrf_headers(client), "Content-Type": "application/json"},
+            content=exact,
+        )
+        assert exact_response.status_code == 422
+        overflow = exact + b" "
+        rejected = client.patch(
+            f"/api/jobs/{job_id}/result",
+            headers={**csrf_headers(client), "Content-Type": "application/json"},
+            content=overflow,
+        )
+        assert rejected.status_code == 413
+        assert rejected.json()["error"]["code"] == "request_too_large"
+
+
+def test_browser_job_idempotency_replays_concurrently_without_double_charge(
+    tmp_path: Path,
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=3)
+    user_id = customer_id(service, "browser-idempotency@example.com")
+    upload = service.prepare_upload(
+        user_id=user_id, filename="idempotent.png", content=png_bytes(color="green")
+    )
+    barrier = threading.Barrier(3)
+    results: list[dict[str, Any]] = []
+    errors: list[Exception] = []
+
+    def submit() -> None:
+        barrier.wait()
+        try:
+            results.append(
+                service.create_job(
+                    user_id=user_id,
+                    upload_id=str(upload["id"]),
+                    page_index=0,
+                    crop=None,
+                    idempotency_key="browser-concurrent-0001",
+                )
+            )
+        except Exception as exc:  # pragma: no cover - assertion exposes exact race failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(results) == 2 and results[0] == results[1]
+    assert service.account(user_id)["credits"] == 2
+    with pytest.raises(ProductError) as conflict:
+        service.create_job(
+            user_id=user_id,
+            upload_id=str(upload["id"]),
+            page_index=0,
+            crop={"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.5},
+            idempotency_key="browser-concurrent-0001",
+        )
+    assert conflict.value.code == "idempotency_conflict"
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM api_idempotency").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM uploads WHERE id=?", (upload["id"],))
+    assert (
+        service.create_job(
+            user_id=user_id,
+            upload_id=str(upload["id"]),
+            page_index=0,
+            crop=None,
+            idempotency_key="browser-concurrent-0001",
+        )
+        == results[0]
+    )
+
+
+def test_ledger_reserves_every_outstanding_refund_through_all_terminal_paths(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=5,
+        max_credit_ledger_records_per_user=9,
+        max_recovery_attempts=0,
+    )
+    user_id = customer_id(service, "ledger-reserve@example.com")
+    jobs = [_paid_job(service, user_id, color=color) for color in ("red", "blue", "green", "black")]
+    with pytest.raises(ProductError, match="Credit activity is paused"):
+        _paid_job(service, user_id, color="white")
+
+    service.cancel(user_id=user_id, job_id=str(jobs[0]["id"]))
+    failed_claim = service.claim_next_job("ledger-failure")
+    assert failed_claim is not None
+    assert service._finish_failed_claim(failed_claim, "predispatch_failure", "safe refund")
+    expired_claim = service.claim_next_job("ledger-recovery")
+    assert expired_claim is not None
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), expired_claim.job_id),
+        )
+    assert service.recover_interrupted_jobs() == 1
+    service.cancel(user_id=user_id, job_id=str(jobs[3]["id"]))
+
+    assert service.account(user_id)["credits"] == 5
+    with service.database.connect() as conn:
+        ledger = conn.execute(
+            "SELECT reason FROM credit_ledger WHERE user_id=? ORDER BY created_at,id", (user_id,)
+        ).fetchall()
+        assert len(ledger) == 9
+        assert sum("refund" in row["reason"] for row in ledger) == 4
+    with pytest.raises(ProductError, match="Credit activity is paused"):
+        service.apply_billing_event(
+            event_id="evt_ledger_full",
+            event_type="checkout.session.completed",
+            user_id=user_id,
+            credits=service.settings.credit_pack_size,
+            payload_sha256="f" * 64,
+        )
+    with service.database.connect() as conn:
+        assert (
+            conn.execute("SELECT 1 FROM billing_events WHERE event_id='evt_ledger_full'").fetchone()
+            is None
+        )
+
+
+def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path / "queued",
+        seed_demo_account=False,
+        initial_credits=3,
+        max_history_bytes_per_user=2_000_000,
+    )
+    user_id = customer_id(service, "result-reserve@example.com")
+    upload = service.prepare_upload(
+        user_id=user_id, filename="reserve.png", content=png_bytes(color="purple")
+    )
+    first = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    second = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    with pytest.raises(ProductError, match="maximum-size result"):
+        service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    assert service.account(user_id)["credits"] == 1
+    with service.database.connect() as conn:
+        reservations = conn.execute(
+            "SELECT attempt,result_reservation_bytes,result_reservation_attempt,"
+            "retained_byte_reservation FROM jobs ORDER BY created_at"
+        ).fetchall()
+    assert len(reservations) == 2
+    assert all(row["result_reservation_attempt"] == row["attempt"] == 1 for row in reservations)
+    assert all(row["result_reservation_bytes"] == 1_000_000 for row in reservations)
+    service.cancel(user_id=user_id, job_id=str(first["id"]))
+    replacement = service.create_job(
+        user_id=user_id, upload_id=upload["id"], page_index=0, crop=None
+    )
+    assert replacement["status"] == "queued"
+    service.cancel(user_id=user_id, job_id=str(second["id"]))
+    service.cancel(user_id=user_id, job_id=str(replacement["id"]))
+
+    reprocess_service = service_for(
+        tmp_path / "reprocess",
+        seed_demo_account=False,
+        initial_credits=3,
+        max_history_bytes_per_user=1_000_000,
+    )
+    reprocess_user = customer_id(reprocess_service, "reprocess-reserve@example.com")
+    completed = _paid_job(reprocess_service, reprocess_user, color="orange")
+    _install_successful_extractor(reprocess_service)
+    successful_extract = reprocess_service.extractor.extract
+    reprocess_service.extractor = SimpleNamespace(
+        extract=lambda image: ExtractionOutput(
+            chart=successful_extract(image).chart,
+            raw="é" * 600_000,
+            extractor="test",
+            model_version="test-pinned",
+        )
+    )
+    assert reprocess_service.process_one()
+    assert reprocess_service.account(reprocess_user)["credits"] == 2
+    with reprocess_service.database.connect() as conn:
+        settled = conn.execute(
+            "SELECT result_reservation_bytes,result_reservation_attempt,"
+            "retained_byte_reservation,attempt,LENGTH(CAST(raw_result AS BLOB)) AS raw_bytes "
+            "FROM jobs WHERE id=?",
+            (completed["id"],),
+        ).fetchone()
+    assert tuple(settled) == (0, None, 0, 1, reprocess_service.settings.max_result_json_bytes)
+    with pytest.raises(ProductError, match="maximum-size result"):
+        reprocess_service.reprocess(user_id=reprocess_user, job_id=str(completed["id"]))
+    with pytest.raises(ProductError, match="maximum-size result"):
+        reprocess_service.submit_api_extraction(
+            user_id=reprocess_user,
+            filename="second.png",
+            content=png_bytes(color="blue"),
+            page_index=0,
+            idempotency_key="result-capacity-api",
+        )
+    assert reprocess_service.account(reprocess_user)["credits"] == 2
+    with reprocess_service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+
+
+def test_crash_durable_publication_reservations_reconcile_staging_and_namespaces(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=2,
+        reconciliation_grace_seconds=0,
+    )
+    user_id = customer_id(service, "publication-crash@example.com")
+
+    def crash_after_staging(stage: str) -> None:
+        if stage == "staging_file_durable":
+            raise SystemExit("simulated staging publication loss")
+
+    service.storage._publication_fault_hook = crash_after_staging
+    with pytest.raises(SystemExit, match="staging publication loss"):
+        service.prepare_upload(
+            user_id=user_id, filename="staging-crash.png", content=png_bytes(color="black")
+        )
+    service.storage._publication_fault_hook = None
+    with service.database.connect() as conn:
+        staging_reservation = conn.execute(
+            "SELECT id,storage_path FROM storage_reservations WHERE kind='staging'"
+        ).fetchone()
+    staged_path = Path(staging_reservation["storage_path"])
+    assert staged_path.is_file()
+
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+    assert staged_path.is_file()
+    with peer.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE storage_reservations SET expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), staging_reservation["id"]),
+        )
+    assert peer.cleanup_expired()["storage_reservations"] == 1
+    assert not staged_path.exists()
+
+    def crash_after_upload(stage: str) -> None:
+        if stage == "upload_published":
+            raise SystemExit("simulated process loss")
+
+    service.storage._publication_fault_hook = crash_after_upload
+    with pytest.raises(SystemExit, match="process loss"):
+        service.prepare_upload(
+            user_id=user_id, filename="crash.png", content=png_bytes(color="red")
+        )
+    service.storage._publication_fault_hook = None
+    with service.database.connect() as conn:
+        reservation = conn.execute(
+            "SELECT id,storage_path FROM storage_reservations WHERE kind='upload'"
+        ).fetchone()
+        assert conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0] == 0
+    published = Path(reservation["storage_path"])
+    assert published.is_file()
+
+    peer.initialize()
+    assert published.is_file()
+    with peer.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE storage_reservations SET expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), reservation["id"]),
+        )
+    assert peer.cleanup_expired()["storage_reservations"] == 1
+    assert not published.exists()
+
+    upload = peer.prepare_upload(
+        user_id=user_id, filename="job-crash.png", content=png_bytes(color="green")
+    )
+
+    def crash_after_job(stage: str) -> None:
+        if stage == "job_copy_published":
+            raise SystemExit("simulated job publication loss")
+
+    peer.storage._publication_fault_hook = crash_after_job
+    with pytest.raises(SystemExit, match="job publication loss"):
+        peer.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    peer.storage._publication_fault_hook = None
+    with peer.database.connect() as conn:
+        job_reservation = conn.execute(
+            "SELECT id,storage_path FROM storage_reservations WHERE kind='job_copy'"
+        ).fetchone()
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    job_copy = Path(job_reservation["storage_path"])
+    assert job_copy.is_file()
+    with peer.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE storage_reservations SET expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), job_reservation["id"]),
+        )
+    assert peer.cleanup_expired()["storage_reservations"] == 1
+    assert not job_copy.exists()
+    assert peer.upload_preview(user_id=user_id, upload_id=upload["id"], page_index=0)
+
+
+def test_startup_never_invents_missing_result_capacity_before_provider_dispatch(
+    tmp_path: Path,
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "legacy-capacity@example.com")
+    job = _paid_job(service, user_id, color="purple")
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE jobs SET result_reservation_bytes=0,result_reservation_attempt=NULL,"
+            "retained_byte_reservation=0 WHERE id=?",
+            (job["id"],),
+        )
+
+    class MustNotDispatch:
+        def extract(self, _: bytes) -> None:
+            raise AssertionError("provider dispatch must remain behind durable capacity")
+
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=MustNotDispatch(),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize(recover_jobs=False)
+    assert peer.process_one("legacy-capacity-worker")
+    failed = peer.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "result_capacity_reservation_lost"
+    assert peer.account(user_id)["credits"] == 1
+    assert not peer.process_one("legacy-capacity-worker-retry")
+    assert peer.account(user_id)["credits"] == 1
+    with peer.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM credit_ledger WHERE idempotency_key=?",
+                (f"job:{job['id']}:refund:1",),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_global_storage_reservations_are_cross_process_and_low_free_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=2,
+        max_upload_bytes=256 * 1024,
+        min_free_storage_bytes=0,
+    )
+    first_user = customer_id(service, "storage-one@example.com")
+    second_user = customer_id(service, "storage-two@example.com")
+    with service.database.connect() as conn:
+        baseline = service._retained_storage_bytes(conn)
+    constrained = Settings(
+        **{
+            **service.settings.__dict__,
+            "max_storage_bytes_global": baseline + service.settings.max_upload_bytes + 1024,
+        }
+    )
+    service.settings = constrained
+    service.storage.settings = constrained
+    peer = ProductService(
+        settings=constrained,
+        database=Database(constrained.database_path),
+        storage=Storage(constrained),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original_stage = service.storage.stage_upload
+
+    def slow_stage(source: Any, **kwargs: Any):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_stage(source, **kwargs)
+
+    monkeypatch.setattr(service.storage, "stage_upload", slow_stage)
+    first_result: list[dict[str, Any]] = []
+
+    def first_upload() -> None:
+        first_result.append(
+            service.prepare_upload(
+                user_id=first_user, filename="one.png", content=png_bytes(color="red")
+            )
+        )
+
+    thread = threading.Thread(target=first_upload)
+    thread.start()
+    assert entered.wait(timeout=5)
+    with pytest.raises(ProductError) as capacity:
+        peer.prepare_upload(
+            user_id=second_user, filename="two.png", content=png_bytes(color="blue")
+        )
+    assert capacity.value.code == "service_storage_capacity_reached"
+    release.set()
+    thread.join(timeout=5)
+    assert first_result and not thread.is_alive()
+
+    relaxed = Settings(
+        **{
+            **constrained.__dict__,
+            "max_storage_bytes_global": constrained.max_storage_bytes_global
+            + constrained.max_upload_bytes,
+        }
+    )
+    peer.settings = relaxed
+    peer.storage.settings = relaxed
+
+    monkeypatch.setattr(
+        service_module.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(
+            free=constrained.min_free_storage_bytes + constrained.database_headroom_bytes - 1
+        ),
+    )
+    with pytest.raises(ProductError) as low_free:
+        peer.prepare_upload(
+            user_id=second_user, filename="low-free.png", content=png_bytes(color="black")
+        )
+    assert low_free.value.code == "storage_free_space_guard"
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+
+
+def test_database_row_admission_is_central_and_preserves_terminal_capacity(
+    tmp_path: Path,
+) -> None:
+    source = (STATIC_DIR.parent / "service.py").read_text(encoding="utf-8")
+    assert re.search(r"conn\.execute\(\s*\"INSERT INTO", source) is None
+
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "row-pressure@example.com")
+    job = _paid_job(service, user_id, color="yellow")
+    with service.database.connect() as conn:
+        current = service._database_row_count(conn, user_id)
+        future = service._future_terminal_rows(conn, user_id)
+    service.settings = Settings(
+        **{
+            **service.settings.__dict__,
+            "max_database_rows_per_user": current + future,
+            "mandatory_database_rows_per_user": 1,
+        }
+    )
+    with pytest.raises(ProductError) as pressure:
+        service.create_api_key(user_id=user_id, name="must wait")
+    assert pressure.value.code == "database_quota_reached"
+    for recovery in range(service.settings.max_recovery_attempts):
+        claim = service.claim_next_job(f"row-pressure-recovery-{recovery}")
+        assert claim is not None
+        with service.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+                (timestamp(utcnow() - timedelta(seconds=1)), claim.job_id),
+            )
+        assert service.recover_interrupted_jobs() == 1
+    _install_successful_extractor(service)
+    assert service.process_one("row-pressure-worker")
+    completed = service.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert completed["status"] == "review"
+    with service.database.connect() as conn:
+        assert (
+            service._database_row_count(conn, user_id)
+            <= service.settings.max_database_rows_per_user
+        )
+        assert conn.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM result_versions").fetchone()[0] == 1
+
+
+def test_invalid_provider_output_never_logs_success_and_uses_specific_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "invalid-provider@example.com")
+    job = _paid_job(service, user_id, color="blue")
+    service.extractor = SimpleNamespace(
+        extract=lambda _: SimpleNamespace(
+            chart=SimpleNamespace(chart_type="line", series=[]),
+            raw="invalid",
+            extractor="invalid-provider",
+            model_version="invalid-release",
+        )
+    )
+    with caplog.at_level("INFO"):
+        assert service.process_one("invalid-output-worker")
+    failed = service.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "model_output_invalid"
+    assert not any(record.message == "provider_call_succeeded" for record in caplog.records)
+    with service.database.connect() as conn:
+        attempt = conn.execute("SELECT outcome FROM provider_attempts").fetchone()
+    assert attempt["outcome"] == "failed"
+
+
+def test_logout_revokes_all_sessions_and_rotates_principal_generation(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False)
+    first = service.register("sessions@example.com", "long session password")
+    user = service.session_user(first["session"])
+    assert user is not None
+    user_id = str(user["id"])
+    second = service.create_session(user_id)
+    before = service.account(user_id)["principal_marker"]
+    service.logout(first["session"])
+    assert service.session_user(first["session"]) is None
+    assert service.session_user(second["session"]) is None
+    after = service.account(user_id)["principal_marker"]
+    assert after != before
+    replacement = service.create_session(user_id)
+    assert service.session_user(replacement["session"])["id"] == user_id
+
+
+def test_backup_and_restore_fsync_files_manifests_and_publication_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "fsync-backup@example.com")
+    _paid_job(service, user_id, color="orange")
+    directories: list[Path] = []
+    files: list[Path] = []
+    real_directory = backup_module._fsync_directory
+    real_file = backup_module._fsync_file
+
+    def tracked_directory(path: Path) -> None:
+        directories.append(path)
+        real_directory(path)
+
+    def tracked_file(path: Path) -> None:
+        files.append(path)
+        real_file(path)
+
+    monkeypatch.setattr(backup_module, "_fsync_directory", tracked_directory)
+    monkeypatch.setattr(backup_module, "_fsync_file", tracked_file)
+    reservation_id = service._reserve_storage_bytes(
+        user_id=user_id,
+        byte_count=1,
+        kind="staging",
+        storage_path=service.storage.root / "staging" / "in-flight.tmp",
+    )
+    blocked_destination = tmp_path / "blocked-in-flight-backup"
+    with pytest.raises(BackupError, match="publication is in flight"):
+        create_backup(service.settings, blocked_destination)
+    assert not blocked_destination.exists()
+    service._release_storage_reservation(user_id=user_id, reservation_id=reservation_id)
+    destination = tmp_path / "fsync-backup"
+    create_backup(service.settings, destination)
+    assert directories.count(destination.parent.resolve()) >= 2
+    assert any(path.name == "manifest.json" for path in files)
+    directories.clear()
+    files.clear()
+    target = tmp_path / "fsync-restore"
+    restore_backup(destination, target)
+    assert directories.count(target.parent.resolve()) >= 2
+    assert any(path.name == "unrender.sqlite3" for path in files)
+
+
+@pytest.mark.parametrize("script", ["browser_auth_epoch.mjs", "browser_two_tab.mjs"])
+def test_browser_privacy_editor_and_two_tab_regressions(script: str) -> None:
     result = subprocess.run(
-        ["node", str(Path(__file__).with_name("browser_auth_epoch.mjs"))],
+        ["node", str(Path(__file__).with_name(script))],
         cwd=STATIC_DIR.parents[2],
         capture_output=True,
         text=True,

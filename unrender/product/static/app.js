@@ -9,11 +9,25 @@ const state = {
   pollTimer: null,
   pollDelay: 1500,
   editorRows: [],
+  editorSeries: [],
+  editorPage: 0,
   authEpoch: 0,
   authController: new AbortController(),
+  principalMarker: null,
+  viewEpoch: 0,
+  viewController: new AbortController(),
+  jobSubmission: null,
+  keySecretTimer: null,
+  authChannel: null,
+  suppressPrincipalReconcileUntil: 0,
   objectUrls: new Set(),
   publicConfig: { registration_open: false, sample_available: false },
 };
+
+const AUTH_EVENT_KEY = "unrender.auth-change.v1";
+const EDITOR_PAGE_SIZE = 100;
+const EDITOR_MAX_ROWS = 10000;
+const EDITOR_MOUNTED_CELL_LIMIT = 500;
 
 const chartTypes = [
   "bar",
@@ -83,7 +97,9 @@ async function api(path, options = {}) {
     error.code = payload?.error?.code || "request_failed";
     error.status = response.status;
     if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      const hadPrincipal = Boolean(state.principalMarker);
       showPublic();
+      if (hadPrincipal) publishAuthChange("session-ended");
       throw staleAuthError("The authenticated session ended");
     }
     throw error;
@@ -143,15 +159,56 @@ function stopPolling() {
   state.pollTimer = null;
 }
 
-function resetPrivateState() {
+function resetViewSelection() {
+  state.viewController.abort();
+  state.viewController = new AbortController();
+  state.viewEpoch += 1;
+}
+
+function beginViewSelection() {
+  resetViewSelection();
+  return { epoch: state.viewEpoch, signal: state.viewController.signal };
+}
+
+function clearApiKeySecret() {
+  window.clearTimeout(state.keySecretTimer);
+  state.keySecretTimer = null;
+  byId("api-key-output").textContent = "";
+  byId("api-key-output").hidden = true;
+  byId("copy-key-button").hidden = true;
+  byId("dismiss-key-button").hidden = true;
+}
+
+function publishAuthChange(reason) {
+  state.suppressPrincipalReconcileUntil = ["logout", "session-ended"].includes(reason)
+    ? Number.POSITIVE_INFINITY
+    : 0;
+  const nonce = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  const event = JSON.stringify({ reason, nonce });
+  try { localStorage.setItem(AUTH_EVENT_KEY, event); } catch (_) { /* unavailable */ }
+  state.authChannel?.postMessage(event);
+}
+
+function authChangeReason(event) {
+  const raw = typeof event === "string" ? event : event?.data ?? event?.newValue;
+  try {
+    return JSON.parse(raw)?.reason || "unknown";
+  } catch (_) {
+    return "unknown";
+  }
+}
+
+function resetPrivateState({ clearCsrf = true } = {}) {
   stopPolling();
+  resetViewSelection();
   window.clearTimeout(showToast.timer);
+  clearApiKeySecret();
   state.authController.abort();
   state.authController = new AbortController();
   state.authEpoch += 1;
   for (const url of state.objectUrls) URL.revokeObjectURL(url);
   state.objectUrls.clear();
-  document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
+  if (clearCsrf) document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
   state.account = null;
   state.jobs = [];
   state.currentJob = null;
@@ -160,16 +217,19 @@ function resetPrivateState() {
   state.crop = null;
   state.cropStart = null;
   state.editorRows = [];
+  state.editorSeries = [];
+  state.editorPage = 0;
+  state.jobSubmission = null;
+  state.principalMarker = null;
   state.pollDelay = 1500;
   byId("job-list").replaceChildren();
   byId("job-actions").replaceChildren();
   byId("audit-list").replaceChildren();
   byId("version-list").replaceChildren();
   byId("result-table").replaceChildren();
+  byId("series-editor-list").replaceChildren();
   byId("chart-type-input").replaceChildren();
   byId("api-key-list").replaceChildren();
-  byId("api-key-output").textContent = "";
-  byId("api-key-output").hidden = true;
   byId("api-key-form").reset();
   byId("login-form").reset();
   byId("register-form").reset();
@@ -178,6 +238,7 @@ function resetPrivateState() {
   for (const id of [
     "job-status", "job-title", "job-meta", "source-page-label", "edit-state",
     "page-counter", "credit-count", "account-email", "result-loading",
+    "editor-page-summary",
   ]) {
     byId(id).textContent = "";
   }
@@ -210,8 +271,8 @@ function resetPrivateState() {
   setHidden("version-list", true);
 }
 
-function showPublic() {
-  resetPrivateState();
+function showPublic({ clearCsrf = true } = {}) {
+  resetPrivateState({ clearCsrf });
   setHidden("marketing-view", false);
   setHidden("workspace-view", true);
   setHidden("account-bar", true);
@@ -252,18 +313,78 @@ function showMainView(name) {
   }
 }
 
-async function refreshAccount() {
-  state.account = await api("/api/me");
+async function refreshAccount(options = {}) {
+  const account = await api("/api/me", options);
+  if (state.principalMarker && state.principalMarker !== account.principal_marker) {
+    resetPrivateState({ clearCsrf: false });
+  }
+  state.principalMarker = account.principal_marker;
+  state.account = account;
   showWorkspace();
+  return account;
+}
+
+async function reconcilePrincipal() {
+  if (Date.now() < state.suppressPrincipalReconcileUntil) return;
+  try {
+    const previous = state.principalMarker;
+    const account = await refreshAccount();
+    if (previous !== account.principal_marker || !state.jobs.length) {
+      await loadJobs();
+      if (state.jobs.length) await openJob(state.jobs[0].id);
+      else showMainView("empty-view");
+    }
+  } catch (error) {
+    if (!isStaleRequest(error) && error.status !== 401) showToast(error);
+  }
+}
+
+function handleExternalAuthChange(event) {
+  const reason = authChangeReason(event);
+  if (["logout", "session-ended"].includes(reason)) {
+    // Keep reconciliation blocked until an explicit successful authentication.
+    // A timeout could restore a principal while server-side revocation is delayed.
+    state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
+  } else {
+    state.suppressPrincipalReconcileUntil = 0;
+  }
+  showPublic({ clearCsrf: false });
+  if (reason !== "logout" && reason !== "session-ended") void reconcilePrincipal();
+}
+
+function installAuthCoordination() {
+  try {
+    const previousReason = authChangeReason(localStorage.getItem?.(AUTH_EVENT_KEY));
+    if (["logout", "session-ended"].includes(previousReason)) {
+      state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
+    }
+  } catch (_) { /* unavailable */ }
+  if (typeof BroadcastChannel === "function") {
+    state.authChannel = new BroadcastChannel(AUTH_EVENT_KEY);
+    state.authChannel.addEventListener("message", handleExternalAuthChange);
+  }
+  window.addEventListener("storage", (event) => {
+    if (event.key === AUTH_EVENT_KEY) handleExternalAuthChange();
+  });
+  window.addEventListener("focus", () => { void reconcilePrincipal(); });
+  window.addEventListener("pageshow", () => { void reconcilePrincipal(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void reconcilePrincipal();
+  });
 }
 
 async function boot() {
+  installAuthCoordination();
   try {
     state.publicConfig = await api("/api/public-config");
   } catch (_) {
     state.publicConfig = { registration_open: false, sample_available: false };
   }
   applyPublicConfig();
+  if (Date.now() < state.suppressPrincipalReconcileUntil) {
+    showPublic({ clearCsrf: false });
+    return;
+  }
   try {
     await refreshAccount();
     await loadJobs();
@@ -301,6 +422,7 @@ async function submitAuth(event, mode) {
     });
     form.reset();
     await refreshAccount();
+    publishAuthChange("authenticated");
     await loadJobs();
     showMainView(state.jobs.length ? "job-view" : "empty-view");
     if (state.jobs.length) await openJob(state.jobs[0].id);
@@ -317,6 +439,7 @@ async function demoLoginAndRun() {
   try {
     await api("/api/auth/demo", { method: "POST", authEpoch: epoch });
     await refreshAccount();
+    publishAuthChange("authenticated");
     await loadJobs();
     const completed = state.jobs.find((job) =>
       job.source_name === "budget-quarter-sample.webp" && ["review", "approved"].includes(job.status)
@@ -331,22 +454,29 @@ async function demoLoginAndRun() {
 }
 
 async function logout() {
-  const epoch = state.authEpoch;
-  try { await api("/api/auth/logout", { method: "POST" }); }
-  finally {
-    if (epoch === state.authEpoch) showPublic();
-  }
+  const csrf = csrfToken();
+  const request = fetch("/api/auth/logout", {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
+  });
+  state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
+  showPublic();
+  publishAuthChange("logout");
+  try { await request; } catch (_) { /* local privacy reset is already complete */ }
 }
 
 async function loadJobs() {
+  const authEpoch = state.authEpoch;
   const jobs = [];
   let cursor = null;
   do {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-    const payload = await api(`/api/jobs${query}`);
+    const payload = await api(`/api/jobs${query}`, { authEpoch });
+    if (authEpoch !== state.authEpoch) throw staleAuthError();
     jobs.push(...payload.items);
     cursor = payload.next_cursor;
   } while (cursor);
+  if (authEpoch !== state.authEpoch) throw staleAuthError();
   state.jobs = jobs;
   renderJobList();
 }
@@ -383,6 +513,7 @@ function renderJobList() {
 
 function startUpload() {
   stopPolling();
+  resetViewSelection();
   state.upload = null;
   state.uploadPage = 0;
   state.crop = null;
@@ -396,12 +527,18 @@ function startUpload() {
 async function prepareFile(file) {
   if (!file) return;
   const epoch = state.authEpoch;
+  const view = beginViewSelection();
   clearError("upload-error");
   const form = new FormData();
   form.append("file", file);
   byId("dropzone").setAttribute("aria-busy", "true");
   try {
-    state.upload = await api("/api/uploads", { method: "POST", body: form });
+    const upload = await api("/api/uploads", {
+      method: "POST", body: form, signal: view.signal,
+    });
+    if (view.epoch !== state.viewEpoch) throw staleAuthError();
+    state.upload = upload;
+    state.jobSubmission = null;
     state.uploadPage = 0;
     clearCrop();
     setHidden("page-review", false);
@@ -526,11 +663,23 @@ async function queueCurrentUpload() {
   const button = byId("queue-job-button");
   button.disabled = true;
   clearError("upload-error");
+  const fingerprint = JSON.stringify({
+    principal: state.principalMarker,
+    uploadId: state.upload.id,
+    pageIndex: state.uploadPage,
+    crop: state.crop,
+  });
+  if (state.jobSubmission?.fingerprint !== fingerprint) {
+    state.jobSubmission = { fingerprint, key: crypto.randomUUID() };
+  }
+  const submission = state.jobSubmission;
   try {
     const job = await api("/api/jobs", {
       method: "POST",
+      headers: { "Idempotency-Key": submission.key },
       body: { upload_id: state.upload.id, page_index: state.uploadPage, crop: state.crop },
     });
+    if (state.jobSubmission === submission) state.jobSubmission = null;
     await refreshAccount();
     await loadJobs();
     await openJob(job.id);
@@ -545,7 +694,9 @@ async function runSample() {
   try {
     const upload = await api("/api/uploads/demo", { method: "POST" });
     const job = await api("/api/jobs", {
-      method: "POST", body: { upload_id: upload.id, page_index: 0, crop: null },
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: { upload_id: upload.id, page_index: 0, crop: null },
     });
     await refreshAccount();
     await loadJobs();
@@ -557,13 +708,17 @@ async function runSample() {
 
 async function openJob(jobId) {
   stopPolling();
+  const view = beginViewSelection();
   try {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
-    state.currentJob = await api(`/api/jobs/${routeSegment(jobId)}`);
+    const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal });
+    if (view.epoch !== state.viewEpoch) throw staleAuthError();
+    state.currentJob = job;
     if (previousStatus && previousStatus !== state.currentJob.status) {
       state.pollDelay = 1500;
       await Promise.all([loadJobs(), refreshAccount()]);
+      if (view.epoch !== state.viewEpoch) throw staleAuthError();
     }
     else renderJobList();
     renderJob();
@@ -651,8 +806,14 @@ function renderJobActions() {
 async function jobMutation(action) {
   const job = state.currentJob;
   if (!job) return;
+  const viewEpoch = state.viewEpoch;
+  const signal = state.viewController.signal;
   try {
-    state.currentJob = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, { method: "POST" });
+    const updated = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, {
+      method: "POST", signal,
+    });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    state.currentJob = updated;
     await refreshAccount();
     await loadJobs();
     renderJob();
@@ -669,8 +830,12 @@ async function jobMutation(action) {
 async function deleteCurrentJob() {
   const job = state.currentJob;
   if (!job || !window.confirm("Delete this source, result, and audit trail? This cannot be undone.")) return;
+  const viewEpoch = state.viewEpoch;
   try {
-    const deletion = await api(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
+    const deletion = await api(`/api/jobs/${routeSegment(job.id)}`, {
+      method: "DELETE", signal: state.viewController.signal,
+    });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     state.currentJob = null;
     await loadJobs();
     if (state.jobs.length) await openJob(state.jobs[0].id);
@@ -685,32 +850,33 @@ async function deleteCurrentJob() {
 
 function editorRows(result) {
   const series = result.series?.length ? result.series : [{ name: null, points: [] }];
-  const rows = [];
-  const pointCount = Math.max(0, ...series.map((item) => item.points?.length || 0));
-  for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
-    const groups = [];
-    series.forEach((item, seriesIndex) => {
-      const point = item.points?.[pointIndex];
-      if (!point) return;
-      const xType = typeof point.x === "number" ? "number" : "string";
-      const identity = `${xType}:${JSON.stringify(point.x)}`;
-      let group = groups.find((candidate) => candidate.identity === identity);
-      if (!group) {
-        group = {
-          identity,
-          x: String(point.x),
-          xType,
-          values: series.map(() => ""),
-        };
-        groups.push(group);
-      }
-      group.values[seriesIndex] = String(point.y);
-    });
-    for (const { identity: _, ...row } of groups) {
-      rows.push(row);
-    }
+  return series.flatMap((item, seriesIndex) => (item.points || []).map((point) => ({
+    seriesIndex,
+    x: String(point.x),
+    xType: typeof point.x === "number" ? "number" : "string",
+    y: String(point.y),
+  })));
+}
+
+function collectSeriesNames() {
+  for (const input of byId("series-editor-list").querySelectorAll("[data-series-name]")) {
+    state.editorSeries[Number(input.dataset.seriesName)].name = input.value.trim() || null;
   }
-  return rows;
+}
+
+function renderSeriesEditor() {
+  const list = byId("series-editor-list");
+  list.replaceChildren(...state.editorSeries.map((series, index) => {
+    const label = document.createElement("label");
+    label.textContent = `Series ${index + 1}`;
+    const input = document.createElement("input");
+    input.value = series.name || "";
+    input.placeholder = state.editorSeries.length === 1 ? "Value" : `Series ${index + 1}`;
+    input.dataset.seriesName = String(index);
+    input.maxLength = 500;
+    label.append(input);
+    return label;
+  }));
 }
 
 function renderEditor(result) {
@@ -726,38 +892,44 @@ function renderEditor(result) {
   byId("y-label-input").value = result.y_axis?.label || "";
   byId("y-unit-input").value = result.y_axis?.unit || "";
   state.editorRows = editorRows(result);
-  renderResultTable(result.series?.length ? result.series : [{ name: null, points: [] }]);
+  state.editorSeries = (result.series?.length ? result.series : [{ name: null }]).map(
+    (series) => ({ name: series.name || null }),
+  );
+  state.editorPage = 0;
+  renderSeriesEditor();
+  renderResultTable();
 }
 
-function renderResultTable(series) {
+function renderResultTable() {
   const table = byId("result-table");
   table.replaceChildren();
   const head = document.createElement("thead");
-  const row = document.createElement("tr");
-  const xHead = document.createElement("th");
-  xHead.scope = "col";
-  xHead.textContent = "Category / x";
-  row.append(xHead);
-  series.forEach((item, index) => {
+  const heading = document.createElement("tr");
+  for (const title of ["Series", "Category / x", "Value", "Row"]) {
     const th = document.createElement("th");
     th.scope = "col";
-    const input = document.createElement("input");
-    input.value = item.name || "";
-    input.placeholder = series.length === 1 ? "Value" : `Series ${index + 1}`;
-    input.dataset.seriesName = String(index);
-    input.setAttribute("aria-label", `Series ${index + 1} name`);
-    th.append(input);
-    row.append(th);
-  });
-  const actionHead = document.createElement("th");
-  actionHead.scope = "col";
-  actionHead.className = "row-action";
-  actionHead.textContent = "Row";
-  row.append(actionHead);
-  head.append(row);
+    th.textContent = title;
+    if (title === "Row") th.className = "row-action";
+    heading.append(th);
+  }
+  head.append(heading);
   const body = document.createElement("tbody");
-  state.editorRows.forEach((item, rowIndex) => {
+  const start = state.editorPage * EDITOR_PAGE_SIZE;
+  const pageRows = state.editorRows.slice(start, start + EDITOR_PAGE_SIZE);
+  pageRows.forEach((item, pageIndex) => {
+    const rowIndex = start + pageIndex;
     const tr = document.createElement("tr");
+    const seriesCell = document.createElement("td");
+    const seriesInput = document.createElement("input");
+    seriesInput.type = "number";
+    seriesInput.min = "1";
+    seriesInput.max = String(state.editorSeries.length);
+    seriesInput.value = String(item.seriesIndex + 1);
+    seriesInput.dataset.row = String(rowIndex);
+    seriesInput.dataset.kind = "series";
+    seriesInput.setAttribute("aria-label", `Row ${rowIndex + 1} series number`);
+    seriesCell.append(seriesInput);
+    tr.append(seriesCell);
     const xCell = document.createElement("td");
     const xInput = document.createElement("input");
     xInput.value = item.x;
@@ -767,19 +939,16 @@ function renderResultTable(series) {
     xInput.setAttribute("aria-label", `Row ${rowIndex + 1} category`);
     xCell.append(xInput);
     tr.append(xCell);
-    series.forEach((_, seriesIndex) => {
-      const cell = document.createElement("td");
-      const input = document.createElement("input");
-      input.type = "number";
-      input.step = "any";
-      input.value = item.values[seriesIndex] ?? "";
-      input.dataset.row = String(rowIndex);
-      input.dataset.series = String(seriesIndex);
-      input.dataset.kind = "value";
-      input.setAttribute("aria-label", `Row ${rowIndex + 1}, series ${seriesIndex + 1} value`);
-      cell.append(input);
-      tr.append(cell);
-    });
+    const valueCell = document.createElement("td");
+    const valueInput = document.createElement("input");
+    valueInput.type = "number";
+    valueInput.step = "any";
+    valueInput.value = item.y;
+    valueInput.dataset.row = String(rowIndex);
+    valueInput.dataset.kind = "value";
+    valueInput.setAttribute("aria-label", `Row ${rowIndex + 1} value`);
+    valueCell.append(valueInput);
+    tr.append(valueCell);
     const removeCell = document.createElement("td");
     removeCell.className = "row-action";
     const remove = document.createElement("button");
@@ -788,41 +957,63 @@ function renderResultTable(series) {
     remove.addEventListener("click", () => {
       collectEditorRows();
       state.editorRows.splice(rowIndex, 1);
-      renderResultTable(seriesFromInputs(series));
+      const pageCount = Math.max(1, Math.ceil(state.editorRows.length / EDITOR_PAGE_SIZE));
+      state.editorPage = Math.min(state.editorPage, pageCount - 1);
+      renderResultTable();
     });
     removeCell.append(remove);
     tr.append(removeCell);
     body.append(tr);
   });
   table.append(head, body);
-}
-
-function seriesFromInputs(fallback) {
-  return fallback.map((item, index) => {
-    const input = document.querySelector(`[data-series-name="${index}"]`);
-    return { ...item, name: input ? input.value.trim() || null : item.name };
-  });
+  const mountedCells = heading.cells.length
+    + (body.rows.length * heading.cells.length)
+    + state.editorSeries.length
+    + 5;
+  if (mountedCells > EDITOR_MOUNTED_CELL_LIMIT) {
+    throw new Error("Editor mounted-cell safety limit exceeded");
+  }
+  const pageCount = Math.max(1, Math.ceil(state.editorRows.length / EDITOR_PAGE_SIZE));
+  byId("editor-page-summary").textContent = `${state.editorRows.length.toLocaleString()} values · page ${state.editorPage + 1} of ${pageCount}`;
+  byId("editor-previous-page").disabled = state.editorPage === 0;
+  byId("editor-next-page").disabled = state.editorPage >= pageCount - 1;
+  byId("add-row-button").disabled = state.editorRows.length >= EDITOR_MAX_ROWS;
 }
 
 function collectEditorRows() {
+  collectSeriesNames();
   const table = byId("result-table");
   if (!table.tBodies.length) return;
-  const count = table.tBodies[0].rows.length;
-  const seriesCount = table.tHead.rows[0].cells.length - 2;
-  state.editorRows = Array.from({ length: count }, (_, rowIndex) => ({
-    x: table.querySelector(`[data-kind="x"][data-row="${rowIndex}"]`)?.value || "",
-    xType: table.querySelector(`[data-kind="x"][data-row="${rowIndex}"]`)?.dataset.xType || "string",
-    values: Array.from({ length: seriesCount }, (_, seriesIndex) =>
-      table.querySelector(`[data-kind="value"][data-row="${rowIndex}"][data-series="${seriesIndex}"]`)?.value || ""
-    ),
-  }));
+  for (const xInput of table.querySelectorAll('[data-kind="x"]')) {
+    const rowIndex = Number(xInput.dataset.row);
+    const seriesValue = Number(
+      table.querySelector(`[data-kind="series"][data-row="${rowIndex}"]`)?.value,
+    );
+    state.editorRows[rowIndex] = {
+      seriesIndex: Math.max(0, Math.min(state.editorSeries.length - 1, seriesValue - 1)),
+      x: xInput.value,
+      xType: xInput.dataset.xType || "string",
+      y: table.querySelector(`[data-kind="value"][data-row="${rowIndex}"]`)?.value || "",
+    };
+  }
+}
+
+function changeEditorPage(delta) {
+  collectEditorRows();
+  const pageCount = Math.max(1, Math.ceil(state.editorRows.length / EDITOR_PAGE_SIZE));
+  state.editorPage = Math.max(0, Math.min(pageCount - 1, state.editorPage + delta));
+  renderResultTable();
 }
 
 function addEditorRow() {
   collectEditorRows();
-  const series = state.currentJob.result.series?.length ? state.currentJob.result.series : [{ name: null, points: [] }];
-  state.editorRows.push({ x: "", xType: "string", values: series.map(() => "") });
-  renderResultTable(seriesFromInputs(series));
+  if (state.editorRows.length >= EDITOR_MAX_ROWS) {
+    showToast("This result already contains the maximum 10,000 values");
+    return;
+  }
+  state.editorRows.push({ seriesIndex: 0, x: "", xType: "string", y: "" });
+  state.editorPage = Math.floor((state.editorRows.length - 1) / EDITOR_PAGE_SIZE);
+  renderResultTable();
   byId("result-table").tBodies[0].lastElementChild.querySelector("input").focus();
 }
 
@@ -835,13 +1026,11 @@ function coerceX(value, xType) {
 function buildEditedResult() {
   collectEditorRows();
   const original = state.currentJob.result;
-  const seriesNames = Array.from(byId("result-table").querySelectorAll("[data-series-name]"))
-    .map((input) => input.value.trim() || null);
-  const series = seriesNames.map((name, seriesIndex) => ({
-    name,
+  const series = state.editorSeries.map((item, seriesIndex) => ({
+    name: item.name,
     points: state.editorRows
-      .filter((row) => row.x.trim() && row.values[seriesIndex] !== "")
-      .map((row) => ({ x: coerceX(row.x, row.xType), y: Number(row.values[seriesIndex]) })),
+      .filter((row) => row.seriesIndex === seriesIndex && row.x.trim() && row.y !== "")
+      .map((row) => ({ x: coerceX(row.x, row.xType), y: Number(row.y) })),
   }));
   return {
     chart_type: byId("chart-type-input").value,
@@ -860,11 +1049,16 @@ function buildEditedResult() {
 
 async function saveCorrections(event) {
   event.preventDefault();
+  const jobId = state.currentJob?.id;
+  const viewEpoch = state.viewEpoch;
+  if (!jobId) return;
   try {
     const result = buildEditedResult();
-    state.currentJob = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/result`, {
-      method: "PATCH", body: { result },
+    const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
+      method: "PATCH", body: { result }, signal: state.viewController.signal,
     });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    state.currentJob = updated;
     await loadJobs();
     renderJob();
     showToast("Corrections saved to the audit trail");
@@ -882,12 +1076,17 @@ async function toggleAudit() {
   }
   try {
     const jobId = state.currentJob.id;
+    const viewEpoch = state.viewEpoch;
+    const signal = state.viewController.signal;
     const items = [];
     const rollups = [];
     let cursor = null;
     do {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-      const payload = await api(`/api/jobs/${routeSegment(jobId)}/audit${query}`);
+      const payload = await api(`/api/jobs/${routeSegment(jobId)}/audit${query}`, { signal });
+      if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) {
+        throw staleAuthError();
+      }
       items.push(...payload.items);
       rollups.push(...(payload.rollups || []));
       cursor = payload.next_cursor;
@@ -910,13 +1109,19 @@ async function toggleAudit() {
 }
 
 async function restoreVersion(version) {
+  const jobId = state.currentJob?.id;
+  const viewEpoch = state.viewEpoch;
+  if (!jobId) return;
   try {
     const saved = await api(
-      `/api/jobs/${routeSegment(state.currentJob.id)}/versions/${routeSegment(version.version)}`,
+      `/api/jobs/${routeSegment(jobId)}/versions/${routeSegment(version.version)}`,
+      { signal: state.viewController.signal },
     );
-    state.currentJob = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/result`, {
-      method: "PATCH", body: { result: saved.result },
+    const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
+      method: "PATCH", body: { result: saved.result }, signal: state.viewController.signal,
     });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    state.currentJob = updated;
     await loadJobs();
     renderJob();
     showToast(`Version ${version.version} restored as a new correction`);
@@ -927,8 +1132,14 @@ async function restoreVersion(version) {
 
 async function loadVersions(before = null, append = false) {
   const list = byId("version-list");
+  const jobId = state.currentJob?.id;
+  const viewEpoch = state.viewEpoch;
+  if (!jobId) throw staleAuthError();
   const query = before === null ? "" : `?before=${encodeURIComponent(before)}`;
-  const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/versions${query}`);
+  const payload = await api(`/api/jobs/${routeSegment(jobId)}/versions${query}`, {
+    signal: state.viewController.signal,
+  });
+  if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
   if (!append) list.replaceChildren();
   else list.querySelector("[data-load-older]")?.remove();
 
@@ -991,8 +1202,7 @@ async function toggleVersions() {
 }
 
 async function openKeyDialog() {
-  byId("api-key-output").hidden = true;
-  byId("api-key-output").textContent = "";
+  clearApiKeySecret();
   byId("generate-key-button").hidden = false;
   byId("api-key-dialog").showModal();
   byId("api-key-name").focus();
@@ -1001,15 +1211,18 @@ async function openKeyDialog() {
 
 async function loadApiKeys() {
   const list = byId("api-key-list");
+  const authEpoch = state.authEpoch;
   try {
     const keys = [];
     let cursor = null;
     do {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-      const payload = await api(`/api/keys${query}`);
+      const payload = await api(`/api/keys${query}`, { authEpoch });
+      if (authEpoch !== state.authEpoch) throw staleAuthError();
       keys.push(...payload.items);
       cursor = payload.next_cursor;
     } while (cursor);
+    if (authEpoch !== state.authEpoch) throw staleAuthError();
     list.replaceChildren();
     if (!keys.length) {
       const empty = document.createElement("li");
@@ -1074,10 +1287,26 @@ async function createKey(event) {
     });
     byId("api-key-output").textContent = payload.key;
     byId("api-key-output").hidden = false;
+    byId("copy-key-button").hidden = false;
+    byId("dismiss-key-button").hidden = false;
     byId("generate-key-button").hidden = true;
+    state.keySecretTimer = window.setTimeout(clearApiKeySecret, 30000);
     await loadApiKeys();
   } catch (error) {
     showToast(error);
+  }
+}
+
+async function copyApiKeySecret() {
+  const secret = byId("api-key-output").textContent;
+  if (!secret) return;
+  try {
+    await navigator.clipboard.writeText(secret);
+    showToast("API key copied; the on-screen copy was cleared");
+  } catch (_) {
+    showToast("Clipboard access failed; the on-screen key was still cleared");
+  } finally {
+    clearApiKeySecret();
   }
 }
 
@@ -1130,10 +1359,19 @@ function bindEvents() {
   byId("run-sample-button").addEventListener("click", runSample);
   byId("result-form").addEventListener("submit", saveCorrections);
   byId("add-row-button").addEventListener("click", addEditorRow);
+  byId("editor-previous-page").addEventListener("click", () => changeEditorPage(-1));
+  byId("editor-next-page").addEventListener("click", () => changeEditorPage(1));
   byId("toggle-versions-button").addEventListener("click", toggleVersions);
   byId("toggle-audit-button").addEventListener("click", toggleAudit);
   byId("create-key-button").addEventListener("click", openKeyDialog);
-  byId("close-key-dialog").addEventListener("click", () => byId("api-key-dialog").close());
+  byId("close-key-dialog").addEventListener("click", () => {
+    clearApiKeySecret();
+    byId("api-key-dialog").close();
+  });
+  byId("copy-key-button").addEventListener("click", copyApiKeySecret);
+  byId("dismiss-key-button").addEventListener("click", clearApiKeySecret);
+  byId("api-key-dialog").addEventListener("cancel", clearApiKeySecret);
+  byId("api-key-dialog").addEventListener("close", clearApiKeySecret);
   byId("revoke-all-keys-button").addEventListener("click", revokeAllApiKeys);
   byId("api-key-form").addEventListener("submit", createKey);
   byId("buy-credits-button").addEventListener("click", buyCredits);

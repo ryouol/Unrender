@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { webcrypto } from "node:crypto";
 
 const nodes = new Map();
 
@@ -60,10 +61,12 @@ const context = {
   Set,
   String,
   URL,
+  crypto: webcrypto,
   document,
   encodeURIComponent,
   decodeURIComponent,
   fetch: null,
+  localStorage: { setItem() {} },
   window: {
     clearTimeout,
     setTimeout,
@@ -75,12 +78,23 @@ vm.createContext(context);
 const appPath = new URL("../unrender/product/static/app.js", import.meta.url);
 const source = fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
 vm.runInContext(
-  `${source}\nglobalThis.__unrenderTest = { api, loadApiKeys, logout, resetPrivateState, showPublic, state };`,
+  `${source}\nglobalThis.__unrenderTest = { api, clearApiKeySecret, editorRows, loadApiKeys, logout, resetPrivateState, showPublic, state, EDITOR_PAGE_SIZE, EDITOR_MOUNTED_CELL_LIMIT };`,
   context,
   { filename: appPath.pathname },
 );
 
-const { api, loadApiKeys, logout, resetPrivateState, showPublic, state } = context.__unrenderTest;
+const {
+  api,
+  clearApiKeySecret,
+  editorRows,
+  loadApiKeys,
+  logout,
+  resetPrivateState,
+  showPublic,
+  state,
+  EDITOR_PAGE_SIZE,
+  EDITOR_MOUNTED_CELL_LIMIT,
+} = context.__unrenderTest;
 state.account = { id: "old-account", email: "old@example.com" };
 state.jobs = [{ id: "old-job" }];
 state.currentJob = { id: "old-job", result: { private: true } };
@@ -144,24 +158,13 @@ assert.equal(state.account, null);
 assert.deepEqual(document.getElementById("api-key-list").children, []);
 
 let releaseLogout;
-let logoutStarted;
-const logoutBodyStarted = new Promise((resolve) => { logoutStarted = resolve; });
-context.fetch = async () => ({
-  ok: true,
-  status: 200,
-  headers: { get: () => "application/json" },
-  json: () => new Promise((resolve) => {
-    releaseLogout = resolve;
-    logoutStarted();
-  }),
-});
+context.fetch = () => new Promise((resolve) => { releaseLogout = resolve; });
 state.account = { id: "account-before-switch" };
 const oldLogout = logout();
-await logoutBodyStarted;
-resetPrivateState();
+assert.equal(state.account, null);
 state.account = { id: "new-account" };
-releaseLogout({ status: "signed_out" });
-await assert.rejects(oldLogout, (error) => error.code === "stale_auth_context");
+releaseLogout({ ok: true, status: 200 });
+await oldLogout;
 assert.equal(state.account.id, "new-account");
 
 state.account = { id: "second-account" };
@@ -169,3 +172,24 @@ showPublic();
 assert.equal(state.account, null);
 assert.equal(document.getElementById("workspace-view").hidden, true);
 assert.equal(document.getElementById("marketing-view").hidden, false);
+
+document.getElementById("api-key-output").textContent = "unr_one_time_secret";
+document.getElementById("api-key-output").hidden = false;
+clearApiKeySecret();
+assert.equal(document.getElementById("api-key-output").textContent, "");
+assert.equal(document.getElementById("api-key-output").hidden, true);
+
+const maximumResult = {
+  series: Array.from({ length: 50 }, (_, seriesIndex) => ({
+    name: `Series ${seriesIndex + 1}`,
+    points: Array.from({ length: 200 }, (_, pointIndex) => ({
+      x: `${seriesIndex}-${pointIndex}`,
+      y: pointIndex,
+    })),
+  })),
+};
+const started = Date.now();
+const maximumRows = editorRows(maximumResult);
+assert.equal(maximumRows.length, 10000);
+assert.ok(Date.now() - started < 1000);
+assert.ok(4 + (EDITOR_PAGE_SIZE * 4) <= EDITOR_MOUNTED_CELL_LIMIT);

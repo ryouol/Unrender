@@ -51,7 +51,7 @@ UNRENDER_DATA_DIR=/data unrender-admin backup \
   --destination /backup/unrender-2026-09-01T020000Z
 ```
 
-The destination must not exist and must be outside `/data`. If any upload/job/database mutation is active, backup refuses immediately; drain writes and retry. Encrypt backups, restrict access, copy the completed directory as one unit, and alert on recovery-set age. A platform volume snapshot is acceptable only when the same mutation lock/drain contract is demonstrated.
+The destination must not exist and must be outside `/data`. If any upload/job/database mutation is active—or any durable staging, upload-publication, or job-copy reservation remains—backup refuses immediately; drain writes or reconcile the interrupted publication and retry. Success is reported only after captured files, manifest, temporary tree, final tree, and their parent namespaces have been fsynced. Encrypt backups, restrict access, copy the completed directory as one unit, and alert on recovery-set age. A platform volume snapshot is acceptable only when the same mutation lock/drain contract is demonstrated.
 
 Restore into a new absent data directory:
 
@@ -61,7 +61,7 @@ unrender-admin restore \
   --target /recovery/unrender-data
 ```
 
-Restore rejects symbolic/special paths, extra/missing files, hash or size drift, an existing/nested target, SQLite integrity errors, and foreign-key violations. It rewrites stored absolute source paths from the captured root to the new root before atomically publishing the target. Confirm the restored tree is owned by UID/GID `10001` with `0600` files and `0700` directories, start the required worker with ingress closed, wait for `/health/ready`, and sample job sources/exports. Never restore only the database or only the files, edit the manifest, or weaken production validation for a drill.
+Restore rejects symbolic/special paths, extra/missing files, hash or size drift, an existing/nested target, SQLite integrity errors, and foreign-key violations. It rewrites stored absolute source paths from the captured root to the new root, fsyncs every restored file and namespace, and atomically publishes the target. Confirm the restored tree is owned by UID/GID `10001` with `0600` files and `0700` directories, start the required worker with ingress closed, wait for `/health/ready`, and sample job sources/exports. Never restore only the database or only the files, edit the manifest, or weaken production validation for a drill.
 
 Target assumptions for beta: RPO 24 hours and RTO 4 hours. These are internal objectives, not a customer SLA.
 
@@ -73,7 +73,7 @@ Pause new-submission ingress and communicate that extraction is delayed. In the 
 
 ### Suspected credential leak
 
-Rotate the affected Modal, Stripe, or deployment secret; revoke exposed API keys through the workspace key-management UI (or a reviewed database operation if the UI is unavailable); invalidate sessions if session material may be involved; preserve audit/log evidence; and assess customer notification obligations with counsel.
+Rotate the affected Modal, Stripe, or deployment secret; revoke exposed API keys through the workspace key-management UI (or a reviewed database operation if the UI is unavailable); use **Sign out everywhere** to increment the account generation and invalidate every session if session material may be involved; preserve audit/log evidence; and assess customer notification obligations with counsel. Per-device session inventory and security-event notification are not part of the controlled pilot and remain broad-launch product work.
 
 ### Suspected chart-data exposure
 
@@ -81,8 +81,8 @@ Stop public traffic, snapshot evidence, identify affected tenant IDs and paths, 
 
 ### Database or volume pressure
 
-Pause uploads, let housekeeping drain the deletion outbox, expand the volume, and verify database integrity plus the storage reconciliation count. Tenant storage and bandwidth quotas limit one account, but they do not replace platform capacity alerts. Do not delete job files manually because the database, outbox, and audit trail would diverge.
+Pause uploads, let housekeeping drain the deletion outbox, expand the volume, and verify database integrity plus the storage reconciliation count. Admission includes configured global retained bytes, database headroom, pending deletions, cross-process storage/result reservations, and minimum free space, but these fail-closed controls do not replace platform capacity alerts. Do not delete job files manually because the database, outbox, and audit trail would diverge.
 
 ## Rollback
 
-Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. This release uses schema version 6 with crash-atomic, cross-process-serialized forward migrations from versions 1–5 and no down migration. Version 6 adds worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
+Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. This release uses schema version 7 with crash-atomic, cross-process-serialized forward migrations from versions 1–6 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 adds account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.

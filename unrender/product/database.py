@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 SCHEMA = """
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     account_kind TEXT NOT NULL DEFAULT 'customer'
         CHECK (account_kind IN ('customer','demo')),
     credit_balance INTEGER NOT NULL DEFAULT 0 CHECK (credit_balance >= 0),
+    session_generation INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0),
     created_at TEXT NOT NULL
 );
 
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL UNIQUE,
     csrf_hash TEXT NOT NULL,
+    session_generation INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0),
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -76,6 +78,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     lease_generation INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     lease_expires_at TEXT,
     heartbeat_at TEXT,
+    result_reservation_bytes INTEGER NOT NULL DEFAULT 0
+        CHECK (result_reservation_bytes >= 0),
+    result_reservation_attempt INTEGER,
+    retained_byte_reservation INTEGER NOT NULL DEFAULT 0
+        CHECK (retained_byte_reservation >= 0),
     extractor TEXT,
     model_version TEXT,
     raw_result TEXT,
@@ -208,6 +215,18 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
 CREATE INDEX IF NOT EXISTS api_idempotency_expiry_idx
 ON api_idempotency(user_id, expired_at);
 
+CREATE TABLE IF NOT EXISTS storage_reservations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('staging','upload','job_copy')),
+    byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+    storage_path TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS storage_reservations_expiry_idx
+ON storage_reservations(expires_at);
+
 CREATE TABLE IF NOT EXISTS startup_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton=1),
     last_reconciled_at TEXT
@@ -265,10 +284,17 @@ class Database:
             return set()
         return {str(row["name"]) for row in conn.execute(f'PRAGMA table_info("{table}")')}
 
-    @staticmethod
-    def _add_column(conn: sqlite3.Connection, table: str, name: str, declaration: str) -> None:
+    def _add_column(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        name: str,
+        declaration: str,
+    ) -> None:
         if name not in Database._columns(conn, table):
-            conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {declaration}')
+            self._migration_execute(
+                conn, f'ALTER TABLE "{table}" ADD COLUMN "{name}" {declaration}'
+            )
 
     def _migration_execute(
         self,
@@ -288,6 +314,8 @@ class Database:
         jobs = self._columns(conn, "jobs")
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
+        if "result_reservation_bytes" in jobs:
+            return 7
         if "lease_generation" in jobs:
             return 6
         if {"expires_at", "expired_at"}.issubset(idempotency):
@@ -329,6 +357,8 @@ class Database:
                 self._migrate_v4_to_v5(conn)
             elif version == 5:
                 self._migrate_v5_to_v6(conn)
+            elif version == 6:
+                self._migrate_v6_to_v7(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -477,6 +507,47 @@ class Database:
         for name, declaration in job_columns.items():
             self._add_column(conn, "jobs", name, declaration)
         conn.execute("UPDATE schema_meta SET version=6")
+
+    def _migrate_v6_to_v7(self, conn: sqlite3.Connection) -> None:
+        self._add_column(
+            conn,
+            "users",
+            "session_generation",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0)",
+        )
+        self._add_column(
+            conn,
+            "sessions",
+            "session_generation",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0)",
+        )
+        self._add_column(
+            conn,
+            "jobs",
+            "result_reservation_bytes",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (result_reservation_bytes >= 0)",
+        )
+        self._add_column(conn, "jobs", "result_reservation_attempt", "INTEGER")
+        self._add_column(
+            conn,
+            "jobs",
+            "retained_byte_reservation",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (retained_byte_reservation >= 0)",
+        )
+        self._migration_execute(
+            conn,
+            "CREATE TABLE IF NOT EXISTS storage_reservations ("
+            "id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,"
+            "kind TEXT NOT NULL CHECK (kind IN ('staging','upload','job_copy')),"
+            "byte_count INTEGER NOT NULL CHECK (byte_count >= 0),storage_path TEXT,"
+            "created_at TEXT NOT NULL,expires_at TEXT NOT NULL)",
+        )
+        self._migration_execute(
+            conn,
+            "CREATE INDEX IF NOT EXISTS storage_reservations_expiry_idx "
+            "ON storage_reservations(expires_at)",
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=7")
 
     def connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

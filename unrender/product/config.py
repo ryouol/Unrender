@@ -54,6 +54,11 @@ class Settings:
     rate_limit_per_minute: int = 120
     max_result_versions_per_job: int = 25
     max_history_bytes_per_user: int = 16 * 1024 * 1024
+    max_result_json_bytes: int = 1_000_000
+    max_storage_bytes_global: int = 10 * 1024 * 1024 * 1024
+    min_free_storage_bytes: int = 256 * 1024 * 1024
+    database_headroom_bytes: int = 128 * 1024 * 1024
+    storage_reservation_ttl_seconds: int = 60 * 60
     max_sessions_per_user: int = 10
     max_active_api_keys_per_user: int = 10
     max_api_key_records_per_user: int = 100
@@ -63,6 +68,8 @@ class Settings:
     max_credit_ledger_records_per_user: int = 10_000
     max_database_rows_per_user: int = 30_000
     max_database_rows_global: int = 500_000
+    mandatory_database_rows_per_user: int = 64
+    mandatory_database_rows_global: int = 512
     max_billing_events_global: int = 100_000
     max_provider_attempts_per_job: int = 100
     idempotency_ttl_hours: int = 24 * 30
@@ -101,6 +108,18 @@ class Settings:
     @property
     def billing_configured(self) -> bool:
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_id)
+
+    @property
+    def result_publication_reservation_bytes(self) -> int:
+        """Worst-case version/current/original/raw publication for one provider attempt."""
+
+        return self.max_result_json_bytes * 4
+
+    @property
+    def result_request_bytes(self) -> int:
+        """Transport allowance for one valid result plus its JSON request envelope."""
+
+        return self.max_result_json_bytes + 64 * 1024
 
     def validate(self) -> None:
         if self.environment not in {"development", "test", "production"}:
@@ -159,8 +178,22 @@ class Settings:
             raise ValueError("Tenant upload limits must be positive")
         if self.max_upload_records_per_user <= 0 or self.max_jobs_per_user <= 0:
             raise ValueError("Tenant record limits must be positive")
-        if self.max_result_versions_per_job <= 0 or self.max_history_bytes_per_user <= 0:
+        if (
+            self.max_result_versions_per_job <= 0
+            or self.max_history_bytes_per_user < self.max_result_json_bytes
+            or self.max_result_json_bytes <= 0
+        ):
             raise ValueError("Result-history limits must be positive")
+        if (
+            self.max_storage_bytes_global
+            < self.database_headroom_bytes
+            + (self.max_upload_bytes * 2)
+            + self.result_publication_reservation_bytes
+            or self.min_free_storage_bytes < 0
+            or self.database_headroom_bytes <= 0
+            or self.storage_reservation_ttl_seconds <= 0
+        ):
+            raise ValueError("Global storage and free-space reserves are inconsistent")
         if (
             self.idempotency_ttl_hours <= 0
             or self.idempotency_tombstone_days <= 0
@@ -182,6 +215,11 @@ class Settings:
         )
         if any(value <= 0 for value in bounded_state):
             raise ValueError("Database-state limits must be positive")
+        if (
+            not 0 < self.mandatory_database_rows_per_user < self.max_database_rows_per_user
+            or not 0 < self.mandatory_database_rows_global < self.max_database_rows_global
+        ):
+            raise ValueError("Mandatory database-row reserves must fit inside hard row limits")
         if self.max_credit_ledger_records_per_user < 3:
             raise ValueError("Credit-ledger capacity must leave room for reserve/refund pairs")
         if self.max_active_api_keys_per_user > self.max_api_key_records_per_user:
@@ -261,6 +299,15 @@ class Settings:
             max_history_bytes_per_user=_int(
                 "UNRENDER_MAX_HISTORY_BYTES_PER_USER", 16 * 1024 * 1024
             ),
+            max_result_json_bytes=_int("UNRENDER_MAX_RESULT_JSON_BYTES", 1_000_000),
+            max_storage_bytes_global=_int(
+                "UNRENDER_MAX_STORAGE_BYTES_GLOBAL", 10 * 1024 * 1024 * 1024
+            ),
+            min_free_storage_bytes=_int("UNRENDER_MIN_FREE_STORAGE_BYTES", 256 * 1024 * 1024),
+            database_headroom_bytes=_int("UNRENDER_DATABASE_HEADROOM_BYTES", 128 * 1024 * 1024),
+            storage_reservation_ttl_seconds=_int(
+                "UNRENDER_STORAGE_RESERVATION_TTL_SECONDS", 60 * 60
+            ),
             max_sessions_per_user=_int("UNRENDER_MAX_SESSIONS_PER_USER", 10),
             max_active_api_keys_per_user=_int("UNRENDER_MAX_ACTIVE_API_KEYS_PER_USER", 10),
             max_api_key_records_per_user=_int("UNRENDER_MAX_API_KEY_RECORDS_PER_USER", 100),
@@ -272,6 +319,8 @@ class Settings:
             ),
             max_database_rows_per_user=_int("UNRENDER_MAX_DATABASE_ROWS_PER_USER", 30_000),
             max_database_rows_global=_int("UNRENDER_MAX_DATABASE_ROWS_GLOBAL", 500_000),
+            mandatory_database_rows_per_user=_int("UNRENDER_MANDATORY_DATABASE_ROWS_PER_USER", 64),
+            mandatory_database_rows_global=_int("UNRENDER_MANDATORY_DATABASE_ROWS_GLOBAL", 512),
             max_billing_events_global=_int("UNRENDER_MAX_BILLING_EVENTS_GLOBAL", 100_000),
             max_provider_attempts_per_job=_int("UNRENDER_MAX_PROVIDER_ATTEMPTS_PER_JOB", 100),
             idempotency_ttl_hours=_int("UNRENDER_IDEMPOTENCY_TTL_HOURS", 24 * 30),

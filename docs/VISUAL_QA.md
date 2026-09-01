@@ -6,6 +6,23 @@ The product was run locally with the replay extractor in the Codex in-app browse
 
 After the second exact-tree review, the current working tree was rerun from source (the served and local JavaScript SHA-256 values matched). A sample correction was saved and version 1 was restored through the new explicit one-version fetch. A 22-version workspace rendered exactly 20 metadata entries plus **Load older versions**, then appended the remaining two without duplicates or another pager. The same current build was inspected at 390×844: workspace navigation, actions, warning, source, and history controls remained readable, wrapped without horizontal page overflow, and preserved their existing focus/contrast treatment.
 
+After the `f038311` review, the current tree was run in local Chrome for Testing
+147 through Playwright because this task had no available in-app browser runtime.
+Two real tabs shared one cookie jar. One tab held an old-account job response while
+the other signed out; the observing tab synchronously cleared account, job, upload,
+source, result, version, audit, API-key inventory, and one-time secret state. Releasing
+the delayed response did not repopulate anything, and a different account received a
+different principal marker. The logout request was also held for more than 1.2 seconds;
+focus, pageshow, and visibility events still could not reconcile the old principal. A
+real key create/copy flow cleared its secret after copy.
+
+The maximum valid editor shape (50 series × 200 points, 10,000 logical rows) rendered
+100 table rows and 454 total mounted cells in 2.4 ms. Desktop was checked at 1280×720.
+At 390×844 the first pass exposed a 475 px intrinsic grid width; zero-minimum pane sizing
+fixed it, and the final document/body and viewport widths all measured 390 px. This pass
+is a targeted privacy, maximum-contract, and responsive regression—not a formal browser,
+performance, or accessibility certification.
+
 Captured evidence:
 
 - [`screenshots/landing-desktop.png`](screenshots/landing-desktop.png)
@@ -24,6 +41,7 @@ There is no baseline UI screenshot because no product interface existed at commi
 - The mobile sidebar previously hid API-key access; QA changed it to a visible compact footer.
 - The API-key close button previously submitted the form; it now closes without creating a key.
 - Browser diagnostics remained empty throughout the final customer/demo journeys.
+- Current-tree two-tab privacy, maximum-result, desktop, and mobile assertions completed in Chrome for Testing 147; the CI-safe Node harnesses preserve the auth/selection timing cases without a browser binary.
 
 ## Accessibility baseline
 

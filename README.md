@@ -6,11 +6,11 @@ The product is designed for research and consulting teams that need chart data t
 
 ## What is usable now
 
-- Account, session, CSRF, tenant, API-key, and rate-limit boundaries
+- Account-generation, cross-tab session revocation, CSRF, tenant, API-key, and rate-limit boundaries
 - Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
-- Persistent `queued → running → review → approved` jobs with fenced worker leases, bounded restart recovery, pre-dispatch refunds, retention cleanup, and a retryable deletion outbox
+- Persistent `queued → running → review → approved` jobs with fenced worker leases, bounded restart recovery, pre-dispatch refunds, capacity reservations, reference-aware source deletion, and a retryable deletion outbox
 - Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
-- Side-by-side source review, editable values, version history, and an audit trail
+- Side-by-side source review, a bounded paged editor for maximum-size results, version history, and an audit trail
 - JSON, CSV, and XLSX exports; XLSX includes an audit sheet
 - A tenant-idempotent programmatic upload/status API with credit, bandwidth, outstanding-upload, and storage quotas
 - An isolated, ephemeral saved-sample workspace that runs without a GPU or external call

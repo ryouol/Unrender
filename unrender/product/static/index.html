@@ -17,7 +17,7 @@
         <span class="credits" id="credit-count"></span>
         <button class="button button-quiet" id="buy-credits-button" type="button" hidden>Buy credits</button>
         <span class="account-email" id="account-email"></span>
-        <button class="button button-quiet" id="logout-button" type="button">Sign out</button>
+        <button class="button button-quiet" id="logout-button" type="button">Sign out everywhere</button>
       </div>
       <nav class="public-nav" id="public-nav" aria-label="Legal">
         <a href="/privacy">Privacy</a>
@@ -163,7 +163,16 @@
                     <label>Value axis<input id="y-label-input" type="text"></label>
                     <label>Unit<input id="y-unit-input" type="text"></label>
                   </div>
+                  <fieldset class="series-editor">
+                    <legend>Series names</legend>
+                    <div class="series-editor-list" id="series-editor-list"></div>
+                  </fieldset>
                   <div class="table-scroll"><table class="data-table" id="result-table"></table></div>
+                  <div class="editor-pagination" aria-label="Result value pages">
+                    <button class="text-button" id="editor-previous-page" type="button">Previous values</button>
+                    <span id="editor-page-summary"></span>
+                    <button class="text-button" id="editor-next-page" type="button">Next values</button>
+                  </div>
                   <div class="editor-actions">
                     <button class="button button-secondary" id="add-row-button" type="button">Add row</button>
                     <button class="button button-primary" type="submit">Save corrections</button>
@@ -187,6 +196,10 @@
         <label>Name<input id="api-key-name" value="Production integration" maxlength="80" required></label>
         <p class="dialog-note">The full key is shown once. Store it in a secret manager.</p>
         <pre id="api-key-output" hidden></pre>
+        <div class="key-secret-actions">
+          <button class="button button-secondary" id="copy-key-button" type="button" hidden>Copy once</button>
+          <button class="button button-quiet" id="dismiss-key-button" type="button" hidden>Dismiss secret</button>
+        </div>
         <button class="button button-primary" id="generate-key-button" type="submit">Generate key</button>
         <div class="key-management">
           <h3>Existing keys</h3>

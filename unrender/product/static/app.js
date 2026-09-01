@@ -21,6 +21,7 @@ const chartTypes = [
 ];
 
 const byId = (id) => document.getElementById(id);
+const routeSegment = (value) => encodeURIComponent(String(value));
 
 function csrfToken() {
   const part = document.cookie.split("; ").find((item) => item.startsWith("unrender_csrf="));
@@ -269,7 +270,7 @@ async function prepareFile(file) {
 function updateUploadPreview() {
   if (!state.upload) return;
   const preview = byId("upload-preview");
-  preview.src = `/api/uploads/${encodeURIComponent(state.upload.id)}/pages/${Number(state.uploadPage)}`;
+  preview.src = `/api/uploads/${routeSegment(state.upload.id)}/pages/${Number(state.uploadPage)}`;
   byId("page-counter").textContent = `Page ${state.uploadPage + 1} of ${state.upload.page_count}`;
   byId("previous-page-button").disabled = state.uploadPage === 0;
   byId("next-page-button").disabled = state.uploadPage >= state.upload.page_count - 1;
@@ -375,7 +376,7 @@ async function openJob(jobId) {
   stopPolling();
   try {
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
-    state.currentJob = await api(`/api/jobs/${jobId}`);
+    state.currentJob = await api(`/api/jobs/${routeSegment(jobId)}`);
     if (previousStatus && previousStatus !== state.currentJob.status) await loadJobs();
     else renderJobList();
     renderJob();
@@ -404,7 +405,7 @@ function renderJob() {
   byId("job-title").textContent = job.source_name;
   byId("job-meta").textContent = `${job.progress_stage} · Attempt ${job.attempt} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
-  byId("job-source-image").src = `/api/jobs/${encodeURIComponent(job.id)}/source?v=${encodeURIComponent(job.updated_at)}`;
+  byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
   const error = byId("job-error");
   if (job.error) {
     error.textContent = job.error.message;
@@ -438,7 +439,7 @@ function renderJobActions() {
   if (["review", "approved"].includes(job.status)) {
     for (const format of ["CSV", "JSON", "XLSX"]) {
       actions.append(actionButton(`Export ${format}`, "button-secondary", () => {
-        window.location.assign(`/api/jobs/${encodeURIComponent(job.id)}/export/${format.toLowerCase()}`);
+        window.location.assign(`/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format.toLowerCase())}`);
       }));
     }
     actions.append(actionButton("Reprocess", "button-quiet", () => jobMutation("reprocess")));
@@ -455,7 +456,7 @@ async function jobMutation(action) {
   const job = state.currentJob;
   if (!job) return;
   try {
-    state.currentJob = await api(`/api/jobs/${job.id}/${action}`, { method: "POST" });
+    state.currentJob = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, { method: "POST" });
     await refreshAccount();
     await loadJobs();
     renderJob();
@@ -472,7 +473,7 @@ async function deleteCurrentJob() {
   const job = state.currentJob;
   if (!job || !window.confirm("Delete this source, result, and audit trail? This cannot be undone.")) return;
   try {
-    await api(`/api/jobs/${job.id}`, { method: "DELETE" });
+    await api(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
     state.currentJob = null;
     await loadJobs();
     if (state.jobs.length) await openJob(state.jobs[0].id);
@@ -648,7 +649,7 @@ async function saveCorrections(event) {
   event.preventDefault();
   try {
     const result = buildEditedResult();
-    state.currentJob = await api(`/api/jobs/${state.currentJob.id}/result`, {
+    state.currentJob = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/result`, {
       method: "PATCH", body: { result },
     });
     await loadJobs();
@@ -667,7 +668,7 @@ async function toggleAudit() {
     return;
   }
   try {
-    const payload = await api(`/api/jobs/${state.currentJob.id}/audit`);
+    const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/audit`);
     list.replaceChildren(...payload.items.map((item) => {
       const entry = document.createElement("li");
       const title = document.createElement("strong");
@@ -734,7 +735,7 @@ async function loadApiKeys() {
 
 async function revokeApiKey(keyId) {
   try {
-    await api(`/api/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+    await api(`/api/keys/${routeSegment(keyId)}`, { method: "DELETE" });
     await loadApiKeys();
     showToast("API key revoked");
   } catch (error) {

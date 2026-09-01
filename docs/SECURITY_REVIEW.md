@@ -34,7 +34,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 
 - Rule ID: JS-URL-001
 - Severity: Medium
-- Location: `unrender/product/web.py:109-124` and `:463-493`; `unrender/product/static/app.js:760-774`, `buyCredits`
+- Location: `unrender/product/web.py:109-124` and `:463-493`; `unrender/product/static/app.js:761-775`, `buyCredits`
 - Evidence: the earlier browser code assigned `session.url` directly to `window.location`.
 - Impact: an unexpected or compromised provider response could navigate a signed-in user to a phishing destination.
 - Fix: require HTTPS and the exact `checkout.stripe.com` hostname on the server and again before browser navigation. A regression test rejects an attacker origin.
@@ -45,7 +45,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 
 - Rule ID: FASTAPI-AUTHZ-001
 - Severity: Medium
-- Location: `unrender/product/service.py:818-869`; `unrender/product/web.py:451-461`; `unrender/product/static/app.js:688-758`
+- Location: `unrender/product/service.py:818-869`; `unrender/product/web.py:451-461`; `unrender/product/static/app.js:689-759`
 - Evidence: keys were hashed and `revoked_at` existed in schema, but the product exposed creation only.
 - Impact: a leaked integration key could not be invalidated by its owner without direct database access.
 - Fix: add tenant-scoped list and idempotent revoke operations, audit revocations, reveal neither key hash nor secret, and test that a revoked key immediately receives HTTP 401.
@@ -89,7 +89,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 
 - Rule ID: JS-URL-002
 - Severity: Low
-- Location: `unrender/product/static/app.js:269-277`, `:400-408`, and `:427-445`
+- Location: `unrender/product/static/app.js:24`, `routeSegment`; route uses at `:273`, `:379`, `:408`, `:442`, `:459`, `:476`, `:652`, `:671`, and `:738`
 - Evidence: server-issued job/upload identifiers were interpolated directly into URL paths.
 - Impact: current IDs are generated UUIDs, so no exploit was present; future changes to identifier provenance could make path interpretation surprising.
 - Fix: encode each dynamic identifier before assigning a URL-bearing property.

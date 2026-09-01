@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -33,32 +32,32 @@ MULTI_SERIES_TYPES = frozenset({"grouped_bar", "stacked_bar", "multi_line"})
 class Axis(BaseModel):
     """An axis label split from its unit (e.g. label="Revenue", unit="USD")."""
 
-    label: Optional[str] = None
-    unit: Optional[str] = None
+    label: str | None = None
+    unit: str | None = None
 
 
 class Point(BaseModel):
     """One (x, y) pair. x is a category string or a numeric position."""
 
-    x: Union[str, float]
+    x: str | float
     y: float
 
 
 class Series(BaseModel):
     """One data series — a single bar/line set, or one pie's slices."""
 
-    name: Optional[str] = None
-    points: List[Point] = Field(default_factory=list)
+    name: str | None = None
+    points: list[Point] = Field(default_factory=list)
 
 
 class ChartData(BaseModel):
     """The full structured contents of one chart."""
 
     chart_type: ChartType
-    title: Optional[str] = None
+    title: str | None = None
     x_axis: Axis = Field(default_factory=Axis)
     y_axis: Axis = Field(default_factory=Axis)
-    series: List[Series] = Field(default_factory=list)
+    series: list[Series] = Field(default_factory=list)
 
 
 def canonical_json(data: ChartData) -> str:
@@ -93,7 +92,7 @@ def data_table_signature(data: ChartData) -> str:
     across train/val/test (audit finding G — the generator splits on image id, so
     this is the table-level guard that catches a re-rendered duplicate).
     """
-    payload = [data.chart_type]
+    payload: list[object] = [data.chart_type]
     for s in data.series:
         pts = sorted((x_key(p.x), round(float(p.y), 6)) for p in s.points)
         payload.append([s.name or "", pts])

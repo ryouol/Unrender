@@ -6,6 +6,8 @@ import hashlib
 import io
 import os
 import shutil
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +33,8 @@ class Storage:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.root = settings.storage_dir
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.root, 0o700)
 
     def inspect(self, content: bytes) -> UploadInspection:
         if not content:
@@ -79,7 +82,8 @@ class Storage:
 
     def save_upload(self, *, user_id: str, upload_id: str, content: bytes) -> Path:
         directory = self.root / "uploads" / user_id
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(directory, 0o700)
         destination = directory / f"{upload_id}.source"
         temporary = destination.with_suffix(".tmp")
         temporary.write_bytes(content)
@@ -89,7 +93,8 @@ class Storage:
 
     def copy_to_job(self, *, user_id: str, job_id: str, source: Path) -> Path:
         directory = self.root / "jobs" / user_id
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(directory, 0o700)
         destination = directory / f"{job_id}.source"
         temporary = destination.with_suffix(".tmp")
         shutil.copyfile(source, temporary)
@@ -155,3 +160,30 @@ class Storage:
         if root not in candidate.parents:
             raise ValueError("Refusing to delete a path outside product storage")
         candidate.unlink(missing_ok=True)
+
+    def object_paths(self) -> list[Path]:
+        """List only product-managed source objects for reconciliation."""
+
+        paths: list[Path] = []
+        for namespace in ("uploads", "jobs"):
+            directory = self.root / namespace
+            if directory.exists():
+                paths.extend(path for path in directory.rglob("*") if path.is_file())
+        return paths
+
+    def ready(self) -> bool:
+        """Verify the configured volume is writable without touching customer objects."""
+
+        probe: Path | None = None
+        try:
+            descriptor, raw_path = tempfile.mkstemp(prefix=".health-", dir=self.root)
+            os.close(descriptor)
+            probe = Path(raw_path)
+            os.chmod(probe, 0o600)
+            probe.unlink()
+            return True
+        except OSError:
+            if probe is not None:
+                with suppress(OSError):
+                    probe.unlink(missing_ok=True)
+            return False

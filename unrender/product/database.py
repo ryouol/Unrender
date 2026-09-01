@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 
 
 SCHEMA = """
@@ -19,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    account_kind TEXT NOT NULL DEFAULT 'customer'
+        CHECK (account_kind IN ('customer','demo')),
     credit_balance INTEGER NOT NULL DEFAULT 0 CHECK (credit_balance >= 0),
     created_at TEXT NOT NULL
 );
@@ -53,6 +56,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     source_mime TEXT NOT NULL,
     source_path TEXT NOT NULL,
     source_sha256 TEXT NOT NULL,
+    source_byte_size INTEGER NOT NULL DEFAULT 0 CHECK (source_byte_size >= 0),
     page_index INTEGER NOT NULL DEFAULT 0,
     crop_json TEXT,
     status TEXT NOT NULL CHECK (
@@ -60,6 +64,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     ),
     progress_stage TEXT NOT NULL,
     attempt INTEGER NOT NULL DEFAULT 1,
+    recovery_count INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0),
     cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1)),
     reservation_active INTEGER NOT NULL DEFAULT 1 CHECK (reservation_active IN (0,1)),
     extractor TEXT,
@@ -133,6 +138,70 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     request_count INTEGER NOT NULL,
     PRIMARY KEY(bucket_key, window_start)
 );
+
+CREATE TABLE IF NOT EXISTS pending_deletions (
+    storage_path TEXT PRIMARY KEY,
+    user_id TEXT,
+    byte_size INTEGER NOT NULL DEFAULT 0 CHECK (byte_size >= 0),
+    reason TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    response_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY(user_id, idempotency_key)
+);
+"""
+
+
+MIGRATE_V1_TO_V2 = """
+ALTER TABLE users ADD COLUMN account_kind TEXT NOT NULL DEFAULT 'customer'
+    CHECK (account_kind IN ('customer','demo'));
+ALTER TABLE jobs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0
+    CHECK (recovery_count >= 0);
+CREATE TABLE IF NOT EXISTS pending_deletions (
+    storage_path TEXT PRIMARY KEY,
+    user_id TEXT,
+    byte_size INTEGER NOT NULL DEFAULT 0 CHECK (byte_size >= 0),
+    reason TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+UPDATE schema_meta SET version=2;
+"""
+
+
+MIGRATE_V2_TO_V3 = """
+ALTER TABLE jobs ADD COLUMN source_byte_size INTEGER NOT NULL DEFAULT 0
+    CHECK (source_byte_size >= 0);
+UPDATE jobs SET source_byte_size=COALESCE(
+    (SELECT uploads.byte_size FROM uploads WHERE uploads.id=jobs.upload_id), 0
+);
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    response_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY(user_id, idempotency_key)
+);
+UPDATE schema_meta SET version=3;
+"""
+
+
+MIGRATE_V3_TO_V4 = """
+UPDATE schema_meta SET version=4;
 """
 
 
@@ -141,23 +210,59 @@ class Database:
         self.path = path
 
     def initialize(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.path.parent, 0o700)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
-            row = conn.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
-            if row is None:
-                conn.execute("INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,))
-            elif row["version"] != SCHEMA_VERSION:
+            while True:
+                row = conn.execute("SELECT version FROM schema_meta LIMIT 1").fetchone()
+                if row is None:
+                    conn.execute("INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,))
+                    break
+                if row["version"] == 1:
+                    conn.executescript(MIGRATE_V1_TO_V2)
+                    continue
+                if row["version"] == 2:
+                    conn.executescript(MIGRATE_V2_TO_V3)
+                    continue
+                if row["version"] == 3:
+                    columns = {
+                        column["name"]
+                        for column in conn.execute("PRAGMA table_info(pending_deletions)")
+                    }
+                    if "user_id" not in columns:
+                        conn.execute("ALTER TABLE pending_deletions ADD COLUMN user_id TEXT")
+                    if "byte_size" not in columns:
+                        conn.execute(
+                            "ALTER TABLE pending_deletions ADD COLUMN byte_size INTEGER "
+                            "NOT NULL DEFAULT 0 CHECK (byte_size >= 0)"
+                        )
+                    conn.executescript(MIGRATE_V3_TO_V4)
+                    continue
+                if row["version"] == SCHEMA_VERSION:
+                    break
                 raise RuntimeError(
                     f"Database schema {row['version']} is not supported; expected {SCHEMA_VERSION}"
                 )
 
     def connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.path.parent, 0o700)
+        if not self.path.exists():
+            try:
+                descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(descriptor)
         conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 10000")
         conn.execute("PRAGMA journal_mode = WAL")
+        for candidate in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm")):
+            if candidate.exists():
+                os.chmod(candidate, 0o600)
         return conn
 
     @contextmanager

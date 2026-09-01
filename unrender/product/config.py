@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_PROVIDER_RELEASE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -33,6 +34,7 @@ class Settings:
     base_url: str = "http://127.0.0.1:8000"
     extractor_backend: str = "replay"
     worker_enabled: bool = True
+    max_recovery_attempts: int = 1
     allow_registration: bool = True
     seed_demo_account: bool = True
     session_ttl_hours: int = 24 * 7
@@ -41,11 +43,15 @@ class Settings:
     max_upload_bytes: int = 20 * 1024 * 1024
     max_pdf_pages: int = 25
     max_image_pixels: int = 50_000_000
+    max_user_storage_bytes: int = 250 * 1024 * 1024
+    max_unattached_uploads: int = 5
+    max_upload_bytes_per_minute: int = 40 * 1024 * 1024
     rate_limit_per_minute: int = 120
     modal_app_name: str = "unrender"
     modal_function_name: str = "infer-one"
     modal_model_path: str = "runs/qwen3vl4b-table-fair/merged"
     modal_model_revision: str = ""
+    modal_provider_release: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_price_id: str = ""
@@ -93,6 +99,8 @@ class Settings:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
             if self.allow_registration:
                 raise ValueError("UNRENDER_ALLOW_REGISTRATION must be false in production")
+            if not self.worker_enabled:
+                raise ValueError("UNRENDER_WORKER_ENABLED must be true in production")
             if not _MODEL_REPOSITORY.fullmatch(self.modal_model_path):
                 raise ValueError(
                     "UNRENDER_MODAL_MODEL must be an immutable model repository in production"
@@ -101,14 +109,25 @@ class Settings:
                 raise ValueError(
                     "UNRENDER_MODAL_REVISION must be a full 40-character commit in production"
                 )
+            if not _PROVIDER_RELEASE.fullmatch(self.modal_provider_release.casefold()):
+                raise ValueError(
+                    "UNRENDER_MODAL_PROVIDER_RELEASE must be a 64-character release digest "
+                    "in production"
+                )
         if self.max_upload_bytes <= 0 or self.max_pdf_pages <= 0:
             raise ValueError("Upload limits must be positive")
         if self.max_image_pixels <= 0 or self.rate_limit_per_minute <= 0:
             raise ValueError("Image and request limits must be positive")
+        if self.max_user_storage_bytes < self.max_upload_bytes:
+            raise ValueError("UNRENDER_MAX_USER_STORAGE_BYTES must allow at least one upload")
+        if self.max_unattached_uploads <= 0 or self.max_upload_bytes_per_minute <= 0:
+            raise ValueError("Tenant upload limits must be positive")
         if self.session_ttl_hours <= 0 or self.upload_ttl_hours <= 0 or self.retention_days <= 0:
             raise ValueError("Session, upload, and retention periods must be positive")
         if self.credit_pack_size <= 0 or self.initial_credits < 0:
             raise ValueError("Credit values must not be negative")
+        if not 0 <= self.max_recovery_attempts <= 10:
+            raise ValueError("UNRENDER_MAX_RECOVERY_ATTEMPTS must be between 0 and 10")
         stripe_values = (
             self.stripe_secret_key,
             self.stripe_webhook_secret,
@@ -132,6 +151,7 @@ class Settings:
             base_url=os.getenv("UNRENDER_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
             extractor_backend=os.getenv("UNRENDER_EXTRACTOR", "replay").strip().lower(),
             worker_enabled=_bool("UNRENDER_WORKER_ENABLED", True),
+            max_recovery_attempts=_int("UNRENDER_MAX_RECOVERY_ATTEMPTS", 1),
             allow_registration=_bool("UNRENDER_ALLOW_REGISTRATION", True),
             seed_demo_account=_bool("UNRENDER_SEED_DEMO", True),
             session_ttl_hours=_int("UNRENDER_SESSION_TTL_HOURS", 24 * 7),
@@ -140,11 +160,17 @@ class Settings:
             max_upload_bytes=_int("UNRENDER_MAX_UPLOAD_BYTES", 20 * 1024 * 1024),
             max_pdf_pages=_int("UNRENDER_MAX_PDF_PAGES", 25),
             max_image_pixels=_int("UNRENDER_MAX_IMAGE_PIXELS", 50_000_000),
+            max_user_storage_bytes=_int("UNRENDER_MAX_USER_STORAGE_BYTES", 250 * 1024 * 1024),
+            max_unattached_uploads=_int("UNRENDER_MAX_UNATTACHED_UPLOADS", 5),
+            max_upload_bytes_per_minute=_int(
+                "UNRENDER_MAX_UPLOAD_BYTES_PER_MINUTE", 40 * 1024 * 1024
+            ),
             rate_limit_per_minute=_int("UNRENDER_RATE_LIMIT_PER_MINUTE", 120),
             modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer-one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),
             modal_model_revision=os.getenv("UNRENDER_MODAL_REVISION", ""),
+            modal_provider_release=os.getenv("UNRENDER_MODAL_PROVIDER_RELEASE", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
             stripe_price_id=os.getenv("STRIPE_PRICE_ID", ""),

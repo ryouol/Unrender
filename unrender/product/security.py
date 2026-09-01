@@ -11,7 +11,7 @@ import secrets
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _SCRYPT_N = 2**14
 _SCRYPT_R = 8
-_SCRYPT_P = 1
+_SCRYPT_P = 5
 
 
 def normalize_email(value: str) -> str:
@@ -50,6 +50,19 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+
+def password_needs_rehash(encoded: str) -> bool:
+    try:
+        algorithm, n, r, p, *_ = encoded.split("$", 5)
+        return (
+            algorithm != "scrypt"
+            or int(n) != _SCRYPT_N
+            or int(r) != _SCRYPT_R
+            or int(p) != _SCRYPT_P
+        )
+    except (ValueError, TypeError):
+        return True
 
 
 def random_token(size: int = 32) -> str:

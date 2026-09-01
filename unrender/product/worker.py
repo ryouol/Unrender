@@ -30,6 +30,10 @@ class JobWorker:
         if self._thread:
             self._thread.join(timeout=timeout)
 
+    @property
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
     def _run(self) -> None:
         next_cleanup = 0.0
         while not self._stop.is_set():

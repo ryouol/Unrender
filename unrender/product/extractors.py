@@ -7,6 +7,7 @@ and calls the existing, evaluated ``infer_one`` function.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import json
 from dataclasses import dataclass
@@ -94,6 +95,13 @@ class ModalExtractor:
                 "provider_unavailable",
                 "The extraction worker could not reach the configured inference provider.",
             ) from exc
+        expected_release = self.settings.modal_provider_release
+        actual_release = str(payload.get("provider_release", ""))
+        if expected_release and not hmac.compare_digest(actual_release, expected_release):
+            raise ExtractionError(
+                "provider_release_mismatch",
+                "The inference provider release did not match the approved deployment.",
+            )
         if not payload.get("json"):
             raise ExtractionError(
                 "model_output_invalid",
@@ -105,15 +113,18 @@ class ModalExtractor:
             raise ExtractionError(
                 "model_output_invalid", "The model returned an unsupported chart structure."
             ) from exc
+        model_version = (
+            f"{self.settings.modal_model_path}@{self.settings.modal_model_revision}"
+            if self.settings.modal_model_revision
+            else self.settings.modal_model_path
+        )
+        if actual_release:
+            model_version += f"+provider:{actual_release[:12]}"
         return ExtractionOutput(
             chart=chart,
             raw=str(payload.get("raw", "")),
             extractor="modal",
-            model_version=(
-                f"{self.settings.modal_model_path}@{self.settings.modal_model_revision}"
-                if self.settings.modal_model_revision
-                else self.settings.modal_model_path
-            ),
+            model_version=model_version,
         )
 
 

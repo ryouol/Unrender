@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -24,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from unrender.product.config import Settings
 from unrender.product.database import Database
@@ -35,6 +37,63 @@ from unrender.product.worker import JobWorker
 logger = logging.getLogger("unrender.web")
 SESSION_COOKIE = "unrender_session"
 CSRF_COOKIE = "unrender_csrf"
+
+
+class BodyLimitMiddleware:
+    """Bound streamed and chunked request bodies before framework parsing/spooling."""
+
+    def __init__(self, app: ASGIApp, *, upload_limit: int):
+        self.app = app
+        self.upload_limit = upload_limit
+
+    def _limit(self, path: str) -> int:
+        if path in {"/api/uploads", "/api/v1/extractions"}:
+            return self.upload_limit + 1024 * 1024
+        if path == "/api/billing/webhook":
+            return 1024 * 1024
+        return 256 * 1024
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = self._limit(str(scope.get("path", "")))
+        total = 0
+        buffered: list[Message] = []
+        while True:
+            message = await receive()
+            buffered.append(message)
+            if message["type"] == "http.request":
+                total += len(message.get("body", b""))
+                if total > limit:
+                    response = JSONResponse(
+                        {
+                            "error": {
+                                "code": "request_too_large",
+                                "message": "Request exceeds the configured size limit",
+                            }
+                        },
+                        status_code=413,
+                        headers={"Connection": "close"},
+                    )
+                    await response(scope, receive, send)
+                    return
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                break
+
+        index = 0
+
+        async def replay_receive() -> Message:
+            nonlocal index
+            if index < len(buffered):
+                message = buffered[index]
+                index += 1
+                return message
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
 
 class StrictRequest(BaseModel):
@@ -125,6 +184,7 @@ def _validated_checkout_url(value: str | None) -> str:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    os.umask(0o077)
     settings = settings or Settings.from_env()
     settings.validate()
     static_dir = Path(__file__).with_name("static")
@@ -164,6 +224,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
+    app.add_middleware(BodyLimitMiddleware, upload_limit=settings.max_upload_bytes)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     def secure_response(response: Response, request: Request) -> Response:
@@ -213,10 +274,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request,
                 )
         client = request.client.host if request.client else "unknown"
-        bucket = hashlib.sha256(client.encode("utf-8")).hexdigest()[:24]
+        credential = request.cookies.get(SESSION_COOKIE) or request.headers.get("authorization", "")
+        principal = credential if credential else f"ip:{client}"
+        bucket = hashlib.sha256(principal.encode("utf-8")).hexdigest()[:24]
+        path_parts = request.url.path.strip("/").split("/")
+        is_job_status = (
+            request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
+        )
+        rate_group = "poll" if is_job_status else "request"
+        rate_limit = (
+            max(240, settings.rate_limit_per_minute * 2)
+            if rate_group == "poll" and credential
+            else settings.rate_limit_per_minute
+        )
         if request.url.path not in {"/health/live", "/health/ready"}:
             try:
-                allowed = service.rate_limit(bucket)
+                allowed = service.rate_limit(f"{bucket}:{rate_group}", limit=rate_limit)
             except Exception:
                 allowed = False
             if not allowed:
@@ -313,15 +386,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def terms():
         return FileResponse(static_dir / "terms.html")
 
+    @app.get("/api/public-config")
+    def public_config():
+        return {
+            "registration_open": settings.allow_registration,
+            "sample_available": settings.seed_demo_account,
+        }
+
     @app.get("/health/live")
     def live():
         return {"status": "ok"}
 
     @app.get("/health/ready")
     def ready():
-        if not database.ready() or not settings.storage_dir.exists():
+        worker_ready = not settings.worker_enabled or worker.is_running
+        if not database.ready() or not storage.ready() or not worker_ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)
-        return {"status": "ready", "extractor": settings.extractor_backend}
+        return {
+            "status": "ready",
+            "extractor": settings.extractor_backend,
+            "worker": "running" if worker.is_running else "disabled",
+        }
 
     @app.post("/api/auth/register", status_code=201)
     def register(payload: Credentials, response: Response):
@@ -360,6 +445,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         file: Annotated[UploadFile, File()],
         user: Any = csrf_user_dependency,
     ):
+        service.require_customer_account(user["id"], "customer uploads")
         content = await file.read(settings.max_upload_bytes + 1)
         return service.prepare_upload(
             user_id=user["id"], filename=file.filename or "chart", content=content
@@ -407,6 +493,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def job_audit(job_id: str, user: Any = current_user_dependency):
         return {"items": service.job_audit(user_id=user["id"], job_id=job_id)}
 
+    @app.get("/api/jobs/{job_id}/versions")
+    def job_versions(job_id: str, user: Any = current_user_dependency):
+        return {"items": service.job_versions(user_id=user["id"], job_id=job_id)}
+
     @app.patch("/api/jobs/{job_id}/result")
     def save_result(
         job_id: str,
@@ -443,10 +533,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @app.delete("/api/jobs/{job_id}", status_code=204)
+    @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str, user: Any = csrf_user_dependency):
-        service.delete_job(user_id=user["id"], job_id=job_id)
-        return Response(status_code=204)
+        deleted = service.delete_job(user_id=user["id"], job_id=job_id)
+        if deleted:
+            return Response(status_code=204)
+        return JSONResponse({"status": "deletion_queued"}, status_code=202)
 
     @app.post("/api/keys", status_code=201)
     def create_key(payload: ApiKeyCreate, user: Any = csrf_user_dependency):
@@ -462,6 +554,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/billing/checkout", status_code=201)
     def create_checkout(user: Any = csrf_user_dependency):
+        service.require_customer_account(user["id"], "test checkout")
         if not settings.billing_configured:
             raise ProductError(
                 "billing_unavailable", "Test-mode credit purchases are not configured", 503
@@ -541,14 +634,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_extraction(
         file: Annotated[UploadFile, File()],
         page_index: int = 0,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         user: Any = api_user_dependency,
     ):
         content = await file.read(settings.max_upload_bytes + 1)
-        upload = service.prepare_upload(
-            user_id=user["id"], filename=file.filename or "chart", content=content
-        )
-        return service.create_job(
-            user_id=user["id"], upload_id=upload["id"], page_index=page_index, crop=None
+        return service.submit_api_extraction(
+            user_id=user["id"],
+            filename=file.filename or "chart",
+            content=content,
+            page_index=page_index,
+            idempotency_key=idempotency_key or "",
         )
 
     @app.get("/api/v1/extractions/{job_id}")

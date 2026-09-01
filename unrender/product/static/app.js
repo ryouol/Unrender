@@ -7,7 +7,9 @@ const state = {
   crop: null,
   cropStart: null,
   pollTimer: null,
+  pollDelay: 1500,
   editorRows: [],
+  publicConfig: { registration_open: false, sample_available: false },
 };
 
 const chartTypes = [
@@ -109,17 +111,33 @@ function showPublic() {
   setHidden("public-nav", false);
 }
 
+function applyPublicConfig() {
+  const registrationOpen = state.publicConfig.registration_open;
+  byId("register-tab").hidden = !registrationOpen;
+  byId("open-sample-button").hidden = !state.publicConfig.sample_available;
+  byId("show-register-button").textContent = registrationOpen
+    ? "Create a workspace"
+    : "Sign in to a workspace";
+  if (!registrationOpen && byId("login-form").hidden) switchAuth("login");
+}
+
 function showWorkspace() {
   setHidden("marketing-view", true);
   setHidden("workspace-view", false);
   setHidden("account-bar", false);
   setHidden("public-nav", true);
-  byId("account-email").textContent = state.account.email;
-  byId("credit-count").textContent = `${state.account.credits} credit${state.account.credits === 1 ? "" : "s"}`;
+  const isolatedDemo = state.account.demo_account;
+  byId("account-email").textContent = isolatedDemo ? "Ephemeral sample" : state.account.email;
+  byId("credit-count").textContent = isolatedDemo
+    ? "Isolated demo"
+    : `${state.account.credits} credit${state.account.credits === 1 ? "" : "s"}`;
   const buyButton = byId("buy-credits-button");
-  buyButton.hidden = !state.account.billing_configured;
+  buyButton.hidden = isolatedDemo || !state.account.billing_configured;
   buyButton.textContent = `Buy ${state.account.credit_pack_size} credits`;
   byId("api-docs-link").hidden = !state.account.api_docs_available;
+  byId("new-upload-button").hidden = isolatedDemo;
+  byId("empty-upload-button").hidden = isolatedDemo;
+  byId("create-key-button").hidden = isolatedDemo;
 }
 
 function showMainView(name) {
@@ -134,6 +152,12 @@ async function refreshAccount() {
 }
 
 async function boot() {
+  try {
+    state.publicConfig = await api("/api/public-config");
+  } catch (_) {
+    state.publicConfig = { registration_open: false, sample_available: false };
+  }
+  applyPublicConfig();
   try {
     await refreshAccount();
     await loadJobs();
@@ -289,6 +313,47 @@ function clearCrop() {
   const selection = byId("crop-selection");
   selection.hidden = true;
   selection.removeAttribute("style");
+  for (const [id, value] of [
+    ["crop-left-input", 0], ["crop-top-input", 0],
+    ["crop-width-input", 100], ["crop-height-input", 100],
+  ]) byId(id).value = String(value);
+}
+
+function renderCropSelection() {
+  const selection = byId("crop-selection");
+  if (!state.crop) {
+    selection.hidden = true;
+    return;
+  }
+  selection.hidden = false;
+  selection.style.left = `${state.crop.x * 100}%`;
+  selection.style.top = `${state.crop.y * 100}%`;
+  selection.style.width = `${state.crop.width * 100}%`;
+  selection.style.height = `${state.crop.height * 100}%`;
+  byId("crop-left-input").value = String(Math.round(state.crop.x * 1000) / 10);
+  byId("crop-top-input").value = String(Math.round(state.crop.y * 1000) / 10);
+  byId("crop-width-input").value = String(Math.round(state.crop.width * 1000) / 10);
+  byId("crop-height-input").value = String(Math.round(state.crop.height * 1000) / 10);
+}
+
+function applyKeyboardCrop() {
+  const crop = {
+    x: Number(byId("crop-left-input").value) / 100,
+    y: Number(byId("crop-top-input").value) / 100,
+    width: Number(byId("crop-width-input").value) / 100,
+    height: Number(byId("crop-height-input").value) / 100,
+  };
+  if (!Object.values(crop).every(Number.isFinite)
+    || crop.x < 0 || crop.y < 0 || crop.width < 0.05 || crop.height < 0.05
+    || crop.x + crop.width > 1 || crop.y + crop.height > 1) {
+    showToast("Crop percentages must stay within the source");
+    return;
+  }
+  state.crop = crop.width === 1 && crop.height === 1 && crop.x === 0 && crop.y === 0
+    ? null
+    : crop;
+  if (state.crop) renderCropSelection();
+  else clearCrop();
 }
 
 function cropPoint(event) {
@@ -317,18 +382,13 @@ function updateCrop(event) {
   const top = Math.min(start.y, point.y);
   const width = Math.abs(start.x - point.x);
   const height = Math.abs(start.y - point.y);
-  const selection = byId("crop-selection");
-  selection.hidden = false;
-  selection.style.left = `${left}px`;
-  selection.style.top = `${top}px`;
-  selection.style.width = `${width}px`;
-  selection.style.height = `${height}px`;
   state.crop = {
     x: left / point.rectangle.width,
     y: top / point.rectangle.height,
     width: width / point.rectangle.width,
     height: height / point.rectangle.height,
   };
+  renderCropSelection();
 }
 
 function finishCrop(event) {
@@ -375,17 +435,28 @@ async function runSample() {
 async function openJob(jobId) {
   stopPolling();
   try {
+    if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
     state.currentJob = await api(`/api/jobs/${routeSegment(jobId)}`);
-    if (previousStatus && previousStatus !== state.currentJob.status) await loadJobs();
+    if (previousStatus && previousStatus !== state.currentJob.status) {
+      state.pollDelay = 1500;
+      await Promise.all([loadJobs(), refreshAccount()]);
+    }
     else renderJobList();
     renderJob();
     showMainView("job-view");
     if (["queued", "running"].includes(state.currentJob.status)) {
-      state.pollTimer = window.setTimeout(() => openJob(jobId), 800);
+      state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
+      state.pollDelay = Math.min(4000, state.pollDelay + 500);
     }
   } catch (error) {
-    showToast(error.message);
+    if (error.status === 429 && state.currentJob?.id === jobId
+      && ["queued", "running"].includes(state.currentJob.status)) {
+      state.pollDelay = 5000;
+      state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
+    } else {
+      showToast(error.message);
+    }
   }
 }
 
@@ -422,7 +493,9 @@ function renderJob() {
   if (resultReady) renderEditor(job.result);
   renderJobActions();
   setHidden("audit-list", true);
+  setHidden("version-list", true);
   byId("toggle-audit-button").textContent = "Show activity";
+  byId("toggle-versions-button").textContent = "Show versions";
 }
 
 function renderJobActions() {
@@ -461,7 +534,8 @@ async function jobMutation(action) {
     await loadJobs();
     renderJob();
     if (["queued", "running"].includes(state.currentJob.status)) {
-      state.pollTimer = window.setTimeout(() => openJob(job.id), 700);
+      state.pollDelay = 1500;
+      state.pollTimer = window.setTimeout(() => openJob(job.id), state.pollDelay);
     }
     showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
   } catch (error) {
@@ -473,12 +547,14 @@ async function deleteCurrentJob() {
   const job = state.currentJob;
   if (!job || !window.confirm("Delete this source, result, and audit trail? This cannot be undone.")) return;
   try {
-    await api(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
+    const deletion = await api(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
     state.currentJob = null;
     await loadJobs();
     if (state.jobs.length) await openJob(state.jobs[0].id);
     else showMainView("empty-view");
-    showToast("Extraction deleted");
+    showToast(deletion?.status === "deletion_queued"
+      ? "Extraction hidden; source deletion will retry automatically"
+      : "Extraction deleted");
   } catch (error) {
     showToast(error.message);
   }
@@ -486,21 +562,32 @@ async function deleteCurrentJob() {
 
 function editorRows(result) {
   const series = result.series?.length ? result.series : [{ name: null, points: [] }];
-  const keys = [];
-  const seen = new Set();
-  for (const item of series) {
-    for (const point of item.points || []) {
-      const key = String(point.x);
-      if (!seen.has(key)) { seen.add(key); keys.push(key); }
+  const rows = [];
+  const pointCount = Math.max(0, ...series.map((item) => item.points?.length || 0));
+  for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
+    const groups = [];
+    series.forEach((item, seriesIndex) => {
+      const point = item.points?.[pointIndex];
+      if (!point) return;
+      const xType = typeof point.x === "number" ? "number" : "string";
+      const identity = `${xType}:${JSON.stringify(point.x)}`;
+      let group = groups.find((candidate) => candidate.identity === identity);
+      if (!group) {
+        group = {
+          identity,
+          x: String(point.x),
+          xType,
+          values: series.map(() => ""),
+        };
+        groups.push(group);
+      }
+      group.values[seriesIndex] = String(point.y);
+    });
+    for (const { identity: _, ...row } of groups) {
+      rows.push(row);
     }
   }
-  return keys.map((x) => ({
-    x,
-    values: series.map((item) => {
-      const point = (item.points || []).find((candidate) => String(candidate.x) === x);
-      return point ? String(point.y) : "";
-    }),
-  }));
+  return rows;
 }
 
 function renderEditor(result) {
@@ -532,7 +619,8 @@ function renderResultTable(series) {
     const th = document.createElement("th");
     th.scope = "col";
     const input = document.createElement("input");
-    input.value = item.name || (series.length === 1 ? "Value" : `Series ${index + 1}`);
+    input.value = item.name || "";
+    input.placeholder = series.length === 1 ? "Value" : `Series ${index + 1}`;
     input.dataset.seriesName = String(index);
     input.setAttribute("aria-label", `Series ${index + 1} name`);
     th.append(input);
@@ -550,6 +638,7 @@ function renderResultTable(series) {
     const xCell = document.createElement("td");
     const xInput = document.createElement("input");
     xInput.value = item.x;
+    xInput.dataset.xType = item.xType || "string";
     xInput.dataset.row = String(rowIndex);
     xInput.dataset.kind = "x";
     xInput.setAttribute("aria-label", `Row ${rowIndex + 1} category`);
@@ -586,10 +675,10 @@ function renderResultTable(series) {
 }
 
 function seriesFromInputs(fallback) {
-  return fallback.map((item, index) => ({
-    ...item,
-    name: document.querySelector(`[data-series-name="${index}"]`)?.value || item.name,
-  }));
+  return fallback.map((item, index) => {
+    const input = document.querySelector(`[data-series-name="${index}"]`);
+    return { ...item, name: input ? input.value.trim() || null : item.name };
+  });
 }
 
 function collectEditorRows() {
@@ -599,6 +688,7 @@ function collectEditorRows() {
   const seriesCount = table.tHead.rows[0].cells.length - 2;
   state.editorRows = Array.from({ length: count }, (_, rowIndex) => ({
     x: table.querySelector(`[data-kind="x"][data-row="${rowIndex}"]`)?.value || "",
+    xType: table.querySelector(`[data-kind="x"][data-row="${rowIndex}"]`)?.dataset.xType || "string",
     values: Array.from({ length: seriesCount }, (_, seriesIndex) =>
       table.querySelector(`[data-kind="value"][data-row="${rowIndex}"][data-series="${seriesIndex}"]`)?.value || ""
     ),
@@ -608,14 +698,14 @@ function collectEditorRows() {
 function addEditorRow() {
   collectEditorRows();
   const series = state.currentJob.result.series?.length ? state.currentJob.result.series : [{ name: null, points: [] }];
-  state.editorRows.push({ x: "", values: series.map(() => "") });
+  state.editorRows.push({ x: "", xType: "string", values: series.map(() => "") });
   renderResultTable(seriesFromInputs(series));
   byId("result-table").tBodies[0].lastElementChild.querySelector("input").focus();
 }
 
-function coerceX(value) {
+function coerceX(value, xType) {
   const text = value.trim();
-  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return Number(text);
+  if (xType === "number" && /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return Number(text);
   return text;
 }
 
@@ -628,7 +718,7 @@ function buildEditedResult() {
     name,
     points: state.editorRows
       .filter((row) => row.x.trim() && row.values[seriesIndex] !== "")
-      .map((row) => ({ x: coerceX(row.x), y: Number(row.values[seriesIndex]) })),
+      .map((row) => ({ x: coerceX(row.x, row.xType), y: Number(row.values[seriesIndex]) })),
   }));
   return {
     chart_type: byId("chart-type-input").value,
@@ -681,6 +771,55 @@ async function toggleAudit() {
     }));
     list.hidden = false;
     byId("toggle-audit-button").textContent = "Hide activity";
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function restoreVersion(version) {
+  try {
+    state.currentJob = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/result`, {
+      method: "PATCH", body: { result: version.result },
+    });
+    await loadJobs();
+    renderJob();
+    showToast(`Version ${version.version} restored as a new correction`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function toggleVersions() {
+  const list = byId("version-list");
+  if (!list.hidden) {
+    list.hidden = true;
+    byId("toggle-versions-button").textContent = "Show versions";
+    return;
+  }
+  try {
+    const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/versions`);
+    list.replaceChildren(...payload.items.map((item) => {
+      const entry = document.createElement("li");
+      const title = document.createElement("strong");
+      title.textContent = `Version ${item.version} · ${item.source}`;
+      const time = document.createElement("time");
+      time.dateTime = item.created_at;
+      time.textContent = formatDate(item.created_at);
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "text-button";
+      restore.textContent = "Restore as new correction";
+      restore.addEventListener("click", () => restoreVersion(item));
+      entry.append(title, time, restore);
+      return entry;
+    }));
+    if (!payload.items.length) {
+      const empty = document.createElement("li");
+      empty.textContent = "No extracted result yet.";
+      list.append(empty);
+    }
+    list.hidden = false;
+    byId("toggle-versions-button").textContent = "Hide versions";
   } catch (error) {
     showToast(error.message);
   }
@@ -778,7 +917,7 @@ function bindEvents() {
   byId("login-tab").addEventListener("click", () => switchAuth("login"));
   byId("register-tab").addEventListener("click", () => switchAuth("register"));
   byId("show-register-button").addEventListener("click", () => {
-    switchAuth("register");
+    switchAuth(state.publicConfig.registration_open ? "register" : "login");
     byId("auth-title").scrollIntoView();
   });
   byId("login-form").addEventListener("submit", (event) => submitAuth(event, "login"));
@@ -797,6 +936,7 @@ function bindEvents() {
   byId("previous-page-button").addEventListener("click", () => changePage(-1));
   byId("next-page-button").addEventListener("click", () => changePage(1));
   byId("clear-crop-button").addEventListener("click", clearCrop);
+  byId("apply-crop-button").addEventListener("click", applyKeyboardCrop);
   byId("crop-stage").addEventListener("pointerdown", beginCrop);
   byId("crop-stage").addEventListener("pointermove", updateCrop);
   byId("crop-stage").addEventListener("pointerup", finishCrop);
@@ -805,6 +945,7 @@ function bindEvents() {
   byId("run-sample-button").addEventListener("click", runSample);
   byId("result-form").addEventListener("submit", saveCorrections);
   byId("add-row-button").addEventListener("click", addEditorRow);
+  byId("toggle-versions-button").addEventListener("click", toggleVersions);
   byId("toggle-audit-button").addEventListener("click", toggleAudit);
   byId("create-key-button").addEventListener("click", openKeyDialog);
   byId("close-key-dialog").addEventListener("click", () => byId("api-key-dialog").close());

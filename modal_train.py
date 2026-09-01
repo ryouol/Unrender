@@ -40,6 +40,11 @@ import modal
 
 app = modal.App("unrender")
 
+# Bump this reviewed contract identifier whenever provider code changes. The
+# returned release digest also covers installed inference package versions and
+# the exact extraction prompt, so dependency/image drift fails the web-app gate.
+INFER_PROVIDER_CONTRACT = "unrender-infer-one-v1"
+
 VOL = modal.Volume.from_name("unrender-vol", create_if_missing=True)
 V = "/vol"  # mount point; paths under it persist across runs
 
@@ -419,6 +424,9 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
     (greedy). Cold start loads the merged model (~1–2 min); the call itself is seconds.
     The `infer` entrypoint ships a local image's bytes here, so you can throw any chart
     at the fine-tuned model with one command."""
+    import hashlib
+    import importlib.metadata
+    import json
     import tempfile
 
     from unrender.eval import providers as _providers
@@ -426,6 +434,28 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
     from unrender.prompts import EXTRACTION_PROMPT
     from unrender.schema.json_to_csv import chart_to_csv
     from unrender.schema.validate import parse_chart_json
+
+    release_manifest = {
+        "contract": INFER_PROVIDER_CONTRACT,
+        "prompt_sha256": hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
+        "packages": {
+            package: importlib.metadata.version(package)
+            for package in (
+                "accelerate",
+                "bitsandbytes",
+                "datasets",
+                "peft",
+                "pydantic",
+                "torch",
+                "transformers",
+                "trl",
+                "unsloth",
+            )
+        },
+    }
+    provider_release = hashlib.sha256(
+        json.dumps(release_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
     _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
     _providers.HF_MODEL_CONFIG.clear()
@@ -437,8 +467,13 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
         f.flush()
         raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, _resolve_model(model_path))
     pred, errs = parse_chart_json(raw)
-    return {"raw": raw, "json": pred.model_dump() if pred else None,
-            "csv": chart_to_csv(pred) if pred else None, "parse_errors": errs}
+    return {
+        "raw": raw,
+        "json": pred.model_dump() if pred else None,
+        "csv": chart_to_csv(pred) if pred else None,
+        "parse_errors": errs,
+        "provider_release": provider_release,
+    }
 
 
 @app.function(

@@ -32,8 +32,8 @@
           <h1>Turn a chart into a table you can defend.</h1>
           <p class="lede">Upload an image or PDF. Check every extracted value beside the source. Correct it, approve it, and export the record.</p>
           <div class="hero-actions">
-            <button class="button button-primary" id="open-sample-button" type="button">Open the reviewed sample</button>
-            <button class="button button-secondary" id="show-register-button" type="button">Create a workspace</button>
+            <button class="button button-primary" id="open-sample-button" type="button" hidden>Open the reviewed sample</button>
+            <button class="button button-secondary" id="show-register-button" type="button">Sign in to a workspace</button>
           </div>
           <p class="evidence-note">The sample is a saved verification fixture. It exercises the real review and export workflow without using paid GPU inference.</p>
         </div>
@@ -42,13 +42,13 @@
           <figcaption>
             <span>Source stays visible</span>
             <span>Edits are versioned</span>
-            <span>Exports carry model and approval metadata</span>
+            <span>XLSX includes model and approval metadata</span>
           </figcaption>
         </figure>
         <section class="auth-panel" aria-labelledby="auth-title">
           <div class="auth-tabs" role="tablist" aria-label="Account action">
             <button id="login-tab" role="tab" aria-selected="true" aria-controls="login-form" type="button">Sign in</button>
-            <button id="register-tab" role="tab" aria-selected="false" aria-controls="register-form" type="button">Create account</button>
+            <button id="register-tab" role="tab" aria-selected="false" aria-controls="register-form" type="button" hidden>Create account</button>
           </div>
           <h2 id="auth-title">Continue to your workspace</h2>
           <form id="login-form">
@@ -116,6 +116,14 @@
                 <button class="text-button" id="clear-crop-button" type="button">Use whole page</button>
               </div>
               <p class="crop-instruction">If the page contains several charts, drag over the one you want. The original file is still retained.</p>
+              <fieldset class="crop-fields">
+                <legend>Keyboard crop (percent of source)</legend>
+                <label>Left<input id="crop-left-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Top<input id="crop-top-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Width<input id="crop-width-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <label>Height<input id="crop-height-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <button class="button button-secondary" id="apply-crop-button" type="button">Apply crop</button>
+              </fieldset>
               <div class="crop-stage" id="crop-stage">
                 <img id="upload-preview" alt="Selected upload page">
                 <div class="crop-selection" id="crop-selection" hidden></div>
@@ -165,7 +173,8 @@
               </section>
             </div>
             <section class="audit-panel" aria-labelledby="audit-heading">
-              <div class="pane-heading"><h3 id="audit-heading">Audit trail</h3><button class="text-button" id="toggle-audit-button" type="button">Show activity</button></div>
+              <div class="pane-heading"><h3 id="audit-heading">History &amp; audit</h3><div class="history-actions"><button class="text-button" id="toggle-versions-button" type="button">Show versions</button><button class="text-button" id="toggle-audit-button" type="button">Show activity</button></div></div>
+              <ol id="version-list" hidden></ol>
               <ol id="audit-list" hidden></ol>
             </section>
           </section>

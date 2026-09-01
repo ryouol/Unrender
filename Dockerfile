@@ -30,9 +30,13 @@ RUN groupadd --gid 10001 unrender \
 COPY requirements-app.lock ./
 RUN python -m pip install --no-cache-dir --require-hashes -r requirements-app.lock
 
-COPY --from=builder /dist/unrender-*.whl /tmp/unrender.whl
-RUN python -m pip install --no-cache-dir --no-deps /tmp/unrender.whl \
-    && rm /tmp/unrender.whl
+COPY --from=builder /dist/unrender-*.whl /tmp/unrender-wheel/
+RUN set -eu; \
+    set -- /tmp/unrender-wheel/unrender-*.whl; \
+    [ "$#" -eq 1 ]; \
+    [ -f "$1" ]; \
+    python -m pip install --no-cache-dir --no-deps "$1"; \
+    rm -r /tmp/unrender-wheel
 
 USER unrender
 EXPOSE 8000

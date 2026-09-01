@@ -4,7 +4,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /build
 
-COPY requirements-build.lock pyproject.toml README.md LICENSE ./
+COPY requirements-build.lock pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md ./
 RUN python -m pip install --no-cache-dir --require-hashes -r requirements-build.lock
 
 COPY unrender ./unrender

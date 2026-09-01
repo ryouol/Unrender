@@ -9,6 +9,9 @@ const state = {
   pollTimer: null,
   pollDelay: 1500,
   editorRows: [],
+  authEpoch: 0,
+  authController: new AbortController(),
+  objectUrls: new Set(),
   publicConfig: { registration_open: false, sample_available: false },
 };
 
@@ -25,12 +28,19 @@ const chartTypes = [
 const byId = (id) => document.getElementById(id);
 const routeSegment = (value) => encodeURIComponent(String(value));
 
+function staleAuthError(message = "A previous account request was discarded") {
+  const error = new Error(message);
+  error.code = "stale_auth_context";
+  return error;
+}
+
 function csrfToken() {
   const part = document.cookie.split("; ").find((item) => item.startsWith("unrender_csrf="));
   return part ? decodeURIComponent(part.split("=").slice(1).join("=")) : "";
 }
 
 async function api(path, options = {}) {
+  const epoch = options.authEpoch ?? state.authEpoch;
   const method = (options.method || "GET").toUpperCase();
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
@@ -42,17 +52,47 @@ async function api(path, options = {}) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
-  const response = await fetch(path, { ...options, method, headers, body });
+  const requestOptions = { ...options };
+  delete requestOptions.authEpoch;
+  let response;
+  try {
+    response = await fetch(path, {
+      ...requestOptions,
+      method,
+      headers,
+      body,
+      signal: requestOptions.signal || state.authController.signal,
+    });
+  } catch (error) {
+    if (epoch !== state.authEpoch || error?.name === "AbortError") {
+      throw staleAuthError();
+    }
+    throw error;
+  }
+  if (epoch !== state.authEpoch) {
+    throw staleAuthError();
+  }
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : null;
+  if (epoch !== state.authEpoch) {
+    throw staleAuthError("A previous account response was discarded");
+  }
   if (!response.ok) {
     const message = payload?.error?.message || `Request failed (${response.status})`;
     const error = new Error(message);
     error.code = payload?.error?.code || "request_failed";
     error.status = response.status;
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      showPublic();
+      throw staleAuthError("The authenticated session ended");
+    }
     throw error;
   }
   return payload;
+}
+
+function isStaleRequest(error) {
+  return error?.code === "stale_auth_context" || error?.name === "AbortError";
 }
 
 function setHidden(id, hidden) {
@@ -60,14 +100,16 @@ function setHidden(id, hidden) {
 }
 
 function showToast(message) {
+  if (isStaleRequest(message)) return;
   const toast = byId("toast");
-  toast.textContent = message;
+  toast.textContent = message?.message || String(message);
   toast.hidden = false;
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
 function showError(id, error) {
+  if (isStaleRequest(error)) return;
   const element = byId(id);
   element.textContent = error?.message || String(error);
   element.hidden = false;
@@ -101,10 +143,75 @@ function stopPolling() {
   state.pollTimer = null;
 }
 
-function showPublic() {
+function resetPrivateState() {
   stopPolling();
+  window.clearTimeout(showToast.timer);
+  state.authController.abort();
+  state.authController = new AbortController();
+  state.authEpoch += 1;
+  for (const url of state.objectUrls) URL.revokeObjectURL(url);
+  state.objectUrls.clear();
+  document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
   state.account = null;
+  state.jobs = [];
   state.currentJob = null;
+  state.upload = null;
+  state.uploadPage = 0;
+  state.crop = null;
+  state.cropStart = null;
+  state.editorRows = [];
+  state.pollDelay = 1500;
+  byId("job-list").replaceChildren();
+  byId("job-actions").replaceChildren();
+  byId("audit-list").replaceChildren();
+  byId("version-list").replaceChildren();
+  byId("result-table").replaceChildren();
+  byId("chart-type-input").replaceChildren();
+  byId("api-key-list").replaceChildren();
+  byId("api-key-output").textContent = "";
+  byId("api-key-output").hidden = true;
+  byId("api-key-form").reset();
+  byId("login-form").reset();
+  byId("register-form").reset();
+  byId("generate-key-button").hidden = false;
+  if (byId("api-key-dialog").open) byId("api-key-dialog").close();
+  for (const id of [
+    "job-status", "job-title", "job-meta", "source-page-label", "edit-state",
+    "page-counter", "credit-count", "account-email", "result-loading",
+  ]) {
+    byId(id).textContent = "";
+  }
+  for (const id of ["job-source-image", "upload-preview"]) byId(id).removeAttribute("src");
+  byId("file-input").value = "";
+  byId("result-form").reset();
+  byId("dropzone").removeAttribute("aria-busy");
+  for (const id of ["open-sample-button", "queue-job-button", "buy-credits-button"]) {
+    byId(id).disabled = false;
+  }
+  for (const [id, value] of [
+    ["crop-left-input", 0], ["crop-top-input", 0],
+    ["crop-width-input", 100], ["crop-height-input", 100],
+  ]) byId(id).value = String(value);
+  byId("crop-selection").hidden = true;
+  byId("crop-selection").removeAttribute("style");
+  byId("review-notice").hidden = true;
+  byId("result-loading").hidden = true;
+  byId("toggle-audit-button").textContent = "Show activity";
+  byId("toggle-versions-button").textContent = "Show versions";
+  byId("toast").textContent = "";
+  byId("toast").hidden = true;
+  for (const id of ["auth-error", "upload-error", "job-error"]) {
+    byId(id).textContent = "";
+    byId(id).hidden = true;
+  }
+  setHidden("result-form", true);
+  setHidden("page-review", true);
+  setHidden("audit-list", true);
+  setHidden("version-list", true);
+}
+
+function showPublic() {
+  resetPrivateState();
   setHidden("marketing-view", false);
   setHidden("workspace-view", true);
   setHidden("account-bar", true);
@@ -134,7 +241,6 @@ function showWorkspace() {
   const buyButton = byId("buy-credits-button");
   buyButton.hidden = isolatedDemo || !state.account.billing_configured;
   buyButton.textContent = `Buy ${state.account.credit_pack_size} credits`;
-  byId("api-docs-link").hidden = !state.account.api_docs_available;
   byId("new-upload-button").hidden = isolatedDemo;
   byId("empty-upload-button").hidden = isolatedDemo;
   byId("create-key-button").hidden = isolatedDemo;
@@ -185,10 +291,13 @@ async function submitAuth(event, mode) {
   clearError("auth-error");
   const form = event.currentTarget;
   const data = new FormData(form);
+  resetPrivateState();
+  const epoch = state.authEpoch;
   try {
     await api(`/api/auth/${mode}`, {
       method: "POST",
       body: { email: data.get("email"), password: data.get("password") },
+      authEpoch: epoch,
     });
     form.reset();
     await refreshAccount();
@@ -202,9 +311,11 @@ async function submitAuth(event, mode) {
 
 async function demoLoginAndRun() {
   const button = byId("open-sample-button");
+  resetPrivateState();
+  const epoch = state.authEpoch;
   button.disabled = true;
   try {
-    await api("/api/auth/demo", { method: "POST" });
+    await api("/api/auth/demo", { method: "POST", authEpoch: epoch });
     await refreshAccount();
     await loadJobs();
     const completed = state.jobs.find((job) =>
@@ -213,20 +324,30 @@ async function demoLoginAndRun() {
     if (completed) await openJob(completed.id);
     else await runSample();
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   } finally {
-    button.disabled = false;
+    if (epoch === state.authEpoch) button.disabled = false;
   }
 }
 
 async function logout() {
+  const epoch = state.authEpoch;
   try { await api("/api/auth/logout", { method: "POST" }); }
-  finally { showPublic(); }
+  finally {
+    if (epoch === state.authEpoch) showPublic();
+  }
 }
 
 async function loadJobs() {
-  const payload = await api("/api/jobs");
-  state.jobs = payload.items;
+  const jobs = [];
+  let cursor = null;
+  do {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
+    const payload = await api(`/api/jobs${query}`);
+    jobs.push(...payload.items);
+    cursor = payload.next_cursor;
+  } while (cursor);
+  state.jobs = jobs;
   renderJobList();
 }
 
@@ -274,6 +395,7 @@ function startUpload() {
 
 async function prepareFile(file) {
   if (!file) return;
+  const epoch = state.authEpoch;
   clearError("upload-error");
   const form = new FormData();
   form.append("file", file);
@@ -287,7 +409,7 @@ async function prepareFile(file) {
   } catch (error) {
     showError("upload-error", error);
   } finally {
-    byId("dropzone").removeAttribute("aria-busy");
+    if (epoch === state.authEpoch) byId("dropzone").removeAttribute("aria-busy");
   }
 }
 
@@ -400,6 +522,7 @@ function finishCrop(event) {
 
 async function queueCurrentUpload() {
   if (!state.upload) return;
+  const epoch = state.authEpoch;
   const button = byId("queue-job-button");
   button.disabled = true;
   clearError("upload-error");
@@ -414,7 +537,7 @@ async function queueCurrentUpload() {
   } catch (error) {
     showError("upload-error", error);
   } finally {
-    button.disabled = false;
+    if (epoch === state.authEpoch) button.disabled = false;
   }
 }
 
@@ -428,7 +551,7 @@ async function runSample() {
     await loadJobs();
     await openJob(job.id);
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -455,7 +578,7 @@ async function openJob(jobId) {
       state.pollDelay = 5000;
       state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
     } else {
-      showToast(error.message);
+      showToast(error);
     }
   }
 }
@@ -539,7 +662,7 @@ async function jobMutation(action) {
     }
     showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -556,7 +679,7 @@ async function deleteCurrentJob() {
       ? "Extraction hidden; source deletion will retry automatically"
       : "Extraction deleted");
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -746,7 +869,7 @@ async function saveCorrections(event) {
     renderJob();
     showToast("Corrections saved to the audit trail");
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -758,11 +881,21 @@ async function toggleAudit() {
     return;
   }
   try {
-    const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/audit`);
-    list.replaceChildren(...payload.items.map((item) => {
+    const jobId = state.currentJob.id;
+    const items = [];
+    const rollups = [];
+    let cursor = null;
+    do {
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
+      const payload = await api(`/api/jobs/${routeSegment(jobId)}/audit${query}`);
+      items.push(...payload.items);
+      rollups.push(...(payload.rollups || []));
+      cursor = payload.next_cursor;
+    } while (cursor);
+    list.replaceChildren(...[...items, ...rollups].map((item) => {
       const entry = document.createElement("li");
       const title = document.createElement("strong");
-      title.textContent = item.event.replaceAll("_", " ");
+      title.textContent = `${item.event.replaceAll("_", " ")}${item.count ? ` · ${item.count} archived events` : ""}`;
       const time = document.createElement("time");
       time.dateTime = item.created_at;
       time.textContent = formatDate(item.created_at);
@@ -772,7 +905,7 @@ async function toggleAudit() {
     list.hidden = false;
     byId("toggle-audit-button").textContent = "Hide activity";
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -788,7 +921,7 @@ async function restoreVersion(version) {
     renderJob();
     showToast(`Version ${version.version} restored as a new correction`);
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -826,8 +959,8 @@ async function loadVersions(before = null, append = false) {
       try {
         await loadVersions(payload.next_before, true);
       } catch (error) {
-        more.disabled = false;
-        showToast(error.message);
+        if (!isStaleRequest(error)) more.disabled = false;
+        showToast(error);
       }
     });
     moreEntry.append(more);
@@ -853,7 +986,7 @@ async function toggleVersions() {
     list.hidden = false;
     byId("toggle-versions-button").textContent = "Hide versions";
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -869,15 +1002,22 @@ async function openKeyDialog() {
 async function loadApiKeys() {
   const list = byId("api-key-list");
   try {
-    const payload = await api("/api/keys");
+    const keys = [];
+    let cursor = null;
+    do {
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
+      const payload = await api(`/api/keys${query}`);
+      keys.push(...payload.items);
+      cursor = payload.next_cursor;
+    } while (cursor);
     list.replaceChildren();
-    if (!payload.items.length) {
+    if (!keys.length) {
       const empty = document.createElement("li");
       empty.textContent = "No API keys yet.";
       list.append(empty);
       return;
     }
-    for (const key of payload.items) {
+    for (const key of keys) {
       const item = document.createElement("li");
       const details = document.createElement("span");
       const name = document.createElement("strong");
@@ -897,10 +1037,22 @@ async function loadApiKeys() {
       list.append(item);
     }
   } catch (error) {
+    if (isStaleRequest(error)) return;
     list.replaceChildren();
     const failed = document.createElement("li");
     failed.textContent = error.message;
     list.append(failed);
+  }
+}
+
+async function revokeAllApiKeys() {
+  if (!window.confirm("Revoke every active API key for this workspace?")) return;
+  try {
+    const payload = await api("/api/keys", { method: "DELETE" });
+    await loadApiKeys();
+    showToast(`${payload.revoked} active API key${payload.revoked === 1 ? "" : "s"} revoked`);
+  } catch (error) {
+    showToast(error);
   }
 }
 
@@ -910,7 +1062,7 @@ async function revokeApiKey(keyId) {
     await loadApiKeys();
     showToast("API key revoked");
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
@@ -925,12 +1077,13 @@ async function createKey(event) {
     byId("generate-key-button").hidden = true;
     await loadApiKeys();
   } catch (error) {
-    showToast(error.message);
+    showToast(error);
   }
 }
 
 async function buyCredits() {
   const button = byId("buy-credits-button");
+  const epoch = state.authEpoch;
   button.disabled = true;
   try {
     const payload = await api("/api/billing/checkout", { method: "POST" });
@@ -940,8 +1093,8 @@ async function buyCredits() {
     }
     window.location.assign(destination.href);
   } catch (error) {
-    showToast(error.message);
-    button.disabled = false;
+    showToast(error);
+    if (epoch === state.authEpoch) button.disabled = false;
   }
 }
 
@@ -981,6 +1134,7 @@ function bindEvents() {
   byId("toggle-audit-button").addEventListener("click", toggleAudit);
   byId("create-key-button").addEventListener("click", openKeyDialog);
   byId("close-key-dialog").addEventListener("click", () => byId("api-key-dialog").close());
+  byId("revoke-all-keys-button").addEventListener("click", revokeAllApiKeys);
   byId("api-key-form").addEventListener("submit", createKey);
   byId("buy-credits-button").addEventListener("click", buyCredits);
 }

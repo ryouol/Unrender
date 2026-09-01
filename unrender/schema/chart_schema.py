@@ -9,7 +9,12 @@ from __future__ import annotations
 import hashlib
 import json
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class StrictNumericModel(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
 
 # The chart families v1 covers. Pie is included but generated/weighted lightly.
 # This is the single source of truth for the taxonomy — the generator, the
@@ -29,28 +34,28 @@ CHART_TYPES = (
 MULTI_SERIES_TYPES = frozenset({"grouped_bar", "stacked_bar", "multi_line"})
 
 
-class Axis(BaseModel):
+class Axis(StrictNumericModel):
     """An axis label split from its unit (e.g. label="Revenue", unit="USD")."""
 
     label: str | None = None
     unit: str | None = None
 
 
-class Point(BaseModel):
+class Point(StrictNumericModel):
     """One (x, y) pair. x is a category string or a numeric position."""
 
     x: str | float
     y: float
 
 
-class Series(BaseModel):
+class Series(StrictNumericModel):
     """One data series — a single bar/line set, or one pie's slices."""
 
     name: str | None = None
     points: list[Point] = Field(default_factory=list)
 
 
-class ChartData(BaseModel):
+class ChartData(StrictNumericModel):
     """The full structured contents of one chart."""
 
     chart_type: ChartType

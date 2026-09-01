@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import hashlib
 import io
 import json
+import os
+import sqlite3
 import stat
+import subprocess
 import sys
 import threading
+import time
+import tracemalloc
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
-import pymupdf
+import pypdfium2 as pdfium
 import pytest
 import stripe
 from bs4 import BeautifulSoup
@@ -23,8 +30,9 @@ from openpyxl import load_workbook
 from PIL import Image
 
 from unrender.product import admin
+from unrender.product.backup import BackupError, create_backup, restore_backup
 from unrender.product.config import Settings
-from unrender.product.database import Database
+from unrender.product.database import SCHEMA_VERSION, Database
 from unrender.product.extractors import (
     ExtractionError,
     ExtractionOutput,
@@ -34,7 +42,13 @@ from unrender.product.extractors import (
 from unrender.product.security import hash_password, password_needs_rehash, verify_password
 from unrender.product.service import ProductError, ProductService, timestamp, utcnow
 from unrender.product.storage import InvalidUpload, Storage
-from unrender.product.web import CSRF_COOKIE, create_app
+from unrender.product.web import (
+    CSRF_COOKIE,
+    BodyLimitMiddleware,
+    SecurityHeadersMiddleware,
+    create_app,
+)
+from unrender.product.worker import JobWorker
 from unrender.schema.chart_schema import ChartData
 
 STATIC_DIR = Path(__file__).parents[1] / "unrender" / "product" / "static"
@@ -203,6 +217,21 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             worker_enabled=False,
             modal_model_path="approved/unrender-model",
             modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+        ).validate()
+    with pytest.raises(ValueError, match="MODAL_FUNCTION"):
+        settings_for(
+            tmp_path,
+            environment="production",
+            base_url="https://example.com",
+            extractor_backend="modal",
+            seed_demo_account=False,
+            allow_registration=False,
+            worker_enabled=True,
+            modal_function_name="infer-one",
+            modal_model_path="approved/unrender-model",
+            modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+            modal_model_digest="b" * 64,
+            modal_provider_release="a" * 64,
         ).validate()
     with pytest.raises(ValueError, match="test-mode"):
         settings_for(
@@ -394,7 +423,7 @@ def test_cancel_request_wins_when_provider_fails(tmp_path: Path) -> None:
 
     assert not worker.is_alive()
     assert service.get_job(user_id=user_id, job_id=job["id"])["status"] == "cancelled"
-    assert service.account(user_id)["credits"] == 3
+    assert service.account(user_id)["credits"] == 2
 
 
 def test_provider_failures_emit_privacy_safe_operational_fields(
@@ -462,14 +491,14 @@ def test_reprocess_failure_and_cancel_preserve_approved_result(tmp_path: Path) -
     assert after_failure["approved_at"] == approved_at
     assert after_failure["result"] == approved_result
     assert after_failure["error"]["code"] == "provider_unavailable"
-    assert service.account(user_id)["credits"] == 2
+    assert service.account(user_id)["credits"] == 1
 
     service.reprocess(user_id=user_id, job_id=job["id"])
     after_cancel = service.cancel(user_id=user_id, job_id=job["id"])
     assert after_cancel["status"] == "approved"
     assert after_cancel["approved_at"] == approved_at
     assert after_cancel["result"] == approved_result
-    assert service.account(user_id)["credits"] == 2
+    assert service.account(user_id)["credits"] == 1
 
 
 def test_admin_cli_prompts_for_password_and_creates_account(
@@ -502,13 +531,38 @@ def test_storage_validates_magic_pdf_limits_and_crop(tmp_path: Path) -> None:
     with pytest.raises(InvalidUpload, match="PNG, JPEG, WebP, or PDF"):
         storage.inspect(b"not-an-image")
 
-    document = pymupdf.open()
-    document.new_page()
-    document.new_page()
-    pdf = document.tobytes()
+    document = pdfium.PdfDocument.new()
+    document.new_page(160, 100)
+    document.new_page(160, 100)
+    pdf_buffer = io.BytesIO()
+    document.save(pdf_buffer)
+    pdf = pdf_buffer.getvalue()
     document.close()
     with pytest.raises(InvalidUpload, match="limit is 1"):
         storage.inspect(pdf)
+
+    one_page = pdfium.PdfDocument.new()
+    one_page.new_page(160, 100)
+    one_page_buffer = io.BytesIO()
+    one_page.save(one_page_buffer)
+    one_page.close()
+    pdf_content = one_page_buffer.getvalue()
+    pdf_inspection = storage.inspect(pdf_content)
+    pdf_source = storage.save_upload(
+        user_id="pdf-user", upload_id="pdf-upload", content=pdf_content
+    )
+    rendered = storage.page_png(
+        source=pdf_source,
+        mime_type=pdf_inspection.mime_type,
+        page_index=0,
+    )
+    assert rendered.startswith(b"\x89PNG")
+
+    encrypted_pdf = base64.b64decode(
+        "JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE11UERGIDEuMjguMgoKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFIvSW5mbzw8L1Byb2R1Y2VyPDcxMjRBN0RCNjg1MEZCQkVEMzI5NUUzM0VDRUYxOTQ1MkQxQ0U2OEI5QkM0QUZGRDJGNjhEN0NDQ0I5NERGREQ+Pj4+PgplbmRvYmoKCjIgMCBvYmoKPDwvVHlwZS9QYWdlcy9Db3VudCAxL0tpZHNbNCAwIFJdPj4KZW5kb2JqCgozIDAgb2JqCjw8Pj4KZW5kb2JqCgo0IDAgb2JqCjw8L1R5cGUvUGFnZS9NZWRpYUJveFswIDAgNzIgNzJdL1JvdGF0ZSAwL1Jlc291cmNlcyAzIDAgUi9QYXJlbnQgMiAwIFI+PgplbmRvYmoKCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDA0MiAwMDAwMCBuIAowMDAwMDAwMTcyIDAwMDAwIG4gCjAwMDAwMDAyMjQgMDAwMDAgbiAKMDAwMDAwMDI0NSAwMDAwMCBuIAoKdHJhaWxlcgo8PC9TaXplIDUvUm9vdCAxIDAgUi9JRFs8QzNBQUMzODMxQkMyOTdDMjk1QzI5RDAyQzI5RDQ3QzI+PDIwMjNGOUJCMzYwNEUyMENFN0YwMUJDQjU3NDREM0ZEPl0vRW5jcnlwdDw8L0ZpbHRlci9TdGFuZGFyZC9SIDYvViA1L0xlbmd0aCAyNTYvUCAtNC9FbmNyeXB0TWV0YWRhdGEgdHJ1ZS9TdG1GL1N0ZENGL1N0ckYvU3RkQ0YvQ0Y8PC9TdGRDRjw8L0F1dGhFdmVudC9Eb2NPcGVuL0NGTS9BRVNWMy9MZW5ndGggMzI+Pj4+L088RTExQkE5N0Q5NEYyQkFFMzNGQ0IzQUM5M0QxQjBFQzdDODlCMEU5RTUwQUE3Q0M1NDMzRDRCODBCMkNFQzVGNUFBQTlCODU2MzkzRTFDRDQxMjY3MTk2Q0I0RDFDOEM1Pi9VPDkyRTVGMTZFOTM4RjJDMDA0OUYwRjIzODM2NDEyMzdFRjIwMDNGRDc4RTlDREQwQjFBRTIxMTUwREM3NjEyMTI0NkIxNUNGMEFGRDg0MDQ2QTc4RTAzRjBFN0ZCNTUzQz4vT0U8MUVGMUNGRjdCMzVBQ0Q2MTk2M0JCQTYyRDdBRDg5MkNGMTI5NDgxQkE5MUNBRkIwRDY4MkI4NTNDNzdENkZDRT4vVUU8OUM3NjY3NzJERkE3MzVDQTY5MUFFODczMEU2NENDQkVEQkI5MjlENTY0RDI3RDI0RjI5MjY0RDFBMTMwQjQ4MD4vUGVybXM8NDgxNEJDRjc0MDExOEFBQ0FGMzBDRUEzRDcwOEI3RjE+Pj4+PgpzdGFydHhyZWYKMzM0CiUlRU9GCg=="
+    )
+    with pytest.raises(InvalidUpload, match="Password-protected"):
+        storage.inspect(encrypted_pdf)
 
     image = png_bytes()
     inspection = storage.inspect(image)
@@ -565,7 +619,7 @@ def test_schema_v2_upgrades_to_storage_quota_and_idempotency_state(tmp_path: Pat
         idempotency = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='api_idempotency'"
         ).fetchone()
-    assert version == 5
+        assert version == SCHEMA_VERSION
     assert "source_byte_size" in job_columns
     assert {"user_id", "byte_size"} <= deletion_columns
     assert idempotency is not None
@@ -574,6 +628,100 @@ def test_schema_v2_upgrades_to_storage_quota_and_idempotency_state(tmp_path: Pat
             row["name"] for row in conn.execute("PRAGMA table_info(api_idempotency)")
         }
     assert {"expires_at", "expired_at"} <= idempotency_columns
+
+
+@pytest.mark.parametrize("legacy_version", [1, 3])
+def test_schema_v1_and_v3_shapes_preserve_rows_foreign_keys_and_expiry(
+    tmp_path: Path,
+    legacy_version: int,
+) -> None:
+    database = Database(tmp_path / f"migration-v{legacy_version}" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('legacy-user','legacy@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO uploads(id,user_id,original_name,mime_type,storage_path,byte_size,"
+            "sha256,page_count,created_at,expires_at) VALUES "
+            "('legacy-upload','legacy-user','source.png','image/png','/legacy/source.png',321,"
+            "'sha',1,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO jobs(id,user_id,upload_id,source_name,source_mime,source_path,"
+            "source_sha256,source_byte_size,status,progress_stage,created_at,updated_at) VALUES "
+            "('legacy-job','legacy-user','legacy-upload','source.png','image/png',"
+            "'/legacy/job.source','sha',321,'queued','Waiting',"
+            "'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
+        )
+        conn.execute("DROP INDEX jobs_lease_expiry_idx")
+        conn.execute("DROP INDEX api_idempotency_expiry_idx")
+        conn.execute("DROP TABLE provider_attempts")
+        conn.execute("DROP TABLE audit_rollups")
+        conn.execute("DROP TABLE startup_state")
+        for column in (
+            "provider_dispatched",
+            "provider_dispatched_at",
+            "worker_owner",
+            "lease_token",
+            "lease_generation",
+            "lease_expires_at",
+            "heartbeat_at",
+        ):
+            conn.execute(f'ALTER TABLE jobs DROP COLUMN "{column}"')
+        if legacy_version == 1:
+            conn.execute("DROP TABLE api_idempotency")
+            conn.execute("DROP TABLE pending_deletions")
+            conn.execute("ALTER TABLE jobs DROP COLUMN source_byte_size")
+            conn.execute("ALTER TABLE jobs DROP COLUMN recovery_count")
+            conn.execute("ALTER TABLE users DROP COLUMN account_kind")
+        else:
+            conn.execute("DROP TABLE api_idempotency")
+            conn.execute(
+                "CREATE TABLE api_idempotency ("
+                "user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                "idempotency_key TEXT NOT NULL,request_sha256 TEXT NOT NULL,response_json TEXT,"
+                "created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(user_id,idempotency_key))"
+            )
+            conn.execute(
+                "INSERT INTO api_idempotency VALUES "
+                "('legacy-user','legacy-key','request-sha','{}',"
+                "'2026-01-01T00:00:00Z',NULL)"
+            )
+            conn.execute("ALTER TABLE pending_deletions DROP COLUMN user_id")
+            conn.execute("ALTER TABLE pending_deletions DROP COLUMN byte_size")
+        conn.execute("UPDATE schema_meta SET version=?", (legacy_version,))
+
+    database.initialize()
+    database.initialize()
+    with database.connect() as conn:
+        migrated_job = conn.execute(
+            "SELECT user_id,upload_id,source_byte_size,lease_generation FROM jobs "
+            "WHERE id='legacy-job'"
+        ).fetchone()
+        migrated_user = conn.execute(
+            "SELECT account_kind FROM users WHERE id='legacy-user'"
+        ).fetchone()
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+        assert migrated_job is not None
+        assert dict(migrated_job) == {
+            "user_id": "legacy-user",
+            "upload_id": "legacy-upload",
+            "source_byte_size": 321,
+            "lease_generation": 0,
+        }
+        assert migrated_user is not None and migrated_user["account_kind"] == "customer"
+        if legacy_version == 3:
+            idempotency = conn.execute(
+                "SELECT response_json,expires_at,expired_at FROM api_idempotency "
+                "WHERE user_id='legacy-user'"
+            ).fetchone()
+            assert idempotency is not None
+            assert idempotency["response_json"] == "{}"
+            assert idempotency["expires_at"] == "2026-01-31T00:00:00.000Z"
+            assert idempotency["expired_at"] is None
 
 
 def test_schema_v4_idempotency_migration_preserves_rows_and_enforces_expiry(
@@ -625,7 +773,7 @@ def test_schema_v4_idempotency_migration_preserves_rows_and_enforces_expiry(
         migrated = conn.execute(
             "SELECT * FROM api_idempotency WHERE user_id='legacy-user'"
         ).fetchone()
-    assert version == 5
+        assert version == SCHEMA_VERSION
     assert columns["expires_at"]["notnull"] == 1
     assert migrated["response_json"] == '{"job_id":"legacy-job"}'
     assert migrated["expires_at"] == "2026-01-31T00:00:00.000Z"
@@ -786,10 +934,10 @@ def test_result_history_byte_quota_fails_closed_and_refunds(tmp_path: Path) -> N
     failed = service.get_job(user_id=user_id, job_id=job["id"])
     assert failed["status"] == "failed"
     assert failed["error"]["code"] == "history_storage_quota_reached"
-    assert service.account(user_id)["credits"] == 3
+    assert service.account(user_id)["credits"] == 2
     with pytest.raises(ProductError, match="history storage limit"):
         service.reprocess(user_id=user_id, job_id=job["id"])
-    assert service.account(user_id)["credits"] == 3
+    assert service.account(user_id)["credits"] == 2
     with service.database.connect() as conn:
         count = conn.execute("SELECT COUNT(*) AS count FROM result_versions").fetchone()["count"]
     assert count == 0
@@ -940,7 +1088,7 @@ def test_retention_cleanup_queues_files_when_storage_is_temporarily_unavailable(
 
 
 def test_storage_reconciliation_removes_unowned_crash_file(tmp_path: Path) -> None:
-    service = service_for(tmp_path, seed_demo_account=False)
+    service = service_for(tmp_path, seed_demo_account=False, reconciliation_grace_seconds=0)
     orphan = service.settings.storage_dir / "jobs" / "orphan" / "crash.tmp"
     orphan.parent.mkdir(parents=True)
     orphan.write_bytes(b"orphan")
@@ -1044,18 +1192,18 @@ def test_failed_and_cancelled_jobs_refund_once_and_tenants_are_isolated(
     failed = service.get_job(user_id=first_id, job_id=failed["id"])
     assert failed["status"] == "failed"
     assert failed["error"]["code"] == "provider_not_configured"
-    assert service.account(first_id)["credits"] == 2
+    assert service.account(first_id)["credits"] == 1
     with pytest.raises(ProductError, match="not found"):
         service.get_job(user_id=second_id, job_id=failed["id"])
 
     queued = service.create_job(user_id=first_id, upload_id=upload["id"], page_index=0, crop=None)
-    assert service.account(first_id)["credits"] == 1
+    assert service.account(first_id)["credits"] == 0
     cancelled = service.cancel(user_id=first_id, job_id=queued["id"])
     assert cancelled["status"] == "cancelled"
-    assert service.account(first_id)["credits"] == 2
+    assert service.account(first_id)["credits"] == 1
     with pytest.raises(ProductError, match="cannot be cancelled"):
         service.cancel(user_id=first_id, job_id=queued["id"])
-    assert service.account(first_id)["credits"] == 2
+    assert service.account(first_id)["credits"] == 1
 
 
 def test_interrupted_job_has_one_automatic_recovery_then_refunds(tmp_path: Path) -> None:
@@ -1070,12 +1218,22 @@ def test_interrupted_job_has_one_automatic_recovery_then_refunds(tmp_path: Path)
     job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
     claimed = service.claim_next_job()
     assert claimed is not None and claimed["status"] == "running"
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), job["id"]),
+        )
     assert service.recover_interrupted_jobs() == 1
     recovered = service.get_job(user_id=user_id, job_id=job["id"])
     assert recovered["status"] == "queued"
     assert recovered["recovery_count"] == 1
     assert service.account(user_id)["credits"] == 0
     assert service.claim_next_job() is not None
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), job["id"]),
+        )
     assert service.recover_interrupted_jobs() == 1
     exhausted = service.get_job(user_id=user_id, job_id=job["id"])
     assert exhausted["status"] == "failed"
@@ -1091,6 +1249,7 @@ def test_billing_event_is_idempotent_and_detects_conflicting_replay(tmp_path: Pa
         stripe_secret_key="sk_test_local",
         stripe_webhook_secret="whsec_local",
         stripe_price_id="price_local",
+        max_billing_events_global=1,
     )
     session = service.register("billing@example.com", "billing password is long enough")
     user = service.session_user(session["session"])
@@ -1109,6 +1268,10 @@ def test_billing_event_is_idempotent_and_detects_conflicting_replay(tmp_path: Pa
     with pytest.raises(ProductError, match="did not match"):
         service.apply_billing_event(**{**arguments, "payload_sha256": "different"})
     assert service.account(user_id)["credits"] == 100
+
+    assert not service.apply_billing_event(**arguments)
+    with pytest.raises(ProductError, match="processing is paused"):
+        service.apply_billing_event(**{**arguments, "event_id": "evt_test_2"})
 
 
 def test_http_flow_enforces_csrf_origin_headers_and_api_tenancy(tmp_path: Path) -> None:
@@ -1402,6 +1565,50 @@ def test_streaming_body_limit_rejects_chunked_payload_before_json_parsing(
     assert "default-src 'self'" in hostile.headers["Content-Security-Policy"]
 
 
+def test_body_limit_backpressures_concurrent_chunks_without_aggregate_buffering() -> None:
+    stream_count = 32
+    consumed = [0] * stream_count
+    statuses: list[int] = []
+
+    async def consume_app(scope: Any, receive: Any, send: Any) -> None:
+        del scope
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if not message.get("more_body", False):
+                await send({"type": "http.response.start", "status": 204, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+                return
+
+    middleware = BodyLimitMiddleware(consume_app, upload_limit=20 * 1024 * 1024)
+
+    async def invoke(index: int) -> None:
+        async def receive() -> dict[str, object]:
+            consumed[index] += 1
+            await asyncio.sleep(0)
+            return {"type": "http.request", "body": b"x" * 65536, "more_body": True}
+
+        async def send(message: dict[str, object]) -> None:
+            if message["type"] == "http.response.start":
+                statuses.append(int(message["status"]))
+
+        await middleware({"type": "http", "path": "/api/auth/login"}, receive, send)
+
+    async def exercise() -> None:
+        await asyncio.gather(*(invoke(index) for index in range(stream_count)))
+
+    tracemalloc.start()
+    try:
+        asyncio.run(exercise())
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert statuses == [413] * stream_count
+    assert consumed == [5] * stream_count
+    assert peak < 16 * 1024 * 1024
+
+
 def test_test_mode_checkout_and_signed_webhook_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1477,6 +1684,7 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
             tmp_path,
             seed_demo_account=False,
             rate_limit_per_minute=2,
+            auth_rate_limit_per_minute=2,
         )
     )
     payload = {"email": "known@example.com", "password": "wrong password"}
@@ -1541,3 +1749,850 @@ def test_static_pages_keep_basic_accessibility_contract(filename: str) -> None:
     for dialog in soup.find_all("dialog"):
         label_id = dialog.get("aria-labelledby")
         assert label_id and soup.find(id=label_id)
+
+
+def _paid_job(service: ProductService, user_id: str, *, color: str = "white") -> dict[str, object]:
+    upload = service.prepare_upload(
+        user_id=user_id,
+        filename=f"{color}.png",
+        content=png_bytes(color=color),
+    )
+    return service.create_job(
+        user_id=user_id,
+        upload_id=str(upload["id"]),
+        page_index=0,
+        crop=None,
+    )
+
+
+def test_worker_leases_are_fresh_reaped_once_and_fence_every_terminal_mutation(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        reconciliation_grace_seconds=0,
+    )
+    user_id = customer_id(service, "lease@example.com")
+    job = _paid_job(service, user_id, color="navy")
+    stale_claim = service.claim_next_job("service-a")
+    assert stale_claim is not None
+
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+    with service.database.connect() as conn:
+        fresh = conn.execute(
+            "SELECT status,worker_owner,lease_token,source_path FROM jobs WHERE id=?", (job["id"],)
+        ).fetchone()
+        schema_version = conn.execute("SELECT version FROM schema_meta").fetchone()[0]
+        started_events = conn.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE job_id=? AND event_type='job_started'",
+            (job["id"],),
+        ).fetchone()[0]
+        provider_attempts = conn.execute(
+            "SELECT COUNT(*) FROM provider_attempts WHERE job_id=?", (job["id"],)
+        ).fetchone()[0]
+    assert fresh["status"] == "running"
+    assert fresh["worker_owner"] == "service-a"
+    assert fresh["lease_token"] == stale_claim.token
+    assert Path(fresh["source_path"]).is_file()
+    assert schema_version == SCHEMA_VERSION
+    assert started_events == 1
+    assert provider_attempts == 0
+
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+            (timestamp(utcnow() - timedelta(seconds=1)), job["id"]),
+        )
+    barrier = threading.Barrier(3)
+    reaped: list[int] = []
+
+    def recover(candidate: ProductService) -> None:
+        barrier.wait()
+        reaped.append(candidate.recover_interrupted_jobs())
+
+    threads = [threading.Thread(target=recover, args=(candidate,)) for candidate in (service, peer)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert sorted(reaped) == [0, 1]
+
+    current_claim = peer.claim_next_job("service-b")
+    assert current_claim is not None
+    assert current_claim.generation == stale_claim.generation + 1
+    assert not service.heartbeat_claim(stale_claim)
+    assert not service._update_claim_progress(stale_claim, "stale progress")
+    assert not service._finish_failed_claim(stale_claim, "stale", "must not commit")
+    assert not service._finish_cancelled_claim(stale_claim)
+    assert service.account(user_id)["credits"] == 0
+    assert peer._finish_failed_claim(current_claim, "pre_dispatch", "safe failure")
+    assert not peer._finish_failed_claim(current_claim, "duplicate", "must not commit")
+    assert service.account(user_id)["credits"] == 1
+    with service.database.connect() as conn:
+        stale_events = conn.execute(
+            "SELECT COUNT(*) AS count FROM audit_events "
+            "WHERE job_id=? AND details_json LIKE '%stale%'",
+            (job["id"],),
+        ).fetchone()["count"]
+        refunds = conn.execute(
+            "SELECT COUNT(*) AS count FROM credit_ledger WHERE idempotency_key=?",
+            (f"job:{job['id']}:refund:1",),
+        ).fetchone()["count"]
+    assert stale_events == 0
+    assert refunds == 1
+
+
+def test_predispatch_cancel_avoids_provider_and_postdispatch_failures_open_circuit(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=4,
+        provider_failure_limit_per_user_hour=1,
+        provider_failure_limit_global_hour=1,
+    )
+    user_id = customer_id(service, "circuit@example.com")
+    cancelled = _paid_job(service, user_id, color="blue")
+    claim = service.claim_next_job("cancel-owner")
+    assert claim is not None
+    service.cancel(user_id=user_id, job_id=str(cancelled["id"]))
+    assert not service._begin_provider_dispatch(claim)
+    assert service.get_job(user_id=user_id, job_id=str(cancelled["id"]))["status"] == "cancelled"
+    assert service.account(user_id)["credits"] == 4
+
+    charged_cancel = _paid_job(service, user_id, color="black")
+    charged_claim = service.claim_next_job("charged-cancel-owner")
+    assert charged_claim is not None and service._begin_provider_dispatch(charged_claim)
+    service.cancel(user_id=user_id, job_id=str(charged_cancel["id"]))
+    assert service._finish_cancelled_claim(charged_claim)
+    assert service.get_job(user_id=user_id, job_id=str(charged_cancel["id"]))["status"] == (
+        "cancelled"
+    )
+    assert service.account(user_id)["credits"] == 3
+
+    provider_calls = 0
+
+    def fail_provider(_: bytes) -> None:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise ExtractionError("provider_unavailable", "provider failed")
+
+    service.extractor = SimpleNamespace(extract=fail_provider)
+    first = _paid_job(service, user_id, color="red")
+    assert service.process_one("provider-owner")
+    assert service.get_job(user_id=user_id, job_id=str(first["id"]))["status"] == "failed"
+    assert service.account(user_id)["credits"] == 2
+
+    second = _paid_job(service, user_id, color="green")
+    assert service.account(user_id)["credits"] == 1
+    assert service.process_one("provider-owner")
+    blocked = service.get_job(user_id=user_id, job_id=str(second["id"]))
+    assert blocked["status"] == "failed"
+    assert blocked["error"]["code"] == "provider_circuit_open"
+    assert provider_calls == 1
+    assert service.account(user_id)["credits"] == 2
+
+
+def test_provider_attempt_history_is_bounded_before_another_dispatch(tmp_path: Path) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=3,
+        max_provider_attempts_per_job=1,
+        provider_failure_limit_per_user_hour=10,
+        provider_failure_limit_global_hour=10,
+    )
+    user_id = customer_id(service, "attempt-cap@example.com")
+    job = _paid_job(service, user_id, color="purple")
+    first = service.claim_next_job("attempt-owner-1")
+    assert first is not None and service._begin_provider_dispatch(first)
+    assert service._finish_failed_claim(first, "provider_failed", "charged failure")
+    assert service.account(user_id)["credits"] == 2
+
+    service.reprocess(user_id=user_id, job_id=str(job["id"]))
+    second = service.claim_next_job("attempt-owner-2")
+    assert second is not None
+    assert not service._begin_provider_dispatch(second)
+    assert service.account(user_id)["credits"] == 2
+    current = service.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert current["status"] == "failed"
+    assert current["error"]["code"] == "provider_attempt_history_limit"
+    with service.database.connect() as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM provider_attempts WHERE job_id=?", (job["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_worker_shutdown_keeps_heartbeat_until_long_provider_call_finishes(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        worker_lease_seconds=10,
+        worker_heartbeat_seconds=3,
+        worker_shutdown_timeout_seconds=1,
+    )
+    user_id = customer_id(service, "drain@example.com")
+    job = _paid_job(service, user_id, color="purple")
+    fixture = json.loads(
+        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+    )
+    provider_started = threading.Event()
+    provider_release = threading.Event()
+
+    def slow_provider(_: bytes) -> ExtractionOutput:
+        provider_started.set()
+        assert provider_release.wait(timeout=10)
+        return ExtractionOutput(
+            chart=ChartData.model_validate(fixture["result"]),
+            raw="slow provider",
+            extractor="test",
+            model_version="pinned",
+        )
+
+    service.extractor = SimpleNamespace(extract=slow_provider)
+    worker = JobWorker(service, poll_seconds=0.01)
+    worker.start()
+    assert provider_started.wait(timeout=5)
+    with service.database.connect() as conn:
+        before = conn.execute(
+            "SELECT lease_expires_at FROM jobs WHERE id=?", (job["id"],)
+        ).fetchone()["lease_expires_at"]
+    assert not worker.stop(timeout=0.05)
+    time.sleep(3.5)
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+    assert peer.recover_interrupted_jobs() == 0
+    with service.database.connect() as conn:
+        after = conn.execute(
+            "SELECT lease_expires_at,status FROM jobs WHERE id=?", (job["id"],)
+        ).fetchone()
+    assert after["lease_expires_at"] > before
+    assert after["status"] == "running"
+    provider_release.set()
+    assert worker.stop(timeout=5)
+    assert service.get_job(user_id=user_id, job_id=str(job["id"]))["status"] == "review"
+    assert service.account(user_id)["credits"] == 0
+
+
+def test_migration_failure_is_atomic_and_concurrent_initializers_converge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = Database(tmp_path / "migration-atomic" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute("DROP INDEX api_idempotency_expiry_idx")
+        conn.execute("ALTER TABLE api_idempotency RENAME TO api_idempotency_v4")
+        conn.execute(
+            "CREATE TABLE api_idempotency ("
+            "user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "idempotency_key TEXT NOT NULL,request_sha256 TEXT NOT NULL,response_json TEXT,"
+            "created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(user_id,idempotency_key))"
+        )
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('atomic-user','atomic@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO api_idempotency VALUES "
+            "('atomic-user','key','sha','{}','2026-01-01T00:00:00Z',NULL)"
+        )
+        conn.execute("DROP TABLE api_idempotency_v4")
+        conn.execute("UPDATE schema_meta SET version=4")
+
+    original = database._migrate_v4_to_v5
+
+    def crash_after_migration(conn: sqlite3.Connection) -> None:
+        original(conn)
+        raise RuntimeError("injected migration crash")
+
+    monkeypatch.setattr(database, "_migrate_v4_to_v5", crash_after_migration)
+    with pytest.raises(RuntimeError, match="injected"):
+        database.initialize()
+    with database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()["version"] == 4
+        assert "expires_at" not in {
+            row["name"] for row in conn.execute("PRAGMA table_info(api_idempotency)")
+        }
+        assert conn.execute("SELECT response_json FROM api_idempotency").fetchone()[0] == "{}"
+
+    monkeypatch.setattr(database, "_migrate_v4_to_v5", original)
+    errors: list[Exception] = []
+    barrier = threading.Barrier(7)
+
+    def initialize_peer() -> None:
+        barrier.wait()
+        try:
+            Database(database.path).initialize()
+        except Exception as exc:  # pragma: no cover - assertion reports the exact peer error
+            errors.append(exc)
+
+    threads = [threading.Thread(target=initialize_peer) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    database.initialize()
+    with database.connect() as conn:
+        assert (
+            conn.execute("SELECT version FROM schema_meta").fetchone()["version"] == SCHEMA_VERSION
+        )
+        assert conn.execute("SELECT response_json FROM api_idempotency").fetchone()[0] == "{}"
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+
+
+@pytest.mark.parametrize("crash_after", range(1, 7))
+def test_v4_to_v5_rolls_back_after_each_mutating_statement(
+    tmp_path: Path, crash_after: int
+) -> None:
+    database = Database(tmp_path / f"migration-crash-{crash_after}" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute("DROP INDEX api_idempotency_expiry_idx")
+        conn.execute("DROP TABLE api_idempotency")
+        conn.execute(
+            "CREATE TABLE api_idempotency ("
+            "user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "idempotency_key TEXT NOT NULL,request_sha256 TEXT NOT NULL,response_json TEXT,"
+            "created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(user_id,idempotency_key))"
+        )
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('crash-user','crash@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO api_idempotency VALUES "
+            "('crash-user','key','sha','{}','2026-01-01T00:00:00Z',NULL)"
+        )
+        conn.execute("UPDATE schema_meta SET version=4")
+    statements = 0
+
+    def fault() -> None:
+        nonlocal statements
+        statements += 1
+        if statements == crash_after:
+            raise RuntimeError("injected statement crash")
+
+    database._migration_fault_hook = fault
+    with pytest.raises(RuntimeError, match="statement crash"):
+        database.initialize()
+    with database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert (
+            conn.execute(
+                "SELECT response_json FROM api_idempotency WHERE user_id='crash-user'"
+            ).fetchone()[0]
+            == "{}"
+        )
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_idempotency_v5_new'"
+            ).fetchone()
+            is None
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    database._migration_fault_hook = None
+    database.initialize()
+    with database.connect() as conn:
+        row = conn.execute("SELECT * FROM api_idempotency").fetchone()
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
+        assert row["response_json"] == "{}"
+        assert row["expires_at"] == "2026-01-31T00:00:00.000Z"
+
+
+def test_v4_partial_rename_shape_is_resumed_without_losing_idempotency_rows(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "migration-partial-v4" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('partial-user','partial@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO api_idempotency("
+            "user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,"
+            "expires_at,expired_at) VALUES ("
+            "'partial-user','key','sha','{}','2026-01-01T00:00:00Z',NULL,"
+            "'2026-02-01T00:00:00Z',NULL)"
+        )
+        conn.execute("DROP INDEX api_idempotency_expiry_idx")
+        conn.execute("ALTER TABLE api_idempotency RENAME TO api_idempotency_v4")
+        conn.execute("UPDATE schema_meta SET version=4")
+    database.initialize()
+    database.initialize()
+    with database.connect() as conn:
+        row = conn.execute("SELECT * FROM api_idempotency").fetchone()
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
+        assert row["user_id"] == "partial-user"
+        assert row["expires_at"] == "2026-02-01T00:00:00Z"
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+
+
+def test_backup_is_coordinated_hash_verified_and_rewrites_restored_paths(
+    tmp_path: Path,
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "backup@example.com")
+    job = _paid_job(service, user_id, color="orange")
+    uncommitted = service.settings.storage_dir / "jobs" / "orphan" / "not-in-database.source"
+    uncommitted.parent.mkdir(parents=True)
+    uncommitted.write_bytes(b"must not enter recovery set")
+    backup = create_backup(service.settings, tmp_path / "recovery-set")
+    assert not (backup / "storage" / "jobs" / "orphan" / uncommitted.name).exists()
+    restored = restore_backup(backup, tmp_path / "restored-data")
+    restored_database = Database(restored / "unrender.sqlite3")
+    with restored_database.connect() as conn:
+        restored_job = conn.execute(
+            "SELECT source_path FROM jobs WHERE id=?", (job["id"],)
+        ).fetchone()
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+    assert str(restored_job["source_path"]).startswith(str(restored / "storage"))
+    assert Path(restored_job["source_path"]).is_file()
+
+    with (
+        service.database.operational_lock(),
+        pytest.raises(BackupError, match="mutation is active"),
+    ):
+        create_backup(service.settings, tmp_path / "blocked-recovery-set")
+    assert not (tmp_path / "blocked-recovery-set").exists()
+
+    stored_source = next((backup / "storage" / "jobs").rglob("*.source"))
+    stored_source.write_bytes(b"tampered")
+    with pytest.raises(BackupError, match="hash/size"):
+        restore_backup(backup, tmp_path / "tampered-restore")
+
+    backup = create_backup(service.settings, tmp_path / "path-tamper-recovery-set")
+    manifest_path = backup / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["source_data_dir"] = "/wrong/live/root"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(BackupError, match="outside product storage"):
+        restore_backup(backup, tmp_path / "path-tampered-restore")
+
+
+def test_cursor_inventories_key_cap_revoke_all_and_audit_rollups(
+    tmp_path: Path,
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=8,
+        max_active_api_keys_per_user=3,
+        max_api_key_records_per_user=5,
+        max_audit_events_per_job=5,
+        max_audit_events_per_user=30,
+    )
+    user_id = customer_id(service, "inventory@example.com")
+    upload = service.prepare_upload(
+        user_id=user_id, filename="inventory.png", content=png_bytes(color="yellow")
+    )
+    jobs = [
+        service.create_job(
+            user_id=user_id,
+            upload_id=str(upload["id"]),
+            page_index=0,
+            crop=None,
+        )
+        for _ in range(5)
+    ]
+    keys = [service.create_api_key(user_id=user_id, name=f"key {index}") for index in range(3)]
+    with pytest.raises(ProductError, match="Revoke an active"):
+        service.create_api_key(user_id=user_id, name="hidden fourth key")
+
+    job_ids: list[str] = []
+    cursor = None
+    while True:
+        page = service.list_jobs_page(user_id, cursor=cursor, limit=2)
+        job_ids.extend(str(item["id"]) for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert set(job_ids) == {str(job["id"]) for job in jobs}
+
+    prefixes: list[str] = []
+    cursor = None
+    while True:
+        page = service.list_api_keys_page(user_id=user_id, cursor=cursor, limit=2)
+        prefixes.extend(str(item["prefix"]) for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert set(prefixes) == {str(key["prefix"]) for key in keys}
+    assert service.revoke_all_api_keys(user_id=user_id) == 3
+    assert all(item["revoked_at"] for item in service.list_api_keys(user_id=user_id))
+
+    audited_job = str(jobs[0]["id"])
+    with service.database.transaction(immediate=True) as conn:
+        for index in range(7):
+            service._audit(
+                conn,
+                user_id=user_id,
+                job_id=audited_job,
+                event_type="adversarial_event",
+                details={"index": index},
+            )
+    page = service.job_audit_page(user_id=user_id, job_id=audited_job, limit=2)
+    raw_events = list(page["items"])
+    archived = sum(int(item["count"]) for item in page["rollups"])
+    cursor = page["next_cursor"]
+    while cursor:
+        page = service.job_audit_page(
+            user_id=user_id,
+            job_id=audited_job,
+            cursor=cursor,
+            limit=2,
+        )
+        raw_events.extend(page["items"])
+        cursor = page["next_cursor"]
+    assert len(raw_events) <= 5
+    assert len(raw_events) + archived == 8  # job_queued plus seven injected events
+
+
+def test_api_key_inventory_does_not_hide_the_101st_record(tmp_path: Path) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        max_active_api_keys_per_user=101,
+        max_api_key_records_per_user=110,
+        max_audit_events_per_user=500,
+    )
+    user_id = customer_id(service, "key-pagination@example.com")
+    expected = {
+        service.create_api_key(user_id=user_id, name=f"integration {index}")["prefix"]
+        for index in range(101)
+    }
+    observed: set[str] = set()
+    cursor = None
+    while True:
+        page = service.list_api_keys_page(user_id=user_id, cursor=cursor, limit=17)
+        observed.update(str(item["prefix"]) for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert observed == expected
+    assert service.revoke_all_api_keys(user_id=user_id) == 101
+
+
+def test_sessions_and_account_audit_state_remain_bounded(tmp_path: Path) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=True,
+        max_sessions_per_user=2,
+        max_audit_events_per_job=3,
+        max_audit_events_per_user=5,
+    )
+    user_id = customer_id(service, "bounded@example.com")
+    for _ in range(5):
+        service.create_session(user_id)
+    with service.database.transaction(immediate=True) as conn:
+        for _ in range(10):
+            service._audit(conn, user_id=user_id, event_type="account_probe")
+    with service.database.connect() as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id=?", (user_id,)).fetchone()[0]
+            == 2
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE user_id=?", (user_id,)
+            ).fetchone()[0]
+            <= 5
+        )
+        rollup = conn.execute(
+            "SELECT event_count FROM audit_rollups "
+            "WHERE user_id=? AND job_scope='account' AND event_type='account_probe'",
+            (user_id,),
+        ).fetchone()
+    assert rollup is not None and int(rollup["event_count"]) > 0
+
+    demo = service.demo_session()
+    demo_user = service.session_user(demo["session"])
+    assert demo_user is not None
+    demo_id = str(demo_user["id"])
+    service.logout(demo["session"])
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT 1 FROM users WHERE id=?", (demo_id,)).fetchone() is None
+        assert (
+            conn.execute("SELECT 1 FROM audit_events WHERE user_id=?", (demo_id,)).fetchone()
+            is None
+        )
+
+
+def test_auth_kdf_concurrency_docs_errors_live_webhooks_and_lazy_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = create_app(
+        settings_for(
+            tmp_path,
+            seed_demo_account=False,
+            auth_rate_limit_per_minute=100,
+            max_concurrent_auth_requests=1,
+            stripe_secret_key="sk_test_local",
+            stripe_webhook_secret="whsec_local",
+            stripe_price_id="price_local",
+        )
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_authenticate(_: str, __: str) -> dict[str, str]:
+        entered.set()
+        assert release.wait(timeout=5)
+        raise ProductError("invalid_credentials", "Email or password is incorrect", 401)
+
+    app.state.service.authenticate = slow_authenticate
+
+    @app.get("/unexpected-test-error")
+    def unexpected_test_error() -> None:
+        raise RuntimeError("private detail")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        first_status: list[int] = []
+
+        def first_login() -> None:
+            response = client.post(
+                "/api/auth/login",
+                json={"email": "first@example.com", "password": "password"},
+            )
+            first_status.append(response.status_code)
+
+        thread = threading.Thread(target=first_login)
+        thread.start()
+        assert entered.wait(timeout=5)
+        blocked = client.post(
+            "/api/auth/login",
+            json={"email": "second@example.com", "password": "password"},
+        )
+        assert blocked.status_code == 503
+        assert blocked.json()["error"]["code"] == "auth_capacity_reached"
+        release.set()
+        thread.join(timeout=5)
+        assert first_status == [401]
+        assert client.get("/docs").status_code == 404
+        assert client.get("/openapi.json").status_code == 404
+        failed = client.get("/unexpected-test-error")
+        assert failed.status_code == 500
+        assert failed.json() == {
+            "error": {"code": "internal_error", "message": "The request could not be completed"}
+        }
+        assert failed.headers["X-Content-Type-Options"] == "nosniff"
+        assert "default-src 'self'" in failed.headers["Content-Security-Policy"]
+
+        live_event = {
+            "id": "evt_live_forbidden",
+            "livemode": True,
+            "type": "checkout.session.completed",
+            "data": {"object": {"livemode": True}},
+        }
+        monkeypatch.setattr(stripe.Webhook, "construct_event", lambda *_: live_event)
+        live = client.post(
+            "/api/billing/webhook",
+            content=b"live-payload",
+            headers={"Stripe-Signature": "test-signature"},
+        )
+        assert live.status_code == 422
+        assert live.json()["error"]["code"] == "billing_live_event_rejected"
+
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import pathlib,sys; import unrender.product; "
+            "assert 'unrender.product.web' not in sys.modules; "
+            "assert 'unrender.product.storage' not in sys.modules; "
+            "assert not pathlib.Path('.unrender-data').exists()",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(STATIC_DIR.parents[2])},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
+
+
+def test_outer_asgi_failure_is_sanitized_with_security_headers() -> None:
+    async def failing_app(_scope: object, _receive: object, _send: object) -> None:
+        raise RuntimeError("private middleware detail")
+
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    middleware = SecurityHeadersMiddleware(failing_app, secure_cookies=True)  # type: ignore[arg-type]
+    asyncio.run(middleware({"type": "http", "path": "/failure"}, receive, send))  # type: ignore[arg-type]
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    headers = {
+        bytes(name).decode("latin-1").casefold(): bytes(value).decode("latin-1")
+        for name, value in start["headers"]  # type: ignore[union-attr]
+    }
+    body = b"".join(
+        bytes(message.get("body", b""))
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    assert start["status"] == 500
+    assert headers["x-content-type-options"] == "nosniff"
+    assert "default-src 'self'" in headers["content-security-policy"]
+    assert b"private middleware detail" not in body
+
+
+def test_expensive_upload_concurrency_is_rejected_before_route_processing(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        settings_for(
+            tmp_path,
+            seed_demo_account=False,
+            max_concurrent_expensive_requests=1,
+        )
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    route_calls = 0
+
+    def slow_upload(**_: object) -> dict[str, object]:
+        nonlocal route_calls
+        route_calls += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return {
+            "id": "bounded-upload",
+            "name": "chart.png",
+            "mime_type": "image/png",
+            "page_count": 1,
+            "expires_at": timestamp(),
+        }
+
+    app.state.service.prepare_upload_stream = slow_upload
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            json={"email": "upload-limit@example.com", "password": "long enough password"},
+        )
+        assert registered.status_code == 201
+        first_status: list[int] = []
+
+        def first_upload() -> None:
+            response = client.post(
+                "/api/uploads",
+                headers=csrf_headers(client),
+                files={"file": ("first.png", png_bytes(), "image/png")},
+            )
+            first_status.append(response.status_code)
+
+        thread = threading.Thread(target=first_upload)
+        thread.start()
+        assert entered.wait(timeout=5)
+        blocked = client.post(
+            "/api/uploads",
+            headers=csrf_headers(client),
+            files={"file": ("second.png", png_bytes(), "image/png")},
+        )
+        assert blocked.status_code == 503
+        assert blocked.json()["error"]["code"] == "expensive_capacity_reached"
+        release.set()
+        thread.join(timeout=5)
+    assert first_status == [201]
+    assert route_calls == 1
+
+
+def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolved: list[tuple[str, str]] = []
+
+    def from_name(app_name: str, function_name: str) -> SimpleNamespace:
+        resolved.append((app_name, function_name))
+        return SimpleNamespace(remote=lambda *_: (_ for _ in ()).throw(AssertionError("spent")))
+
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(Function=SimpleNamespace(from_name=from_name)),
+    )
+    settings = settings_for(
+        tmp_path,
+        extractor_backend="modal",
+        modal_provider_release="A" * 64,
+    )
+    extractor = ModalExtractor(settings)
+    assert extractor.canary_contract()
+    assert resolved == [("unrender", "infer_one")]
+
+    response = {
+        "json": json.loads(
+            (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+        )["result"],
+        "raw": "case-normalized",
+        "provider_release": "a" * 64,
+    }
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(
+            Function=SimpleNamespace(
+                from_name=lambda *_: SimpleNamespace(remote=lambda *_: response)
+            )
+        ),
+    )
+    assert extractor.extract(png_bytes()).model_version.endswith("+provider:aaaaaaaaaaaa")
+
+
+def test_nonfinite_chart_coordinates_are_rejected() -> None:
+    payload = {
+        "chart_type": "line",
+        "title": "Nonfinite",
+        "x_axis": {"label": "x", "unit": None},
+        "y_axis": {"label": "y", "unit": None},
+        "series": [{"name": None, "points": [{"x": float("nan"), "y": 1.0}]}],
+    }
+    with pytest.raises(ValueError):
+        ChartData.model_validate(payload)
+    payload["series"][0]["points"][0] = {"x": 1.0, "y": float("inf")}
+    with pytest.raises(ValueError):
+        ChartData.model_validate(payload)
+
+
+def test_browser_auth_epoch_discards_delayed_old_account_responses() -> None:
+    result = subprocess.run(
+        ["node", str(Path(__file__).with_name("browser_auth_epoch.mjs"))],
+        cwd=STATIC_DIR.parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout

@@ -12,7 +12,9 @@ The research pipeline references Qwen3-VL model artifacts distributed through Qw
 
 ## Runtime libraries
 
-The application depends on Python, FastAPI/Starlette, Uvicorn, Pydantic, Pillow, PyMuPDF, OpenPyXL, the Modal and Stripe Python clients, NumPy, Matplotlib, and related transitive packages. Exact runtime versions/hashes are in `requirements-app.lock`; test/lint and wheel-build toolchains are separately resolved in `requirements-dev.lock` and `requirements-build.lock`. Generate and archive an SBOM plus all required license texts for a public binary/container release.
+The application depends on Python, FastAPI/Starlette, Uvicorn, Pydantic, Pillow, pypdfium2/PDFium, OpenPyXL, the Modal and Stripe Python clients, NumPy, Matplotlib, and related transitive packages. Exact runtime versions/hashes are in `requirements-app.lock`; test/lint and wheel-build toolchains are separately resolved in `requirements-dev.lock` and `requirements-build.lock`. The checked-in CycloneDX inventory is `release/sbom.cdx.json`.
+
+`PyMuPDF` has been removed from product code and both runtime/development locks. PDF validation and rasterization now use locked `pypdfium2==5.13.0`; upstream identifies the binding as Apache-2.0 OR BSD-3-Clause and PDFium as BSD-style with additional dependency notices. The platform wheels ship their applicable license files under package metadata; every binary distribution must retain them. This engineering replacement removes the former mandatory AGPL/commercial-license dependency, but it is not legal advice and does not approve the overall product release. The machine policy keeps public release blocked until the owner and qualified counsel approve the contracting/privacy/terms/distribution details.
 
 ## External services
 

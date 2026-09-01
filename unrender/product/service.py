@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import hmac
@@ -11,11 +12,13 @@ import logging
 import math
 import re
 import sqlite3
+import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from openpyxl import Workbook
 
@@ -31,7 +34,7 @@ from unrender.product.security import (
     token_hash,
     verify_password,
 )
-from unrender.product.storage import InvalidUpload, Storage
+from unrender.product.storage import InvalidUpload, StagedUpload, Storage
 from unrender.schema.chart_schema import CHART_TYPES, ChartData
 
 _SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
@@ -39,6 +42,20 @@ _NUMERIC_CELL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 _MAX_RESULT_JSON_BYTES = 1_000_000
 logger = logging.getLogger("unrender.product")
+
+
+@dataclass(frozen=True)
+class WorkerClaim:
+    job_id: str
+    user_id: str
+    attempt: int
+    generation: int
+    token: str
+    owner: str
+    row: sqlite3.Row
+
+    def __getitem__(self, key: str) -> Any:
+        return self.row[key]
 
 
 def utcnow() -> datetime:
@@ -109,14 +126,42 @@ class ProductService:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.settings.data_dir.chmod(0o700)
         self.database.initialize()
-        self._retire_legacy_shared_demo()
-        self.reconcile_storage()
-        self.drain_deletion_queue()
-        if recover_jobs:
-            self.recover_interrupted_jobs()
+        with self.database.startup_lock():
+            self._retire_legacy_shared_demo()
+            self.reconcile_storage()
+            self.drain_deletion_queue()
+            if recover_jobs:
+                self.recover_interrupted_jobs()
+            with self.database.transaction(immediate=True) as conn:
+                conn.execute(
+                    "UPDATE startup_state SET last_reconciled_at=? WHERE singleton=1",
+                    (timestamp(),),
+                )
 
     def _id(self) -> str:
         return str(uuid.uuid4())
+
+    @staticmethod
+    def _encode_cursor(created_at: str, row_id: str) -> str:
+        payload = json.dumps([created_at, row_id], separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+    @staticmethod
+    def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
+        if cursor is None:
+            return None
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            value = json.loads(base64.urlsafe_b64decode(cursor + padding))
+            if (
+                not isinstance(value, list)
+                or len(value) != 2
+                or not all(isinstance(item, str) and item for item in value)
+            ):
+                raise ValueError
+            return value[0], value[1]
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ProductError("invalid_cursor", "Pagination cursor is invalid", 422) from exc
 
     def _audit(
         self,
@@ -127,6 +172,36 @@ class ProductService:
         job_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
+        if user_id:
+            cutoff = timestamp(utcnow() - timedelta(days=self.settings.audit_retention_days))
+            self._rollup_audit_events(conn, user_id=user_id, before=cutoff)
+            user_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM audit_events WHERE user_id=?", (user_id,)
+                ).fetchone()["count"]
+            )
+            job_count = (
+                int(
+                    conn.execute(
+                        "SELECT COUNT(*) AS count FROM audit_events WHERE job_id=?", (job_id,)
+                    ).fetchone()["count"]
+                )
+                if job_id
+                else 0
+            )
+            if user_count >= self.settings.max_audit_events_per_user:
+                self._rollup_oldest_audit_events(
+                    conn,
+                    user_id=user_id,
+                    count=user_count - self.settings.max_audit_events_per_user + 1,
+                )
+            if job_id and job_count >= self.settings.max_audit_events_per_job:
+                self._rollup_oldest_audit_events(
+                    conn,
+                    user_id=user_id,
+                    job_id=job_id,
+                    count=job_count - self.settings.max_audit_events_per_job + 1,
+                )
         conn.execute(
             "INSERT INTO audit_events(id,user_id,job_id,event_type,details_json,created_at) "
             "VALUES (?,?,?,?,?,?)",
@@ -139,6 +214,102 @@ class ProductService:
                 timestamp(),
             ),
         )
+
+    def _rollup_audit_events(self, conn: sqlite3.Connection, *, user_id: str, before: str) -> None:
+        rows = conn.execute(
+            "SELECT id,job_id,event_type,created_at FROM audit_events "
+            "WHERE user_id=? AND created_at<? ORDER BY created_at,id",
+            (user_id, before),
+        ).fetchall()
+        self._aggregate_audit_rows(conn, user_id=user_id, rows=rows)
+
+    def _rollup_oldest_audit_events(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        count: int,
+        job_id: str | None = None,
+    ) -> None:
+        rows = conn.execute(
+            "SELECT id,job_id,event_type,created_at FROM audit_events WHERE user_id=? "
+            "AND (? IS NULL OR job_id=?) ORDER BY created_at,id LIMIT ?",
+            (user_id, job_id, job_id, max(0, count)),
+        ).fetchall()
+        self._aggregate_audit_rows(conn, user_id=user_id, rows=rows)
+
+    def _aggregate_audit_rows(
+        self, conn: sqlite3.Connection, *, user_id: str, rows: list[sqlite3.Row]
+    ) -> None:
+        for row in rows:
+            job_id = row["job_id"]
+            conn.execute(
+                "INSERT INTO audit_rollups("
+                "user_id,job_id,job_scope,event_type,day,event_count,first_at,last_at"
+                ") VALUES (?,?,?,?,'archive',1,?,?) "
+                "ON CONFLICT(user_id,job_scope,event_type,day) "
+                "DO UPDATE SET event_count=event_count+1,"
+                "first_at=MIN(first_at,excluded.first_at),"
+                "last_at=MAX(last_at,excluded.last_at)",
+                (
+                    user_id,
+                    job_id,
+                    str(job_id) if job_id is not None else "account",
+                    row["event_type"],
+                    row["created_at"],
+                    row["created_at"],
+                ),
+            )
+            conn.execute("DELETE FROM audit_events WHERE id=?", (row["id"],))
+
+    def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
+        tables = (
+            "sessions",
+            "uploads",
+            "jobs",
+            "result_versions",
+            "audit_events",
+            "audit_rollups",
+            "credit_ledger",
+            "api_keys",
+            "api_idempotency",
+            "provider_attempts",
+            "pending_deletions",
+        )
+        total = 0
+        for table in tables:
+            if user_id is None:
+                row = conn.execute(
+                    f'SELECT COUNT(*) AS count FROM "{table}"'  # noqa: S608 -- closed tuple
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    f'SELECT COUNT(*) AS count FROM "{table}" WHERE user_id=?',  # noqa: S608 -- closed internal tuple
+                    (user_id,),
+                ).fetchone()
+            total += int(row["count"])
+        if user_id is None:
+            for table in ("users", "billing_events", "rate_limits"):
+                total += int(
+                    conn.execute(
+                        f'SELECT COUNT(*) AS count FROM "{table}"'  # noqa: S608 -- closed tuple
+                    ).fetchone()["count"]
+                )
+        return total
+
+    def _assert_database_capacity(self, conn: sqlite3.Connection, user_id: str) -> None:
+        if self._database_row_count(conn, user_id) >= self.settings.max_database_rows_per_user:
+            raise ProductError(
+                "database_quota_reached",
+                "This workspace has reached its retained-record limit; delete old work and retry",
+                429,
+            )
+        if self._database_row_count(conn) >= self.settings.max_database_rows_global:
+            raise ProductError(
+                "service_capacity_reached",
+                "The service has reached its retained-record safety limit",
+                503,
+            )
 
     def _change_credits(
         self,
@@ -155,6 +326,21 @@ class ProductService:
         ).fetchone()
         if existing:
             return int(existing["balance_after"])
+        ledger_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM credit_ledger WHERE user_id=?", (user_id,)
+            ).fetchone()["count"]
+        )
+        reserve_guard = self.settings.max_credit_ledger_records_per_user - 2
+        if ledger_count >= self.settings.max_credit_ledger_records_per_user or (
+            delta < 0 and ledger_count >= reserve_guard
+        ):
+            raise ProductError(
+                "credit_ledger_capacity_reached",
+                "Credit activity is paused until an operator archives this account ledger",
+                503,
+            )
+        self._assert_database_capacity(conn, user_id)
         user = conn.execute("SELECT credit_balance FROM users WHERE id=?", (user_id,)).fetchone()
         if not user:
             raise ProductError("user_not_found", "Account no longer exists", 404)
@@ -189,6 +375,12 @@ class ProductService:
             raise ProductError("invalid_account", str(exc), 422) from exc
         try:
             with self.database.transaction(immediate=True) as conn:
+                if self._database_row_count(conn) >= self.settings.max_database_rows_global:
+                    raise ProductError(
+                        "service_capacity_reached",
+                        "The service has reached its retained-record safety limit",
+                        503,
+                    )
                 conn.execute(
                     "INSERT INTO users("
                     "id,email,password_hash,account_kind,credit_balance,created_at"
@@ -288,7 +480,15 @@ class ProductService:
         session_token = random_token()
         csrf_token = random_token(24)
         now = utcnow()
-        with self.database.transaction() as conn:
+        with self.database.transaction(immediate=True) as conn:
+            conn.execute("DELETE FROM sessions WHERE expires_at<=?", (timestamp(now),))
+            self._assert_database_capacity(conn, user_id)
+            sessions = conn.execute(
+                "SELECT id FROM sessions WHERE user_id=? ORDER BY created_at DESC,id DESC",
+                (user_id,),
+            ).fetchall()
+            for stale in sessions[self.settings.max_sessions_per_user - 1 :]:
+                conn.execute("DELETE FROM sessions WHERE id=?", (stale["id"],))
             conn.execute(
                 "INSERT INTO sessions(id,user_id,token_hash,csrf_hash,expires_at,created_at) "
                 "VALUES (?,?,?,?,?,?)",
@@ -360,9 +560,6 @@ class ProductService:
             "credit_pack_size": self.settings.credit_pack_size,
             "demo_mode": self.settings.extractor_backend == "replay",
             "demo_account": user["account_kind"] == "demo",
-            "api_docs_available": (
-                self.settings.environment != "production" and user["account_kind"] != "demo"
-            ),
         }
 
     def prepare_upload(self, *, user_id: str, filename: str, content: bytes) -> dict[str, Any]:
@@ -396,9 +593,10 @@ class ProductService:
             "COALESCE((SELECT SUM(source_byte_size) FROM jobs WHERE user_id=?),0) + "
             "COALESCE((SELECT SUM(byte_size) FROM pending_deletions WHERE user_id=?),0) "
             "AS bytes, "
+            "(SELECT COUNT(*) FROM uploads WHERE user_id=?) AS upload_records, "
             "(SELECT COUNT(*) FROM uploads WHERE user_id=? AND NOT EXISTS ("
             "SELECT 1 FROM jobs WHERE jobs.upload_id=uploads.id)) AS unattached",
-            (user_id, user_id, user_id, user_id),
+            (user_id, user_id, user_id, user_id, user_id),
         ).fetchone()
         existing_fixture = (
             conn.execute(
@@ -418,6 +616,12 @@ class ProductService:
             raise ProductError(
                 "upload_quota_reached",
                 "Finish or remove an existing upload before adding another",
+                429,
+            )
+        if int(usage["upload_records"]) >= self.settings.max_upload_records_per_user:
+            raise ProductError(
+                "upload_record_quota_reached",
+                "This workspace has reached its retained upload-record limit",
                 429,
             )
         if int(usage["bytes"]) + incoming_bytes > self.settings.max_user_storage_bytes:
@@ -465,6 +669,12 @@ class ProductService:
                 "This isolated sample session can create one verification run",
                 409,
             )
+        if int(usage["jobs"]) >= self.settings.max_jobs_per_user:
+            raise ProductError(
+                "job_record_quota_reached",
+                "This workspace has reached its retained extraction limit",
+                429,
+            )
         if int(usage["bytes"]) + incoming_bytes > self.settings.max_user_storage_bytes:
             raise ProductError(
                 "storage_quota_reached",
@@ -481,20 +691,57 @@ class ProductService:
         require_credit: bool,
         fixture_sha256: str | None = None,
     ) -> dict[str, Any]:
-        inspection = self.storage.inspect(content)
-        self._consume_upload_bytes(user_id, inspection.byte_size)
+        staged = self.storage.stage_upload(io.BytesIO(content))
+        return self._prepare_staged_upload(
+            user_id=user_id,
+            filename=filename,
+            staged=staged,
+            require_credit=require_credit,
+            fixture_sha256=fixture_sha256,
+        )
+
+    def prepare_upload_stream(
+        self, *, user_id: str, filename: str, source: BinaryIO
+    ) -> dict[str, Any]:
+        self.require_customer_account(user_id, "customer uploads")
+        return self._prepare_staged_upload(
+            user_id=user_id,
+            filename=filename,
+            staged=self.storage.stage_upload(source),
+            require_credit=True,
+        )
+
+    def _prepare_staged_upload(
+        self,
+        *,
+        user_id: str,
+        filename: str,
+        staged: StagedUpload,
+        require_credit: bool,
+        fixture_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        inspection = staged.inspection
+        try:
+            self._consume_upload_bytes(user_id, inspection.byte_size)
+        except Exception:
+            staged.path.unlink(missing_ok=True)
+            raise
         upload_id = self._id()
         safe_name = Path(filename or "chart").name[:180]
-        path = self.storage.save_upload(user_id=user_id, upload_id=upload_id, content=content)
+        path: Path | None = None
         now = utcnow()
         try:
             with self.database.transaction(immediate=True) as conn:
+                self._assert_database_capacity(conn, user_id)
                 self._assert_upload_capacity(
                     conn,
                     user_id=user_id,
                     incoming_bytes=inspection.byte_size,
                     require_credit=require_credit,
                     fixture_sha256=fixture_sha256,
+                )
+                path = self.storage.commit_staged_upload(
+                    user_id=user_id, upload_id=upload_id, staged=staged.path
                 )
                 conn.execute(
                     "INSERT INTO uploads("
@@ -522,7 +769,10 @@ class ProductService:
                     details={"upload_id": upload_id, "mime": inspection.mime_type},
                 )
         except Exception:
-            self.storage.delete(path)
+            if path is not None:
+                self.storage.delete(path)
+            else:
+                staged.path.unlink(missing_ok=True)
             raise
         return {
             "id": upload_id,
@@ -601,11 +851,7 @@ class ProductService:
             except (KeyError, TypeError, ValueError) as exc:
                 raise ProductError("invalid_crop", "Crop must stay within the source") from exc
         job_id = self._id()
-        source_path = self.storage.copy_to_job(
-            user_id=user_id,
-            job_id=job_id,
-            source=Path(upload["storage_path"]),
-        )
+        source_path: Path | None = None
         now = timestamp()
         credit_cost = 0 if self._is_free_demo_fixture(str(upload["sha256"])) else 1
         try:
@@ -614,6 +860,11 @@ class ProductService:
                     conn,
                     user_id=user_id,
                     incoming_bytes=int(upload["byte_size"]),
+                )
+                source_path = self.storage.copy_to_job(
+                    user_id=user_id,
+                    job_id=job_id,
+                    source=Path(upload["storage_path"]),
                 )
                 if credit_cost:
                     self._change_credits(
@@ -657,7 +908,8 @@ class ProductService:
                     },
                 )
         except Exception:
-            self.storage.delete(source_path)
+            if source_path is not None:
+                self.storage.delete(source_path)
             raise
         return self.get_job(user_id=user_id, job_id=job_id)
 
@@ -713,16 +965,58 @@ class ProductService:
     ) -> dict[str, Any]:
         """Atomically persist, reserve, and queue one public API request."""
 
-        self.require_customer_account(user_id, "API extraction")
+        return self._submit_api_staged_extraction(
+            user_id=user_id,
+            filename=filename,
+            staged=self.storage.stage_upload(io.BytesIO(content)),
+            page_index=page_index,
+            idempotency_key=idempotency_key,
+        )
+
+    def submit_api_extraction_stream(
+        self,
+        *,
+        user_id: str,
+        filename: str,
+        source: BinaryIO,
+        page_index: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return self._submit_api_staged_extraction(
+            user_id=user_id,
+            filename=filename,
+            staged=self.storage.stage_upload(source),
+            page_index=page_index,
+            idempotency_key=idempotency_key,
+        )
+
+    def _submit_api_staged_extraction(
+        self,
+        *,
+        user_id: str,
+        filename: str,
+        staged: StagedUpload,
+        page_index: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Atomically commit one bounded request spool, reservation, and queue row."""
+
+        try:
+            self.require_customer_account(user_id, "API extraction")
+        except Exception:
+            staged.path.unlink(missing_ok=True)
+            raise
         if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
+            staged.path.unlink(missing_ok=True)
             raise ProductError(
                 "idempotency_key_required",
                 "Provide an Idempotency-Key of 8-128 letters, numbers, '.', '_', ':', or '-'",
                 422,
             )
         stored_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
-        inspection = self.storage.inspect(content)
+        inspection = staged.inspection
         if not 0 <= page_index < inspection.page_count:
+            staged.path.unlink(missing_ok=True)
             raise ProductError("invalid_page", "Selected page does not exist")
         safe_name = Path(filename or "chart").name[:180]
         request_sha256 = hashlib.sha256(
@@ -742,9 +1036,14 @@ class ProductService:
                 (user_id, stored_key),
             ).fetchone()
         if existing:
+            staged.path.unlink(missing_ok=True)
             return self._idempotent_response(existing, request_sha256=request_sha256)
 
-        self._consume_upload_bytes(user_id, inspection.byte_size)
+        try:
+            self._consume_upload_bytes(user_id, inspection.byte_size)
+        except Exception:
+            staged.path.unlink(missing_ok=True)
+            raise
         upload_id = self._id()
         job_id = self._id()
         upload_path: Path | None = None
@@ -756,7 +1055,9 @@ class ProductService:
                     (user_id, stored_key),
                 ).fetchone()
                 if existing:
+                    staged.path.unlink(missing_ok=True)
                     return self._idempotent_response(existing, request_sha256=request_sha256)
+                self._assert_database_capacity(conn, user_id)
                 self._assert_upload_capacity(
                     conn,
                     user_id=user_id,
@@ -805,10 +1106,10 @@ class ProductService:
                         timestamp(now + timedelta(hours=self.settings.idempotency_ttl_hours)),
                     ),
                 )
-                upload_path = self.storage.save_upload(
+                upload_path = self.storage.commit_staged_upload(
                     user_id=user_id,
                     upload_id=upload_id,
-                    content=content,
+                    staged=staged.path,
                 )
                 source_path = self.storage.copy_to_job(
                     user_id=user_id,
@@ -888,6 +1189,7 @@ class ProductService:
                 )
             return response
         except Exception:
+            staged.path.unlink(missing_ok=True)
             failed_paths = [path for path in (source_path, upload_path) if path is not None]
             for path in failed_paths:
                 try:
@@ -902,13 +1204,38 @@ class ProductService:
                         )
             raise
 
-    def list_jobs(self, user_id: str) -> list[dict[str, Any]]:
+    def list_jobs_page(
+        self, user_id: str, *, cursor: str | None = None, limit: int = 50
+    ) -> dict[str, Any]:
+        bounded_limit = min(max(limit, 1), 100)
+        decoded = self._decode_cursor(cursor)
+        created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
-                (user_id,),
+                "SELECT * FROM jobs WHERE user_id=? AND ("
+                "? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
+                "ORDER BY created_at DESC,id DESC LIMIT ?",
+                (user_id, created_at, created_at, created_at, row_id, bounded_limit + 1),
             ).fetchall()
-        return [public_job(row, include_result=False) for row in rows]
+        page = rows[:bounded_limit]
+        return {
+            "items": [public_job(row, include_result=False) for row in page],
+            "next_cursor": (
+                self._encode_cursor(str(page[-1]["created_at"]), str(page[-1]["id"]))
+                if len(rows) > bounded_limit and page
+                else None
+            ),
+        }
+
+    def list_jobs(self, user_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            page = self.list_jobs_page(user_id, cursor=cursor, limit=100)
+            items.extend(page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return items
 
     def _job_row(self, *, user_id: str, job_id: str) -> sqlite3.Row:
         with self.database.connect() as conn:
@@ -935,22 +1262,71 @@ class ProductService:
         except InvalidUpload as exc:
             raise ProductError("source_unavailable", str(exc), 422) from exc
 
-    def job_audit(self, *, user_id: str, job_id: str) -> list[dict[str, Any]]:
+    def job_audit_page(
+        self,
+        *,
+        user_id: str,
+        job_id: str,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
         self._job_row(user_id=user_id, job_id=job_id)
+        bounded_limit = min(max(limit, 1), 100)
+        decoded = self._decode_cursor(cursor)
+        created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT event_type,details_json,created_at FROM audit_events "
-                "WHERE job_id=? ORDER BY created_at",
-                (job_id,),
+                "SELECT id,event_type,details_json,created_at FROM audit_events "
+                "WHERE job_id=? AND (? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
+                "ORDER BY created_at DESC,id DESC LIMIT ?",
+                (job_id, created_at, created_at, created_at, row_id, bounded_limit + 1),
             ).fetchall()
-        return [
-            {
-                "event": row["event_type"],
-                "details": json.loads(row["details_json"]),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
+            rollups = (
+                conn.execute(
+                    "SELECT event_type,event_count,first_at,last_at FROM audit_rollups "
+                    "WHERE job_id=? ORDER BY last_at DESC,event_type",
+                    (job_id,),
+                ).fetchall()
+                if cursor is None
+                else []
+            )
+        page = rows[:bounded_limit]
+        return {
+            "items": [
+                {
+                    "event": row["event_type"],
+                    "details": json.loads(row["details_json"]),
+                    "created_at": row["created_at"],
+                }
+                for row in page
+            ],
+            "rollups": [
+                {
+                    "event": row["event_type"],
+                    "count": int(row["event_count"]),
+                    "first_at": row["first_at"],
+                    "created_at": row["last_at"],
+                }
+                for row in rollups
+            ],
+            "next_cursor": (
+                self._encode_cursor(str(page[-1]["created_at"]), str(page[-1]["id"]))
+                if len(rows) > bounded_limit and page
+                else None
+            ),
+        }
+
+    def job_audit(self, *, user_id: str, job_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            page = self.job_audit_page(user_id=user_id, job_id=job_id, cursor=cursor, limit=100)
+            if cursor is None:
+                items.extend(page["rollups"])
+            items.extend(page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return items
 
     def job_versions(
         self,
@@ -1099,6 +1475,8 @@ class ProductService:
             for point in series.points:
                 if not math.isfinite(point.y):
                     raise ValueError("Chart values must be finite")
+                if isinstance(point.x, (int, float)) and not math.isfinite(float(point.x)):
+                    raise ValueError("Chart coordinates must be finite")
                 if isinstance(point.x, str) and len(point.x) > 500:
                     raise ValueError("Chart labels are too long")
         if len(chart.model_dump_json().encode()) > _MAX_RESULT_JSON_BYTES:
@@ -1132,7 +1510,7 @@ class ProductService:
             if not row:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] == "queued":
-                self._finish_cancelled_in_transaction(conn, row)
+                self._finish_cancelled_queued_in_transaction(conn, row)
             elif row["status"] == "running":
                 conn.execute(
                     "UPDATE jobs SET cancel_requested=1,"
@@ -1160,6 +1538,7 @@ class ProductService:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] not in {"review", "approved", "failed", "cancelled"}:
                 raise ProductError("job_busy", "This extraction is already in progress", 409)
+            self._assert_database_capacity(conn, user_id)
             estimated_result_bytes = (
                 len(str(row["current_result_json"]).encode())
                 if row["current_result_json"]
@@ -1185,7 +1564,9 @@ class ProductService:
             conn.execute(
                 "UPDATE jobs SET status='queued',progress_stage='Waiting for extraction',"
                 "attempt=?,recovery_count=0,cancel_requested=0,reservation_active=?,error_code=NULL,"
-                "error_message=NULL,updated_at=? WHERE id=?",
+                "error_message=NULL,provider_dispatched=0,provider_dispatched_at=NULL,"
+                "worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
+                "updated_at=? WHERE id=?",
                 (attempt, credit_cost, now, job_id),
             )
             self._audit(
@@ -1227,6 +1608,15 @@ class ProductService:
                         "billing_event_conflict", "Billing event replay did not match", 409
                     )
                 return False
+            billing_count = int(
+                conn.execute("SELECT COUNT(*) AS count FROM billing_events").fetchone()["count"]
+            )
+            if billing_count >= self.settings.max_billing_events_global:
+                raise ProductError(
+                    "billing_event_capacity_reached",
+                    "Billing event processing is paused pending operator archival",
+                    503,
+                )
             user = conn.execute(
                 "SELECT id,account_kind FROM users WHERE id=?", (user_id,)
             ).fetchone()
@@ -1405,6 +1795,7 @@ class ProductService:
                 user_id=user_id,
                 byte_size=int(row["byte_size"]),
             )
+        conn.execute("DELETE FROM audit_events WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
 
     def drain_deletion_queue(self, *, paths: list[str] | None = None, limit: int = 200) -> int:
@@ -1419,8 +1810,15 @@ class ProductService:
             selected = list(dict.fromkeys(paths[:limit]))
         deleted = 0
         for storage_path in selected:
+            with self.database.transaction(immediate=True) as conn:
+                if self._path_is_referenced(conn, storage_path):
+                    conn.execute(
+                        "DELETE FROM pending_deletions WHERE storage_path=?", (storage_path,)
+                    )
+                    continue
             try:
-                self.storage.delete(storage_path)
+                with self.database.operational_lock():
+                    self.storage.delete(storage_path)
             except Exception as exc:
                 with self.database.transaction(immediate=True) as conn:
                     conn.execute(
@@ -1437,13 +1835,52 @@ class ProductService:
                 deleted += int(changed == 1)
         return deleted
 
+    @staticmethod
+    def _path_is_referenced(conn: sqlite3.Connection, storage_path: str) -> bool:
+        return (
+            conn.execute(
+                "SELECT 1 FROM uploads WHERE storage_path=? "
+                "UNION SELECT 1 FROM jobs WHERE source_path=? LIMIT 1",
+                (storage_path, storage_path),
+            ).fetchone()
+            is not None
+        )
+
     def create_api_key(self, *, user_id: str, name: str) -> dict[str, str]:
         self.require_customer_account(user_id, "API credentials")
         clean_name = name.strip()[:80]
         if not clean_name:
             raise ProductError("invalid_key_name", "Name the API key")
         secret, prefix, digest = api_key()
-        with self.database.transaction() as conn:
+        with self.database.transaction(immediate=True) as conn:
+            self._assert_database_capacity(conn, user_id)
+            counts = conn.execute(
+                "SELECT COUNT(*) AS retained,"
+                "SUM(CASE WHEN revoked_at IS NULL THEN 1 ELSE 0 END) AS active "
+                "FROM api_keys WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+            if int(counts["active"] or 0) >= self.settings.max_active_api_keys_per_user:
+                raise ProductError(
+                    "active_api_key_limit_reached",
+                    "Revoke an active API key before creating another",
+                    429,
+                )
+            retained = int(counts["retained"] or 0)
+            if retained >= self.settings.max_api_key_records_per_user:
+                removable = retained - self.settings.max_api_key_records_per_user + 1
+                deleted = conn.execute(
+                    "DELETE FROM api_keys WHERE id IN (SELECT id FROM api_keys "
+                    "WHERE user_id=? AND revoked_at IS NOT NULL "
+                    "ORDER BY revoked_at,created_at,id LIMIT ?)",
+                    (user_id, removable),
+                ).rowcount
+                if deleted < removable:
+                    raise ProductError(
+                        "api_key_history_limit_reached",
+                        "Revoke old credentials before creating another API key",
+                        429,
+                    )
             conn.execute(
                 "INSERT INTO api_keys(id,user_id,name,prefix,key_hash,created_at) "
                 "VALUES (?,?,?,?,?,?)",
@@ -1457,15 +1894,43 @@ class ProductService:
             )
         return {"key": secret, "prefix": prefix, "name": clean_name}
 
-    def list_api_keys(self, *, user_id: str) -> list[dict[str, Any]]:
+    def list_api_keys_page(
+        self,
+        *,
+        user_id: str,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
         self.require_customer_account(user_id, "API credentials")
+        bounded_limit = min(max(limit, 1), 100)
+        decoded = self._decode_cursor(cursor)
+        created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
                 "SELECT id,name,prefix,created_at,last_used_at,revoked_at FROM api_keys "
-                "WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
-                (user_id,),
+                "WHERE user_id=? AND (? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
+                "ORDER BY created_at DESC,id DESC LIMIT ?",
+                (user_id, created_at, created_at, created_at, row_id, bounded_limit + 1),
             ).fetchall()
-        return [dict(row) for row in rows]
+        page = rows[:bounded_limit]
+        return {
+            "items": [dict(row) for row in page],
+            "next_cursor": (
+                self._encode_cursor(str(page[-1]["created_at"]), str(page[-1]["id"]))
+                if len(rows) > bounded_limit and page
+                else None
+            ),
+        }
+
+    def list_api_keys(self, *, user_id: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            page = self.list_api_keys_page(user_id=user_id, cursor=cursor, limit=100)
+            items.extend(page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return items
 
     def revoke_api_key(self, *, user_id: str, key_id: str) -> dict[str, Any]:
         self.require_customer_account(user_id, "API credentials")
@@ -1493,6 +1958,26 @@ class ProductService:
                 revoked_at = row["revoked_at"]
         return {**dict(row), "revoked_at": revoked_at}
 
+    def revoke_all_api_keys(self, *, user_id: str) -> int:
+        self.require_customer_account(user_id, "API credentials")
+        with self.database.transaction(immediate=True) as conn:
+            now = timestamp()
+            rows = conn.execute(
+                "SELECT prefix FROM api_keys WHERE user_id=? AND revoked_at IS NULL", (user_id,)
+            ).fetchall()
+            changed = conn.execute(
+                "UPDATE api_keys SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+                (now, user_id),
+            ).rowcount
+            if changed:
+                self._audit(
+                    conn,
+                    user_id=user_id,
+                    event_type="api_keys_revoked_all",
+                    details={"count": changed, "prefixes": [row["prefix"] for row in rows[:20]]},
+                )
+        return int(changed)
+
     def api_key_user(self, secret: str | None) -> sqlite3.Row | None:
         if not secret or not secret.startswith("unr_"):
             return None
@@ -1511,58 +1996,303 @@ class ProductService:
                 )
         return row
 
-    def claim_next_job(self) -> sqlite3.Row | None:
+    def claim_next_job(self, worker_owner: str = "manual") -> WorkerClaim | None:
+        now = utcnow()
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1"
+                "SELECT * FROM jobs WHERE status='queued' ORDER BY created_at,id LIMIT 1"
             ).fetchone()
             if not row:
                 return None
+            token = random_token(24)
+            generation = int(row["lease_generation"]) + 1
             changed = conn.execute(
-                "UPDATE jobs SET status='running',progress_stage='Preparing source',updated_at=? "
-                "WHERE id=? AND status='queued'",
-                (timestamp(), row["id"]),
+                "UPDATE jobs SET status='running',progress_stage='Preparing source',"
+                "worker_owner=?,lease_token=?,lease_generation=?,heartbeat_at=?,lease_expires_at=?,"
+                "updated_at=? WHERE id=? AND status='queued' AND lease_generation=?",
+                (
+                    worker_owner,
+                    token,
+                    generation,
+                    timestamp(now),
+                    timestamp(now + timedelta(seconds=self.settings.worker_lease_seconds)),
+                    timestamp(now),
+                    row["id"],
+                    row["lease_generation"],
+                ),
             ).rowcount
             if changed != 1:
                 return None
-            self._audit(conn, user_id=row["user_id"], job_id=row["id"], event_type="job_started")
-            return conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
+            claimed = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
+            self._audit(
+                conn,
+                user_id=row["user_id"],
+                job_id=row["id"],
+                event_type="job_started",
+                details={"attempt": row["attempt"], "execution_generation": generation},
+            )
+        return WorkerClaim(
+            job_id=str(claimed["id"]),
+            user_id=str(claimed["user_id"]),
+            attempt=int(claimed["attempt"]),
+            generation=generation,
+            token=token,
+            owner=worker_owner,
+            row=claimed,
+        )
 
-    def process_one(self) -> bool:
-        row = self.claim_next_job()
-        if not row:
+    def _claim_row(
+        self, conn: sqlite3.Connection, claim: WorkerClaim, *, require_live_lease: bool = True
+    ) -> sqlite3.Row | None:
+        sql = (
+            "SELECT * FROM jobs WHERE id=? AND user_id=? AND attempt=? AND status='running' "
+            "AND worker_owner=? AND lease_token=? AND lease_generation=?"
+        )
+        values: list[Any] = [
+            claim.job_id,
+            claim.user_id,
+            claim.attempt,
+            claim.owner,
+            claim.token,
+            claim.generation,
+        ]
+        if require_live_lease:
+            sql += " AND lease_expires_at>?"
+            values.append(timestamp())
+        return conn.execute(sql, values).fetchone()
+
+    def heartbeat_claim(self, claim: WorkerClaim) -> bool:
+        now = utcnow()
+        with self.database.transaction(immediate=True) as conn:
+            changed = conn.execute(
+                "UPDATE jobs SET heartbeat_at=?,lease_expires_at=?,updated_at=? "
+                "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "
+                "AND lease_token=? AND lease_generation=? AND lease_expires_at>?",
+                (
+                    timestamp(now),
+                    timestamp(now + timedelta(seconds=self.settings.worker_lease_seconds)),
+                    timestamp(now),
+                    claim.job_id,
+                    claim.user_id,
+                    claim.attempt,
+                    claim.owner,
+                    claim.token,
+                    claim.generation,
+                    timestamp(now),
+                ),
+            ).rowcount
+        return changed == 1
+
+    def _update_claim_progress(self, claim: WorkerClaim, stage: str) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            current = self._claim_row(conn, claim)
+            if not current:
+                return False
+            return (
+                conn.execute(
+                    "UPDATE jobs SET progress_stage=?,updated_at=? WHERE id=? AND user_id=? "
+                    "AND attempt=? AND status='running' AND worker_owner=? AND lease_token=? "
+                    "AND lease_generation=? AND lease_expires_at>?",
+                    (
+                        stage,
+                        timestamp(),
+                        claim.job_id,
+                        claim.user_id,
+                        claim.attempt,
+                        claim.owner,
+                        claim.token,
+                        claim.generation,
+                        timestamp(),
+                    ),
+                ).rowcount
+                == 1
+            )
+
+    def _start_claim_heartbeat(
+        self, claim: WorkerClaim
+    ) -> tuple[threading.Event, threading.Event, threading.Thread]:
+        finished = threading.Event()
+        lost = threading.Event()
+
+        def renew() -> None:
+            while not finished.wait(self.settings.worker_heartbeat_seconds):
+                try:
+                    if not self.heartbeat_claim(claim):
+                        lost.set()
+                        return
+                except Exception:
+                    logger.exception("job_lease_heartbeat_failed")
+
+        thread = threading.Thread(
+            target=renew,
+            name=f"unrender-heartbeat-{claim.job_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        return finished, lost, thread
+
+    def _provider_circuit_open(self, conn: sqlite3.Connection, user_id: str) -> bool:
+        cutoff = timestamp(utcnow() - timedelta(hours=1))
+        user_failures = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM provider_attempts WHERE user_id=? "
+                "AND outcome='failed' AND completed_at>=?",
+                (user_id, cutoff),
+            ).fetchone()["count"]
+        )
+        global_failures = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM provider_attempts WHERE outcome='failed' "
+                "AND completed_at>=?",
+                (cutoff,),
+            ).fetchone()["count"]
+        )
+        return (
+            user_failures >= self.settings.provider_failure_limit_per_user_hour
+            or global_failures >= self.settings.provider_failure_limit_global_hour
+        )
+
+    def _begin_provider_dispatch(self, claim: WorkerClaim) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            current = self._claim_row(conn, claim)
+            if not current:
+                return False
+            if current["cancel_requested"]:
+                self._finish_cancelled_claim_in_transaction(conn, current, claim)
+                return False
+            if self._provider_circuit_open(conn, claim.user_id):
+                self._finish_failed_claim_in_transaction(
+                    conn,
+                    current,
+                    claim,
+                    "provider_circuit_open",
+                    "Provider dispatch is paused after repeated recent failures; "
+                    "no provider call was made.",
+                )
+                return False
+            retained_attempts = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM provider_attempts WHERE job_id=?",
+                    (claim.job_id,),
+                ).fetchone()["count"]
+            )
+            if retained_attempts >= self.settings.max_provider_attempts_per_job:
+                self._finish_failed_claim_in_transaction(
+                    conn,
+                    current,
+                    claim,
+                    "provider_attempt_history_limit",
+                    "This extraction reached its retained provider-attempt limit; "
+                    "no provider call was made.",
+                )
+                return False
+            now = timestamp()
+            changed = conn.execute(
+                "UPDATE jobs SET provider_dispatched=1,provider_dispatched_at=?,updated_at=? "
+                "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "
+                "AND lease_token=? AND lease_generation=? AND lease_expires_at>? "
+                "AND provider_dispatched=0 AND cancel_requested=0",
+                (
+                    now,
+                    now,
+                    claim.job_id,
+                    claim.user_id,
+                    claim.attempt,
+                    claim.owner,
+                    claim.token,
+                    claim.generation,
+                    now,
+                ),
+            ).rowcount
+            if changed != 1:
+                return False
+            conn.execute(
+                "INSERT INTO provider_attempts("
+                "job_id,user_id,attempt,lease_generation,dispatched_at"
+                ") VALUES (?,?,?,?,?)",
+                (claim.job_id, claim.user_id, claim.attempt, claim.generation, now),
+            )
+            self._audit(
+                conn,
+                user_id=claim.user_id,
+                job_id=claim.job_id,
+                event_type="provider_dispatched",
+                details={"attempt": claim.attempt, "execution_generation": claim.generation},
+            )
+            return True
+
+    def _release_claim_for_shutdown(self, claim: WorkerClaim) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            current = self._claim_row(conn, claim)
+            if not current or current["provider_dispatched"]:
+                return False
+            changed = conn.execute(
+                "UPDATE jobs SET status='queued',progress_stage='Worker draining',"
+                "worker_owner=NULL,"
+                "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "
+                "AND lease_token=? AND lease_generation=? AND lease_expires_at>? "
+                "AND provider_dispatched=0",
+                (
+                    timestamp(),
+                    claim.job_id,
+                    claim.user_id,
+                    claim.attempt,
+                    claim.owner,
+                    claim.token,
+                    claim.generation,
+                    timestamp(),
+                ),
+            ).rowcount
+            if changed:
+                self._audit(
+                    conn,
+                    user_id=claim.user_id,
+                    job_id=claim.job_id,
+                    event_type="job_released_for_shutdown",
+                    details={"execution_generation": claim.generation},
+                )
+            return changed == 1
+
+    def process_one(
+        self,
+        worker_owner: str = "manual",
+        stop_event: threading.Event | None = None,
+    ) -> bool:
+        claim = self.claim_next_job(worker_owner)
+        if not claim:
             return False
-        job_id = str(row["id"])
+        row = claim.row
+        job_id = claim.job_id
         started = time.monotonic()
         provider_started: float | None = None
+        heartbeat_stop, lease_lost, heartbeat_thread = self._start_claim_heartbeat(claim)
         logger.info(
             "job_processing_started",
             extra={"event_name": "job_processing_started", "job_id": job_id},
         )
         try:
             if row["cancel_requested"]:
-                self._finish_cancelled(row)
-                logger.info(
-                    "job_processing_cancelled",
-                    extra={"event_name": "job_processing_cancelled", "job_id": job_id},
-                )
+                self._finish_cancelled_claim(claim)
                 return True
-            with self.database.transaction() as conn:
-                conn.execute(
-                    "UPDATE jobs SET progress_stage='Reading chart',updated_at=? WHERE id=?",
-                    (timestamp(), job_id),
-                )
+            if stop_event and stop_event.is_set():
+                self._release_claim_for_shutdown(claim)
+                return True
+            if not self._update_claim_progress(claim, "Reading chart"):
+                return True
             image = self.storage.page_png(
                 source=Path(row["source_path"]),
                 mime_type=row["source_mime"],
                 page_index=int(row["page_index"]),
                 crop=json.loads(row["crop_json"]) if row["crop_json"] else None,
             )
-            with self.database.transaction() as conn:
-                conn.execute(
-                    "UPDATE jobs SET progress_stage='Extracting table',updated_at=? WHERE id=?",
-                    (timestamp(), job_id),
-                )
+            if stop_event and stop_event.is_set():
+                self._release_claim_for_shutdown(claim)
+                return True
+            if lease_lost.is_set() or not self._update_claim_progress(claim, "Extracting table"):
+                return True
+            if not self._begin_provider_dispatch(claim):
+                return True
             provider_started = time.monotonic()
             output = self.extractor.extract(image)
             provider_duration_ms = round((time.monotonic() - provider_started) * 1000)
@@ -1577,35 +2307,36 @@ class ProductService:
             )
             self._validate_product_chart(output.chart)
             encoded = output.chart.model_dump_json()
-            now = timestamp()
             with self.database.transaction(immediate=True) as conn:
-                current = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-                if not current or current["status"] != "running":
+                current = self._claim_row(conn, claim)
+                if not current:
                     return True
                 if current["cancel_requested"]:
-                    self._finish_cancelled_in_transaction(conn, current)
+                    self._finish_cancelled_claim_in_transaction(conn, current, claim)
                     return True
                 version = self._next_result_version(
                     conn,
-                    user_id=str(row["user_id"]),
+                    user_id=claim.user_id,
                     job_id=job_id,
                     encoded_bytes=len(encoded.encode("utf-8")),
                 )
+                now = timestamp()
                 source = "extraction" if version == 1 else "reprocess"
                 conn.execute(
                     "INSERT INTO result_versions("
                     "id,job_id,user_id,version,source,chart_json,created_at"
-                    ") "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (self._id(), job_id, row["user_id"], version, source, encoded, now),
+                    ") VALUES (?,?,?,?,?,?,?)",
+                    (self._id(), job_id, claim.user_id, version, source, encoded, now),
                 )
-                conn.execute(
+                changed = conn.execute(
                     "UPDATE jobs SET status='review',progress_stage='Ready for review',"
                     "reservation_active=0,extractor=?,model_version=?,raw_result=?,"
-                    "original_result_json=COALESCE(original_result_json,?),"
-                    "current_result_json=?,error_code=NULL,error_message=NULL,"
-                    "approved_at=NULL,updated_at=? "
-                    "WHERE id=?",
+                    "original_result_json=COALESCE(original_result_json,?),current_result_json=?,"
+                    "error_code=NULL,error_message=NULL,approved_at=NULL,worker_owner=NULL,"
+                    "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                    "WHERE id=? AND user_id=? AND attempt=? AND status='running' "
+                    "AND worker_owner=? "
+                    "AND lease_token=? AND lease_generation=? AND lease_expires_at>?",
                     (
                         output.extractor,
                         output.model_version,
@@ -1614,17 +2345,33 @@ class ProductService:
                         encoded,
                         now,
                         job_id,
+                        claim.user_id,
+                        claim.attempt,
+                        claim.owner,
+                        claim.token,
+                        claim.generation,
+                        now,
                     ),
-                )
+                ).rowcount
+                if changed != 1:
+                    raise RuntimeError("Worker lease changed during terminal commit")
+                provider_changed = conn.execute(
+                    "UPDATE provider_attempts SET outcome='succeeded',completed_at=? "
+                    "WHERE job_id=? AND attempt=? AND lease_generation=? AND outcome='dispatched'",
+                    (now, job_id, claim.attempt, claim.generation),
+                ).rowcount
+                if provider_changed != 1:
+                    raise RuntimeError("Provider attempt changed during terminal commit")
                 self._audit(
                     conn,
-                    user_id=row["user_id"],
+                    user_id=claim.user_id,
                     job_id=job_id,
                     event_type="extraction_completed",
                     details={
                         "version": version,
                         "extractor": output.extractor,
                         "model": output.model_version,
+                        "execution_generation": claim.generation,
                     },
                 )
             logger.info(
@@ -1645,102 +2392,180 @@ class ProductService:
                     "duration_ms": round((time.monotonic() - (provider_started or started)) * 1000),
                 },
             )
-            self._finish_failed(row, exc.code, str(exc))
+            self._finish_failed_claim(claim, exc.code, str(exc))
         except ProductError as exc:
-            logger.warning(
-                "job_result_rejected",
-                extra={
-                    "event_name": "job_result_rejected",
-                    "job_id": job_id,
-                    "error_code": exc.code,
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                },
-            )
-            self._finish_failed(row, exc.code, str(exc))
+            self._finish_failed_claim(claim, exc.code, str(exc))
         except (InvalidUpload, ValueError) as exc:
-            logger.warning(
-                "job_source_rejected",
-                extra={
-                    "event_name": "job_source_rejected",
-                    "job_id": job_id,
-                    "error_code": "source_invalid",
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                },
-            )
-            self._finish_failed(row, "source_invalid", str(exc))
+            self._finish_failed_claim(claim, "source_invalid", str(exc))
         except Exception:
-            logger.error(
+            logger.exception(
                 "job_processing_failed",
-                extra={
-                    "event_name": "job_processing_failed",
-                    "job_id": job_id,
-                    "error_code": "internal_error",
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                },
+                extra={"event_name": "job_processing_failed", "job_id": job_id},
             )
-            self._finish_failed(
-                row,
+            self._finish_failed_claim(
+                claim,
                 "internal_error",
-                "The extraction failed unexpectedly. The reserved credit was returned.",
+                "The extraction failed unexpectedly. Credit handling follows dispatch state.",
             )
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=1)
         return True
 
-    def _finish_failed(self, row: sqlite3.Row, code: str, message: str) -> None:
+    def _finish_failed_claim(self, claim: WorkerClaim, code: str, message: str) -> bool:
         with self.database.transaction(immediate=True) as conn:
-            current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
-            if not current or current["status"] not in {"running", "queued"}:
-                return
+            current = self._claim_row(conn, claim)
+            if not current:
+                return False
             if current["cancel_requested"]:
-                self._finish_cancelled_in_transaction(conn, current)
-                return
-            if current["reservation_active"]:
-                self._change_credits(
-                    conn,
-                    user_id=current["user_id"],
-                    delta=1,
-                    reason="job_failed_refund",
-                    idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
-                )
-            preserved_status = self._preserved_result_status(current)
-            status = preserved_status or "failed"
-            stage = (
-                "Reprocess failed; previous approval retained"
-                if preserved_status == "approved"
-                else "Reprocess failed; previous review retained"
-                if preserved_status == "review"
-                else "Needs attention"
-            )
-            conn.execute(
-                "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,"
-                "cancel_requested=0,error_code=?,error_message=?,updated_at=? WHERE id=?",
-                (status, stage, code, message[:500], timestamp(), current["id"]),
-            )
-            self._audit(
-                conn,
-                user_id=current["user_id"],
-                job_id=current["id"],
-                event_type="extraction_failed",
-                details={"code": code},
-            )
+                return self._finish_cancelled_claim_in_transaction(conn, current, claim)
+            return self._finish_failed_claim_in_transaction(conn, current, claim, code, message)
 
-    def _finish_cancelled(self, row: sqlite3.Row) -> None:
-        with self.database.transaction(immediate=True) as conn:
-            current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
-            if not current or current["status"] not in {"running", "queued"}:
-                return
-            self._finish_cancelled_in_transaction(conn, current)
-
-    def _finish_cancelled_in_transaction(
-        self, conn: sqlite3.Connection, current: sqlite3.Row
-    ) -> None:
-        if current["reservation_active"]:
+    def _finish_failed_claim_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        current: sqlite3.Row,
+        claim: WorkerClaim,
+        code: str,
+        message: str,
+    ) -> bool:
+        preserved_status = self._preserved_result_status(current)
+        status = preserved_status or "failed"
+        charged = bool(current["provider_dispatched"])
+        stage = (
+            "Reprocess failed; previous approval retained"
+            if preserved_status == "approved"
+            else "Reprocess failed; previous review retained"
+            if preserved_status == "review"
+            else "Needs attention"
+        )
+        changed = conn.execute(
+            "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
+            "error_code=?,error_message=?,worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,"
+            "heartbeat_at=NULL,updated_at=? WHERE id=? AND user_id=? AND attempt=? "
+            "AND status='running' AND worker_owner=? AND lease_token=? AND lease_generation=? "
+            "AND lease_expires_at>?",
+            (
+                status,
+                stage,
+                code,
+                message[:500],
+                timestamp(),
+                claim.job_id,
+                claim.user_id,
+                claim.attempt,
+                claim.owner,
+                claim.token,
+                claim.generation,
+                timestamp(),
+            ),
+        ).rowcount
+        if changed != 1:
+            return False
+        if current["reservation_active"] and not charged:
             self._change_credits(
                 conn,
-                user_id=current["user_id"],
+                user_id=claim.user_id,
                 delta=1,
-                reason="job_cancelled_refund",
-                idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
+                reason="job_failed_before_dispatch_refund",
+                idempotency_key=f"job:{claim.job_id}:refund:{claim.attempt}",
             )
+        if charged:
+            provider_changed = conn.execute(
+                "UPDATE provider_attempts SET outcome='failed',completed_at=? "
+                "WHERE job_id=? AND attempt=? AND lease_generation=? AND outcome='dispatched'",
+                (timestamp(), claim.job_id, claim.attempt, claim.generation),
+            ).rowcount
+            if provider_changed != 1:
+                raise RuntimeError("Provider attempt changed during failed terminal commit")
+        self._audit(
+            conn,
+            user_id=claim.user_id,
+            job_id=claim.job_id,
+            event_type="extraction_failed",
+            details={
+                "code": code,
+                "provider_dispatched": charged,
+                "credit_refunded": bool(current["reservation_active"] and not charged),
+                "execution_generation": claim.generation,
+            },
+        )
+        return True
+
+    def _finish_cancelled_claim(self, claim: WorkerClaim) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            current = self._claim_row(conn, claim)
+            if not current:
+                return False
+            return self._finish_cancelled_claim_in_transaction(conn, current, claim)
+
+    def _finish_cancelled_claim_in_transaction(
+        self, conn: sqlite3.Connection, current: sqlite3.Row, claim: WorkerClaim
+    ) -> bool:
+        preserved_status = self._preserved_result_status(current)
+        status = preserved_status or "cancelled"
+        charged = bool(current["provider_dispatched"])
+        stage = (
+            "Reprocess cancelled; previous approval retained"
+            if preserved_status == "approved"
+            else "Reprocess cancelled; previous review retained"
+            if preserved_status == "review"
+            else "Cancelled"
+        )
+        changed = conn.execute(
+            "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
+            "worker_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,"
+            "updated_at=? "
+            "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "
+            "AND lease_token=? AND lease_generation=? AND lease_expires_at>?",
+            (
+                status,
+                stage,
+                timestamp(),
+                claim.job_id,
+                claim.user_id,
+                claim.attempt,
+                claim.owner,
+                claim.token,
+                claim.generation,
+                timestamp(),
+            ),
+        ).rowcount
+        if changed != 1:
+            return False
+        if current["reservation_active"] and not charged:
+            self._change_credits(
+                conn,
+                user_id=claim.user_id,
+                delta=1,
+                reason="job_cancelled_before_dispatch_refund",
+                idempotency_key=f"job:{claim.job_id}:refund:{claim.attempt}",
+            )
+        if charged:
+            provider_changed = conn.execute(
+                "UPDATE provider_attempts SET outcome='cancelled',completed_at=? "
+                "WHERE job_id=? AND attempt=? AND lease_generation=? AND outcome='dispatched'",
+                (timestamp(), claim.job_id, claim.attempt, claim.generation),
+            ).rowcount
+            if provider_changed != 1:
+                raise RuntimeError("Provider attempt changed during cancelled terminal commit")
+        self._audit(
+            conn,
+            user_id=claim.user_id,
+            job_id=claim.job_id,
+            event_type="job_cancelled",
+            details={
+                "preserved_status": preserved_status,
+                "provider_dispatched": charged,
+                "credit_refunded": bool(current["reservation_active"] and not charged),
+                "execution_generation": claim.generation,
+            },
+        )
+        return True
+
+    def _finish_cancelled_queued_in_transaction(
+        self, conn: sqlite3.Connection, current: sqlite3.Row
+    ) -> bool:
         preserved_status = self._preserved_result_status(current)
         status = preserved_status or "cancelled"
         stage = (
@@ -1750,18 +2575,36 @@ class ProductService:
             if preserved_status == "review"
             else "Cancelled"
         )
-        conn.execute(
-            "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,"
-            "cancel_requested=0,updated_at=? WHERE id=?",
-            (status, stage, timestamp(), current["id"]),
-        )
+        changed = conn.execute(
+            "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,cancel_requested=0,"
+            "updated_at=? WHERE id=? AND user_id=? AND attempt=? AND status='queued'",
+            (
+                status,
+                stage,
+                timestamp(),
+                current["id"],
+                current["user_id"],
+                current["attempt"],
+            ),
+        ).rowcount
+        if changed != 1:
+            return False
+        if current["reservation_active"]:
+            self._change_credits(
+                conn,
+                user_id=current["user_id"],
+                delta=1,
+                reason="job_cancelled_before_dispatch_refund",
+                idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
+            )
         self._audit(
             conn,
             user_id=current["user_id"],
             job_id=current["id"],
             event_type="job_cancelled",
-            details={"preserved_status": preserved_status},
+            details={"preserved_status": preserved_status, "credit_refunded": True},
         )
+        return True
 
     @staticmethod
     def _preserved_result_status(current: sqlite3.Row) -> str | None:
@@ -1794,69 +2637,151 @@ class ProductService:
                 ).fetchall()
             }
         orphans = [
-            path for path in self.storage.object_paths() if str(path.resolve()) not in referenced
+            path
+            for path in self.storage.object_paths(
+                older_than_seconds=self.settings.reconciliation_grace_seconds
+            )
+            if str(path.resolve()) not in referenced
         ]
         if not orphans:
             return 0
         with self.database.transaction(immediate=True) as conn:
             for path in orphans:
+                if self._path_is_referenced(conn, str(path)):
+                    continue
                 self._queue_deletion(conn, path, "orphan_reconciliation")
         return len(orphans)
 
     def recover_interrupted_jobs(self) -> int:
+        recovered = 0
+        now = timestamp()
         with self.database.transaction(immediate=True) as conn:
-            rows = conn.execute("SELECT * FROM jobs WHERE status='running'").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status='running' "
+                "AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+                (now,),
+            ).fetchall()
             for row in rows:
-                if row["cancel_requested"]:
-                    self._finish_cancelled_in_transaction(conn, row)
-                    continue
+                identity = (
+                    row["id"],
+                    row["user_id"],
+                    row["attempt"],
+                    row["lease_generation"],
+                    row["worker_owner"],
+                    row["lease_token"],
+                    now,
+                )
                 recovery_count = int(row["recovery_count"])
-                if recovery_count < self.settings.max_recovery_attempts:
-                    conn.execute(
+                charged = bool(row["provider_dispatched"])
+                should_requeue = (
+                    not row["cancel_requested"]
+                    and not charged
+                    and recovery_count < self.settings.max_recovery_attempts
+                )
+                if should_requeue:
+                    changed = conn.execute(
                         "UPDATE jobs SET status='queued',recovery_count=recovery_count+1,"
-                        "progress_stage='Recovered after restart',updated_at=? WHERE id=?",
-                        (timestamp(), row["id"]),
-                    )
+                        "progress_stage='Recovered after expired worker lease',worker_owner=NULL,"
+                        "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                        "WHERE id=? AND user_id=? AND attempt=? AND lease_generation=? "
+                        "AND worker_owner IS ? AND lease_token IS ? AND status='running' "
+                        "AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+                        (now, *identity),
+                    ).rowcount
+                    if changed != 1:
+                        continue
                     self._audit(
                         conn,
                         user_id=row["user_id"],
                         job_id=row["id"],
                         event_type="job_recovered",
-                        details={"recovery": recovery_count + 1},
+                        details={
+                            "recovery": recovery_count + 1,
+                            "expired_execution_generation": row["lease_generation"],
+                        },
                     )
+                    recovered += 1
                     continue
-                if row["reservation_active"]:
+                preserved_status = self._preserved_result_status(row)
+                cancelled = bool(row["cancel_requested"])
+                status = preserved_status or ("cancelled" if cancelled else "failed")
+                code = (
+                    None
+                    if cancelled
+                    else "worker_lease_expired_after_dispatch"
+                    if charged
+                    else "worker_recovery_exhausted"
+                )
+                message = (
+                    None
+                    if cancelled
+                    else "The worker lease expired after provider dispatch. The attempt was not "
+                    "redriven or refunded because provider spend may have occurred."
+                    if charged
+                    else "The worker stopped repeatedly before provider dispatch. The reserved "
+                    "credit was returned; retry after reviewing worker health."
+                )
+                stage = (
+                    "Previous reviewed result retained"
+                    if preserved_status
+                    else "Cancelled after worker lease expiry"
+                    if cancelled
+                    else "Automatic recovery stopped"
+                )
+                changed = conn.execute(
+                    "UPDATE jobs SET status=?,reservation_active=0,cancel_requested=0,"
+                    "progress_stage=?,error_code=?,error_message=?,worker_owner=NULL,"
+                    "lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=? "
+                    "WHERE id=? AND user_id=? AND attempt=? AND lease_generation=? "
+                    "AND worker_owner IS ? AND lease_token IS ? AND status='running' "
+                    "AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+                    (status, stage, code, message, now, *identity),
+                ).rowcount
+                if changed != 1:
+                    continue
+                refunded = bool(row["reservation_active"] and not charged)
+                if refunded:
                     self._change_credits(
                         conn,
                         user_id=row["user_id"],
                         delta=1,
-                        reason="job_recovery_exhausted_refund",
+                        reason=(
+                            "job_cancelled_before_dispatch_refund"
+                            if cancelled
+                            else "job_recovery_exhausted_refund"
+                        ),
                         idempotency_key=f"job:{row['id']}:refund:{row['attempt']}",
                     )
-                preserved_status = self._preserved_result_status(row)
-                conn.execute(
-                    "UPDATE jobs SET status=?,reservation_active=0,cancel_requested=0,"
-                    "progress_stage=?,error_code='worker_recovery_exhausted',error_message=?,"
-                    "updated_at=? WHERE id=?",
-                    (
-                        preserved_status or "failed",
-                        "Previous reviewed result retained"
-                        if preserved_status
-                        else "Automatic recovery stopped",
-                        "The worker stopped repeatedly. The reserved credit was returned; "
-                        "retry only after reviewing provider health.",
-                        timestamp(),
-                        row["id"],
-                    ),
-                )
+                if charged:
+                    provider_changed = conn.execute(
+                        "UPDATE provider_attempts SET outcome=?,completed_at=? WHERE job_id=? "
+                        "AND attempt=? AND lease_generation=? AND outcome='dispatched'",
+                        (
+                            "cancelled" if cancelled else "failed",
+                            now,
+                            row["id"],
+                            row["attempt"],
+                            row["lease_generation"],
+                        ),
+                    ).rowcount
+                    if provider_changed != 1:
+                        raise RuntimeError(
+                            "Provider attempt changed during recovery terminal commit"
+                        )
                 self._audit(
                     conn,
                     user_id=row["user_id"],
                     job_id=row["id"],
-                    event_type="job_recovery_exhausted",
-                    details={"recovery_count": recovery_count},
+                    event_type="job_cancelled" if cancelled else "job_recovery_exhausted",
+                    details={
+                        "recovery_count": recovery_count,
+                        "provider_dispatched": charged,
+                        "credit_refunded": refunded,
+                        "expired_execution_generation": row["lease_generation"],
+                    },
                 )
-        return len(rows)
+                recovered += 1
+        return recovered
 
     def cleanup_expired(self) -> dict[str, int]:
         now = timestamp()
@@ -1870,6 +2795,15 @@ class ProductService:
         demo_users = 0
         with self.database.transaction(immediate=True) as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at<=?", (now,))
+            audit_users = conn.execute(
+                "SELECT DISTINCT user_id FROM audit_events WHERE user_id IS NOT NULL"
+            ).fetchall()
+            audit_cutoff = timestamp(utcnow() - timedelta(days=self.settings.audit_retention_days))
+            for audit_user in audit_users:
+                self._rollup_audit_events(
+                    conn, user_id=str(audit_user["user_id"]), before=audit_cutoff
+                )
+            conn.execute("DELETE FROM audit_events WHERE user_id IS NULL AND job_id IS NULL")
             expired_uploads = conn.execute(
                 "SELECT storage_path,user_id,byte_size FROM uploads WHERE expires_at<=?", (now,)
             ).fetchall()
@@ -1954,6 +2888,8 @@ class ProductService:
                     (count, bucket_key, window),
                 )
             else:
+                if self._database_row_count(conn) >= self.settings.max_database_rows_global:
+                    return False
                 conn.execute(
                     "INSERT INTO rate_limits(bucket_key,window_start,request_count) VALUES (?,?,?)",
                     (bucket_key, window, count),

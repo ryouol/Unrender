@@ -6,6 +6,7 @@ import argparse
 import getpass
 from pathlib import Path
 
+from unrender.product.backup import BackupError, create_backup, restore_backup
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
@@ -19,19 +20,53 @@ def parser() -> argparse.ArgumentParser:
     create = commands.add_parser("create-user", help="provision a controlled-beta account")
     create.add_argument("email")
     create.add_argument("--credits", type=int, default=0)
+    backup = commands.add_parser("backup", help="create a coordinated recovery set")
+    backup.add_argument("--destination", required=True, type=Path)
+    restore = commands.add_parser("restore", help="restore a verified recovery set")
+    restore.add_argument("--source", required=True, type=Path)
+    restore.add_argument("--target", required=True, type=Path)
+    commands.add_parser(
+        "check-provider-contract",
+        help="resolve the configured Modal function without invoking inference",
+    )
     return root
 
 
 def main() -> None:
     arguments = parser().parse_args()
-    if arguments.command != "create-user":  # argparse currently makes this unreachable
+    settings = Settings.from_env()
+    if arguments.command == "backup":
+        try:
+            created = create_backup(settings, arguments.destination)
+        except BackupError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"Created coordinated backup at {created}")
+        return
+    if arguments.command == "restore":
+        try:
+            restored = restore_backup(arguments.source, arguments.target)
+        except BackupError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"Restored verified recovery set to {restored}")
+        return
+    if arguments.command == "check-provider-contract":
+        extractor = build_extractor(settings, Path(__file__).with_name("static"))
+        canary = getattr(extractor, "canary_contract", None)
+        if not callable(canary):
+            raise SystemExit("UNRENDER_EXTRACTOR must be modal for a provider contract canary")
+        canary()
+        print(
+            f"Resolved Modal contract {settings.modal_app_name}/{settings.modal_function_name}; "
+            "no inference was invoked"
+        )
+        return
+    if arguments.command != "create-user":
         raise SystemExit(2)
     password = getpass.getpass("Password (12+ characters): ")
     confirmation = getpass.getpass("Confirm password: ")
     if password != confirmation:
         raise SystemExit("Passwords did not match")
 
-    settings = Settings.from_env()
     static_dir = Path(__file__).with_name("static")
     database = Database(settings.database_path)
     service = ProductService(

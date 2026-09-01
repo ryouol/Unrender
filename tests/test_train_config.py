@@ -9,8 +9,10 @@ heavy train() path stays GPU-only; everything here is pure Python so it runs in
 Run: pytest -q tests/test_train_config.py
 """
 
+import ast
 import json
 import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -141,7 +143,7 @@ def test_production_model_resolution_uses_only_verified_hub_snapshot(tmp_path, m
     import modal_train
 
     revision = "1" * 40
-    snapshot = tmp_path / "snapshots" / revision
+    snapshot = tmp_path / "repository" / "snapshots" / revision
     snapshot.mkdir(parents=True)
     (snapshot / "config.json").write_text('{"model_type":"test"}', encoding="utf-8")
     (snapshot / "model.safetensors").write_bytes(b"immutable-weights")
@@ -155,12 +157,39 @@ def test_production_model_resolution_uses_only_verified_hub_snapshot(tmp_path, m
     fake_hub = ModuleType("huggingface_hub")
     fake_hub.snapshot_download = snapshot_download
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
-    modal_train._production_model_snapshot.cache_clear()
     resolved = modal_train._production_model_snapshot("approved/model", revision, digest)
-    assert resolved == str(snapshot.resolve())
+    resolved_path = Path(resolved)
+    assert resolved_path != snapshot.resolve()
+    assert resolved_path.name == digest
+    assert (resolved_path / "model.safetensors").read_bytes() == b"immutable-weights"
+    assert not ((resolved_path / "model.safetensors").stat().st_mode & 0o222)
     assert calls == [("approved/model", revision)]
 
-    modal_train._production_model_snapshot.cache_clear()
+    (snapshot / "model.safetensors").write_bytes(b"source-mutated-after-materialization")
+    cached = modal_train._production_model_snapshot("approved/model", revision, digest)
+    assert cached == resolved
+    assert (resolved_path / "model.safetensors").read_bytes() == b"immutable-weights"
+
+    cached_weights = resolved_path / "model.safetensors"
+    cached_weights.chmod(0o600)
+    cached_weights.write_bytes(b"post-cache-tampering")
+    cached_weights.chmod(0o400)
+    with pytest.raises(ValueError, match="drifted from its content address"):
+        modal_train._production_model_snapshot("approved/model", revision, digest)
+
+    cached_weights.chmod(0o600)
+    cached_weights.write_bytes(b"immutable-weights")
+    cached_weights.chmod(0o400)
+    original_materialization = resolved_path.with_name(f"{digest}-original")
+    resolved_path.chmod(0o700)
+    resolved_path.rename(original_materialization)
+    resolved_path.symlink_to(original_materialization, target_is_directory=True)
+    with pytest.raises(ValueError, match="root is unsafe"):
+        modal_train._production_model_snapshot("approved/model", revision, digest)
+    resolved_path.unlink()
+    original_materialization.rename(resolved_path)
+    resolved_path.chmod(0o500)
+
     with pytest.raises(ValueError, match="approved manifest"):
         modal_train._production_model_snapshot("approved/model", revision, "a" * 64)
     with pytest.raises(ValueError, match="owner/model"):
@@ -183,6 +212,23 @@ def test_provider_release_covers_source_runtime_and_model_identity():
     assert release != modal_train._provider_release_digest(**{**base, "model_digest": "4" * 64})
 
 
+def test_production_modal_deployment_exports_exact_infer_one_contract():
+    import modal_train
+
+    tree = ast.parse(Path(modal_train.__file__).read_text(encoding="utf-8"))
+    function = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "infer_one"
+    )
+    assert any(
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and isinstance(decorator.func.value, ast.Name)
+        and decorator.func.value.id == "app"
+        and decorator.func.attr == "function"
+        for decorator in function.decorator_list
+    )
+
+
 def test_model_snapshot_rejects_external_links_and_writable_files(tmp_path):
     import modal_train
 
@@ -200,6 +246,60 @@ def test_model_snapshot_rejects_external_links_and_writable_files(tmp_path):
     local.write_bytes(b"weights")
     local.chmod(0o664)
     with pytest.raises(ValueError, match="group/world-writable"):
+        modal_train._snapshot_digest(snapshot)
+
+
+def test_model_snapshot_rejects_directory_links_and_parent_swaps(tmp_path, monkeypatch):
+    import modal_train
+
+    revision = "1" * 40
+    snapshot = tmp_path / "repository" / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    external = tmp_path / "external-directory"
+    external.mkdir()
+    (external / "weights.bin").write_bytes(b"outside")
+    (snapshot / "linked").symlink_to(external, target_is_directory=True)
+    with pytest.raises(ValueError, match="directory symlink"):
+        modal_train._snapshot_digest(snapshot)
+
+    (snapshot / "linked").unlink()
+    model_dir = snapshot / "model"
+    model_dir.mkdir()
+    (model_dir / "weights.bin").write_bytes(b"approved")
+    original_snapshot_files = modal_train._snapshot_files
+
+    def swap_parent(path):
+        files = original_snapshot_files(path)
+        model_dir.rename(snapshot / "model-original")
+        model_dir.symlink_to(external, target_is_directory=True)
+        return files
+
+    monkeypatch.setattr(modal_train, "_snapshot_files", swap_parent)
+    with pytest.raises(ValueError, match="changed before it was opened"):
+        modal_train._snapshot_digest(snapshot)
+
+
+def test_model_snapshot_detects_owner_mutation_during_descriptor_copy(tmp_path, monkeypatch):
+    import modal_train
+
+    revision = "1" * 40
+    snapshot = tmp_path / "repository" / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    weights = snapshot / "weights.bin"
+    weights.write_bytes(b"approved-weights")
+    original_read = modal_train.os.read
+    changed = False
+
+    def mutate_after_read(descriptor, amount):
+        nonlocal changed
+        chunk = original_read(descriptor, amount)
+        if chunk and not changed:
+            changed = True
+            weights.write_bytes(b"tampered-weights")
+        return chunk
+
+    monkeypatch.setattr(modal_train.os, "read", mutate_after_read)
+    with pytest.raises(ValueError, match="changed while it was copied"):
         modal_train._snapshot_digest(snapshot)
 
 

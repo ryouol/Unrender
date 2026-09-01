@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -24,6 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -71,9 +73,12 @@ class SecurityHeadersMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        response_started = False
 
         async def send_with_headers(message: Message) -> None:
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 headers = MutableHeaders(scope=message)
                 for name, value in _security_headers(
                     str(scope.get("path", "")), secure_cookies=self.secure_cookies
@@ -81,7 +86,22 @@ class SecurityHeadersMiddleware:
                     headers[name] = value
             await send(message)
 
-        await self.app(scope, receive, send_with_headers)
+        try:
+            await self.app(scope, receive, send_with_headers)
+        except Exception as exc:
+            if response_started:
+                raise
+            logger.exception("unexpected_outer_asgi_error", exc_info=exc)
+            response = JSONResponse(
+                {
+                    "error": {
+                        "code": "internal_error",
+                        "message": "The request could not be completed",
+                    }
+                },
+                status_code=500,
+            )
+            await response(scope, receive, send_with_headers)
 
 
 class BodyLimitMiddleware:
@@ -104,41 +124,101 @@ class BodyLimitMiddleware:
             return
         limit = self._limit(str(scope.get("path", "")))
         total = 0
-        buffered: list[Message] = []
-        while True:
+        response_started = False
+        too_large = False
+
+        async def bounded_receive() -> Message:
+            nonlocal total, too_large
+            if too_large:
+                return {"type": "http.disconnect"}
             message = await receive()
-            buffered.append(message)
             if message["type"] == "http.request":
                 total += len(message.get("body", b""))
                 if total > limit:
-                    response = JSONResponse(
-                        {
-                            "error": {
-                                "code": "request_too_large",
-                                "message": "Request exceeds the configured size limit",
-                            }
-                        },
-                        status_code=413,
-                        headers={"Connection": "close"},
-                    )
-                    await response(scope, receive, send)
-                    return
-                if not message.get("more_body", False):
-                    break
-            elif message["type"] == "http.disconnect":
-                break
+                    too_large = True
+                    return {"type": "http.disconnect"}
+            return message
 
-        index = 0
+        async def tracked_send(message: Message) -> None:
+            nonlocal response_started
+            if too_large:
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
 
-        async def replay_receive() -> Message:
-            nonlocal index
-            if index < len(buffered):
-                message = buffered[index]
-                index += 1
-                return message
-            return await receive()
+        try:
+            await self.app(scope, bounded_receive, tracked_send)
+        except Exception:
+            if not too_large:
+                raise
+        if too_large and not response_started:
+            response = JSONResponse(
+                {
+                    "error": {
+                        "code": "request_too_large",
+                        "message": "Request exceeds the configured size limit",
+                    }
+                },
+                status_code=413,
+                headers={"Connection": "close"},
+            )
+            await response(scope, receive, send)
 
-        await self.app(scope, replay_receive, send)
+
+class ConcurrencyLimitMiddleware:
+    """Reject excess process-local KDF and file-processing work before allocation."""
+
+    def __init__(self, app: ASGIApp, *, auth_limit: int, expensive_limit: int):
+        self.app = app
+        self.auth = asyncio.Semaphore(auth_limit)
+        self.expensive = asyncio.Semaphore(expensive_limit)
+
+    @staticmethod
+    def _group(path: str, method: str) -> str | None:
+        if method == "POST" and path in {
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/demo",
+        }:
+            return "auth"
+        if path in {"/api/uploads", "/api/v1/extractions"} or (
+            method == "GET"
+            and ("/pages/" in path or path.endswith("/source") or "/export/" in path)
+        ):
+            return "expensive"
+        return None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        group = self._group(str(scope.get("path", "")), str(scope.get("method", "GET")))
+        semaphore = self.auth if group == "auth" else self.expensive if group else None
+        if semaphore is None:
+            await self.app(scope, receive, send)
+            return
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=0.05)
+        except TimeoutError:
+            response = JSONResponse(
+                {
+                    "error": {
+                        "code": f"{group}_capacity_reached",
+                        "message": (
+                            "This process is at its safe concurrent-work limit; retry shortly"
+                        ),
+                    }
+                },
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )
+            await response(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            semaphore.release()
 
 
 class StrictRequest(BaseModel):
@@ -251,13 +331,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.worker_enabled:
             worker.start()
         yield
-        worker.stop()
+        stopped = await run_in_threadpool(worker.stop)
+        while not stopped and worker.is_running:
+            # A dispatched provider call is deliberately not abandoned at the local
+            # warning timeout: its heartbeat and fenced terminal commit must finish.
+            await asyncio.sleep(0.25)
 
     app = FastAPI(
         title="Unrender",
         version="0.2.0",
-        docs_url="/api/docs" if settings.environment != "production" else None,
-        openapi_url="/api/openapi.json" if settings.environment != "production" else None,
+        docs_url=None,
+        openapi_url=None,
         redoc_url=None,
         lifespan=lifespan,
     )
@@ -269,6 +353,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
     app.add_middleware(BodyLimitMiddleware, upload_limit=settings.max_upload_bytes)
+    app.add_middleware(
+        ConcurrencyLimitMiddleware,
+        auth_limit=settings.max_concurrent_auth_requests,
+        expensive_limit=settings.max_concurrent_expensive_requests,
+    )
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     def secure_response(response: Response, request: Request) -> Response:
@@ -283,14 +372,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_job_status = (
             request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
         )
-        return "poll" if is_job_status else "request"
+        is_auth = request.method == "POST" and request.url.path in {
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/demo",
+        }
+        return "poll" if is_job_status else "auth" if is_auth else "request"
 
     def rate_limit_for(group: str) -> int:
-        return (
-            max(240, settings.rate_limit_per_minute * 2)
-            if group == "poll"
-            else settings.rate_limit_per_minute
-        )
+        if group == "poll":
+            return max(240, settings.rate_limit_per_minute * 2)
+        if group == "auth":
+            return settings.auth_rate_limit_per_minute
+        return settings.rate_limit_per_minute
 
     def allowed_request(bucket: str, *, group: str) -> bool:
         try:
@@ -383,6 +477,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"error": {"code": "invalid_request", "message": message}}, status_code=422
         )
 
+    @app.exception_handler(Exception)
+    async def unexpected_error(request: Request, exc: Exception):
+        logger.exception("unexpected_http_error", exc_info=exc)
+        return secure_response(
+            JSONResponse(
+                {
+                    "error": {
+                        "code": "internal_error",
+                        "message": "The request could not be completed",
+                    }
+                },
+                status_code=500,
+            ),
+            request,
+        )
+
     def authenticated_request(request: Request, user: Any) -> Any:
         principal = hashlib.sha256(f"user:{user['id']}".encode()).hexdigest()[:24]
         group = rate_group(request)
@@ -452,13 +562,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health/ready")
     def ready():
-        worker_ready = not settings.worker_enabled or worker.is_running
+        worker_ready = not settings.worker_enabled or worker.is_accepting
         if not database.ready() or not storage.ready() or not worker_ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return {
             "status": "ready",
             "extractor": settings.extractor_backend,
-            "worker": "running" if worker.is_running else "disabled",
+            "worker": "running" if worker.is_accepting else "disabled",
         }
 
     @app.post("/api/auth/register", status_code=201)
@@ -499,9 +609,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user: Any = csrf_user_dependency,
     ):
         service.require_customer_account(user["id"], "customer uploads")
-        content = await file.read(settings.max_upload_bytes + 1)
-        return service.prepare_upload(
-            user_id=user["id"], filename=file.filename or "chart", content=content
+        await file.seek(0)
+        return await run_in_threadpool(
+            service.prepare_upload_stream,
+            user_id=user["id"],
+            filename=file.filename or "chart",
+            source=file.file,
         )
 
     @app.post("/api/uploads/demo", status_code=201)
@@ -529,8 +642,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/api/jobs")
-    def list_jobs(user: Any = current_user_dependency):
-        return {"items": service.list_jobs(user["id"])}
+    def list_jobs(
+        cursor: str | None = None,
+        limit: int = 50,
+        user: Any = current_user_dependency,
+    ):
+        return service.list_jobs_page(user["id"], cursor=cursor, limit=limit)
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str, user: Any = current_user_dependency):
@@ -543,8 +660,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/api/jobs/{job_id}/audit")
-    def job_audit(job_id: str, user: Any = current_user_dependency):
-        return {"items": service.job_audit(user_id=user["id"], job_id=job_id)}
+    def job_audit(
+        job_id: str,
+        cursor: str | None = None,
+        limit: int = 50,
+        user: Any = current_user_dependency,
+    ):
+        return service.job_audit_page(user_id=user["id"], job_id=job_id, cursor=cursor, limit=limit)
 
     @app.get("/api/jobs/{job_id}/versions")
     def job_versions(
@@ -606,8 +728,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.create_api_key(user_id=user["id"], name=payload.name)
 
     @app.get("/api/keys")
-    def list_keys(user: Any = current_user_dependency):
-        return {"items": service.list_api_keys(user_id=user["id"])}
+    def list_keys(
+        cursor: str | None = None,
+        limit: int = 50,
+        user: Any = current_user_dependency,
+    ):
+        return service.list_api_keys_page(user_id=user["id"], cursor=cursor, limit=limit)
+
+    @app.delete("/api/keys")
+    def revoke_all_keys(user: Any = csrf_user_dependency):
+        return {"revoked": service.revoke_all_api_keys(user_id=user["id"])}
 
     @app.delete("/api/keys/{key_id}")
     def revoke_key(key_id: str, user: Any = csrf_user_dependency):
@@ -670,6 +800,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if event_type != "checkout.session.completed":
             return {"received": True, "applied": False}
         checkout = event["data"]["object"]
+        if bool(event.get("livemode")) or bool(checkout.get("livemode")):
+            raise ProductError(
+                "billing_live_event_rejected",
+                "Live-mode billing events are not accepted by this test-only integration",
+                422,
+            )
         if checkout.get("payment_status") != "paid":
             return {"received": True, "applied": False}
         metadata = checkout.get("metadata") or {}
@@ -698,11 +834,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
         user: Any = api_user_dependency,
     ):
-        content = await file.read(settings.max_upload_bytes + 1)
-        return service.submit_api_extraction(
+        await file.seek(0)
+        return await run_in_threadpool(
+            service.submit_api_extraction_stream,
             user_id=user["id"],
             filename=file.filename or "chart",
-            content=content,
+            source=file.file,
             page_index=page_index,
             idempotency_key=idempotency_key or "",
         )
@@ -712,6 +849,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.get_job(user_id=user["id"], job_id=job_id)
 
     return app
-
-
-app = create_app()

@@ -77,7 +77,6 @@
           <div class="job-list" id="job-list"></div>
           <div class="sidebar-footer">
             <button class="text-button" id="create-key-button" type="button">Create API key</button>
-            <a href="/api/docs" id="api-docs-link">API reference</a>
           </div>
         </aside>
 
@@ -129,7 +128,7 @@
                 <div class="crop-selection" id="crop-selection" hidden></div>
               </div>
               <div class="flow-footer">
-                <p>One chart credit is reserved now and returned automatically if extraction fails or is cancelled.</p>
+                <p>One credit is reserved. It is returned only if the attempt stops before provider dispatch; a dispatched attempt consumes the credit.</p>
                 <button class="button button-primary" id="queue-job-button" type="button">Extract selected chart</button>
               </div>
             </div>
@@ -191,6 +190,7 @@
         <button class="button button-primary" id="generate-key-button" type="submit">Generate key</button>
         <div class="key-management">
           <h3>Existing keys</h3>
+          <button class="text-button danger-text" id="revoke-all-keys-button" type="button">Revoke all active keys</button>
           <ul class="key-list" id="api-key-list" aria-label="Existing API keys"></ul>
         </div>
       </form>

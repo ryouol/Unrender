@@ -1,0 +1,41 @@
+{
+  "direct_runtime_packages": [
+    "numpy",
+    "matplotlib",
+    "pillow",
+    "pydantic",
+    "tqdm",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pypdfium2",
+    "openpyxl",
+    "stripe",
+    "modal"
+  ],
+  "dependency_distribution_gate_passed": true,
+  "policy_version": 2,
+  "public_release_allowed": false,
+  "release_blockers": [],
+  "non_dependency_release_blockers": [
+    {
+      "id": "commercial-privacy-terms-owner-approval",
+      "owner": "product owner and qualified counsel",
+      "required_action": "Approve the contracting entity, privacy notice, terms, retention/deletion promises, subprocessors, support/refund terms, and intended distribution model.",
+      "status": "unresolved_owner_counsel_action"
+    }
+  ],
+  "replacement_reviews": [
+    {
+      "locked_version": "5.13.0",
+      "observed_upstream_terms": "pypdfium2: Apache-2.0 OR BSD-3-Clause; bundled PDFium: BSD-style plus dependency license notices shipped in platform wheels.",
+      "package": "pypdfium2",
+      "replaces": "PyMuPDF",
+      "residual_action": "Retain the license files shipped by pypdfium2/PDFium in every distribution and include this dependency in the owner's final legal review.",
+      "status": "engineering_dependency_gate_passed",
+      "upstream": "https://pypi.org/project/pypdfium2/5.13.0/"
+    }
+  ],
+  "scope": "requirements-app.lock and the distributed/hosted Unrender product",
+  "statement": "The former mandatory PyMuPDF AGPL/commercial dependency is absent from code and locks. This is an engineering inventory, not legal advice; the overall public/commercial release remains blocked on the separate owner/counsel actions listed here."
+}

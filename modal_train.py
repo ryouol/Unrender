@@ -43,8 +43,11 @@ import hmac
 import json
 import os
 import re
+import shutil
 import stat
-from functools import lru_cache
+import tempfile
+import uuid
+from contextlib import suppress
 from pathlib import Path
 
 import modal
@@ -190,34 +193,171 @@ def _resolve_model(model_path: str) -> str:
     return model_path
 
 
-def _snapshot_digest(snapshot: Path) -> str:
-    """Hash names, sizes, and bytes for every file in one immutable Hub snapshot."""
+def _snapshot_files(snapshot: Path) -> list[tuple[Path, Path]]:
+    """Return (logical path, safe target) pairs without following directory links."""
 
-    digest = hashlib.sha256()
-    files = sorted(path for path in snapshot.rglob("*") if path.is_file())
+    root = snapshot.resolve(strict=True)
+    repository_cache = root.parents[1].resolve(strict=True)
+    files: list[tuple[Path, Path]] = []
+
+    def visit(directory: Path) -> None:
+        before = directory.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ValueError("The model snapshot contains a non-directory path component")
+        with os.scandir(directory) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                logical = Path(entry.path)
+                metadata = entry.stat(follow_symlinks=False)
+                if stat.S_ISLNK(metadata.st_mode):
+                    target = logical.resolve(strict=True)
+                    target_metadata = target.stat(follow_symlinks=False)
+                    if stat.S_ISDIR(target_metadata.st_mode):
+                        raise ValueError("The model snapshot contains a directory symlink")
+                    if not stat.S_ISREG(target_metadata.st_mode):
+                        raise ValueError("The model snapshot contains a special-file symlink")
+                    if not target.is_relative_to(repository_cache):
+                        raise ValueError(
+                            "The model snapshot contains a file outside its repository cache"
+                        )
+                    files.append((logical, target))
+                elif stat.S_ISDIR(metadata.st_mode):
+                    visit(logical)
+                elif stat.S_ISREG(metadata.st_mode):
+                    files.append((logical, logical))
+                else:
+                    raise ValueError("The model snapshot contains a special file")
+        after = directory.stat(follow_symlinks=False)
+        if (before.st_dev, before.st_ino, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mtime_ns,
+        ):
+            raise ValueError("The model snapshot changed while it was inspected")
+
+    visit(root)
     if not files:
         raise ValueError("The resolved model snapshot is empty")
-    repository_cache = snapshot.parents[1].resolve()
-    for path in files:
-        resolved = path.resolve(strict=True)
-        if not resolved.is_relative_to(repository_cache):
-            raise ValueError("The model snapshot contains a file outside its repository cache")
-        if resolved.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    return sorted(files, key=lambda pair: pair[0].relative_to(root).as_posix())
+
+
+def _open_snapshot_file(repository_cache: Path, target: Path) -> int:
+    """Open every path component by descriptor so a swapped directory cannot redirect us."""
+
+    try:
+        relative = target.relative_to(repository_cache)
+    except ValueError as exc:
+        raise ValueError("The model snapshot file escaped its repository cache") from exc
+    if not relative.parts:
+        raise ValueError("The model snapshot resolved to a directory")
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_descriptor: int | None = None
+    try:
+        directory_descriptor = os.open(repository_cache, directory_flags)
+        for component in relative.parts[:-1]:
+            next_descriptor = os.open(
+                component,
+                directory_flags,
+                dir_fd=directory_descriptor,
+            )
+            os.close(directory_descriptor)
+            directory_descriptor = next_descriptor
+        return os.open(relative.parts[-1], file_flags, dir_fd=directory_descriptor)
+    except OSError as exc:
+        raise ValueError("The model snapshot path changed before it was opened") from exc
+    finally:
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+
+
+def _copy_snapshot_and_digest(snapshot: Path, destination: Path | None = None) -> str:
+    root = snapshot.resolve(strict=True)
+    repository_cache = root.parents[1].resolve(strict=True)
+    digest = hashlib.sha256()
+    for logical, target in _snapshot_files(root):
+        relative = logical.relative_to(root)
+        logical_before = logical.lstat()
+        if target.stat(follow_symlinks=False).st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise ValueError("The model snapshot contains a group/world-writable file")
-        relative = path.relative_to(snapshot).as_posix()
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(path.stat().st_size).encode("ascii"))
-        digest.update(b"\0")
-        with path.open("rb") as source:
-            while chunk := source.read(8 * 1024 * 1024):
+        descriptor = _open_snapshot_file(repository_cache, target)
+        output = None
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError("The model snapshot contains a non-regular file")
+            if (before.st_dev, before.st_ino) != (
+                target.stat(follow_symlinks=False).st_dev,
+                target.stat(follow_symlinks=False).st_ino,
+            ):
+                raise ValueError("The model snapshot file changed before it was opened")
+            digest.update(relative.as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(str(before.st_size).encode("ascii"))
+            digest.update(b"\0")
+            if destination is not None:
+                output_path = destination / relative
+                output_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                output = output_path.open("xb")
+            while chunk := os.read(descriptor, 8 * 1024 * 1024):
                 digest.update(chunk)
+                if output is not None:
+                    output.write(chunk)
+            after = os.fstat(descriptor)
+            logical_after = logical.lstat()
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            ) or (logical_before.st_dev, logical_before.st_ino, logical_before.st_mtime_ns) != (
+                logical_after.st_dev,
+                logical_after.st_ino,
+                logical_after.st_mtime_ns,
+            ):
+                raise ValueError("The model snapshot file changed while it was copied")
+            if output is not None:
+                output.flush()
+                os.fsync(output.fileno())
+                os.chmod(output.name, 0o400)
+        finally:
+            if output is not None:
+                output.close()
+            os.close(descriptor)
     return digest.hexdigest()
 
 
-@lru_cache(maxsize=4)
+def _snapshot_digest(snapshot: Path) -> str:
+    """Hash every safely opened snapshot file and reject path races/special files."""
+
+    return _copy_snapshot_and_digest(snapshot)
+
+
+def _verify_materialization(snapshot: Path, expected_digest: str) -> None:
+    root_metadata = snapshot.lstat()
+    if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError("The verified model materialization root is unsafe")
+    if root_metadata.st_mode & 0o222:
+        raise ValueError("The verified model materialization root is writable")
+    for path in snapshot.rglob("*"):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not (
+            stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)
+        ):
+            raise ValueError("The verified model materialization contains an unsafe path")
+        if metadata.st_mode & 0o222:
+            raise ValueError("The verified model materialization is writable")
+    actual = _snapshot_digest(snapshot)
+    if not hmac.compare_digest(actual, expected_digest):
+        raise ValueError("The verified model materialization drifted from its content address")
+
+
 def _production_model_snapshot(model_path: str, revision: str, expected_digest: str) -> str:
-    """Resolve only an exact Hub commit and verify the complete local snapshot."""
+    """Materialize one verified Hub commit into a private read-only content address."""
 
     if not _MODEL_REPOSITORY.fullmatch(model_path):
         raise ValueError("Production inference requires an owner/model Hub repository")
@@ -228,13 +368,49 @@ def _production_model_snapshot(model_path: str, revision: str, expected_digest: 
 
     from huggingface_hub import snapshot_download
 
-    snapshot = Path(snapshot_download(repo_id=model_path, revision=revision)).resolve()
+    snapshot = Path(snapshot_download(repo_id=model_path, revision=revision)).resolve(strict=True)
     if snapshot.name.casefold() != revision.casefold():
         raise ValueError("The Hub client did not resolve the requested immutable commit")
-    actual_digest = _snapshot_digest(snapshot)
-    if not hmac.compare_digest(actual_digest, expected_digest.casefold()):
-        raise ValueError("The resolved model files do not match the approved manifest")
-    return str(snapshot)
+    approved_digest = expected_digest.casefold()
+    repository_cache = snapshot.parents[1].resolve(strict=True)
+    materializations = repository_cache.parent / "unrender-verified-models"
+    materializations.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(materializations, 0o700)
+    destination = materializations / approved_digest
+    if destination.exists():
+        _verify_materialization(destination, approved_digest)
+        return str(destination)
+
+    temporary = Path(
+        tempfile.mkdtemp(prefix=f".{approved_digest}.{uuid.uuid4().hex}.", dir=materializations)
+    )
+    try:
+        actual_digest = _copy_snapshot_and_digest(snapshot, temporary)
+        if not hmac.compare_digest(actual_digest, approved_digest):
+            raise ValueError("The resolved model files do not match the approved manifest")
+        for directory in sorted(
+            (path for path in temporary.rglob("*") if path.is_dir()), reverse=True
+        ):
+            os.chmod(directory, 0o500)
+        os.chmod(temporary, 0o700)
+        try:
+            os.rename(temporary, destination)
+        except OSError:
+            if not destination.exists():
+                raise
+            os.chmod(temporary, 0o700)
+            shutil.rmtree(temporary)
+        os.chmod(destination, 0o500)
+        _verify_materialization(destination, approved_digest)
+        return str(destination)
+    except Exception:
+        if temporary.exists():
+            for path in temporary.rglob("*"):
+                with suppress(OSError):
+                    os.chmod(path, 0o700 if path.is_dir() else 0o600)
+            os.chmod(temporary, 0o700)
+            shutil.rmtree(temporary, ignore_errors=True)
+        raise
 
 
 def _provider_release_digest(

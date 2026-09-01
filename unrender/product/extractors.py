@@ -77,6 +77,28 @@ class ModalExtractor:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    def canary_contract(self) -> bool:
+        """Resolve the deployed function contract without invoking billable inference."""
+
+        try:
+            import modal
+
+            function = modal.Function.from_name(
+                self.settings.modal_app_name,
+                self.settings.modal_function_name,
+            )
+        except Exception as exc:
+            raise ExtractionError(
+                "provider_contract_unavailable",
+                "The configured Modal application/function contract could not be resolved.",
+            ) from exc
+        if not callable(getattr(function, "remote", None)):
+            raise ExtractionError(
+                "provider_contract_invalid",
+                "The configured Modal function does not expose the expected remote contract.",
+            )
+        return True
+
     def extract(self, image_bytes: bytes) -> ExtractionOutput:
         try:
             import modal
@@ -97,8 +119,10 @@ class ModalExtractor:
                 "The extraction worker could not reach the configured inference provider.",
             ) from exc
         expected_release = self.settings.modal_provider_release
-        actual_release = str(payload.get("provider_release", ""))
-        if expected_release and not hmac.compare_digest(actual_release, expected_release):
+        actual_release = str(payload.get("provider_release", "")).casefold()
+        if expected_release and not hmac.compare_digest(
+            actual_release, expected_release.casefold()
+        ):
             raise ExtractionError(
                 "provider_release_mismatch",
                 "The inference provider release did not match the approved deployment.",

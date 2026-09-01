@@ -9,7 +9,7 @@ description = "Review-first chart digitization with auditable JSON, CSV, and XLS
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "ryouol" }]
 
 # Core deps — everything needed to generate synthetic data, validate schemas,
@@ -23,7 +23,7 @@ dependencies = [
     "fastapi>=0.116,<1",
     "uvicorn[standard]>=0.35,<1",
     "python-multipart>=0.0.20,<1",
-    "pymupdf>=1.24",
+    "pypdfium2>=5.13,<6",
     "openpyxl>=3.1,<4",
     "stripe>=12,<14",
     "modal>=1.5,<2",
@@ -111,5 +111,5 @@ check_untyped_defs = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["pymupdf", "openpyxl"]
+module = ["pypdfium2", "pypdfium2.*", "openpyxl"]
 ignore_missing_imports = true

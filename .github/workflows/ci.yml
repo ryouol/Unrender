@@ -30,18 +30,25 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Product lint
         run: |
-          ruff format --check unrender/product modal_train.py tests/test_product.py tests/test_train_config.py
-          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py tests/test_product.py tests/test_train_config.py
+          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
+          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
           ruff check --select S unrender/product
       - name: Product types
         run: mypy unrender/product
       - name: Frontend syntax
-        run: node --check unrender/product/static/app.js
+        run: |
+          node --check unrender/product/static/app.js
+          node tests/browser_auth_epoch.mjs
       - name: Runtime dependency audit
         run: |
           pip-audit -r requirements-app.lock
           pip-audit -r requirements-dev.lock
           pip-audit -r requirements-build.lock
+      - name: Dependency inventory and license-policy structure
+        run: |
+          python scripts/generate_sbom.py
+          git diff --exit-code -- release/sbom.cdx.json
+          python scripts/check_release_licenses.py
       - name: Tests
         run: pytest -q
       - name: Build package
@@ -89,5 +96,5 @@ jobs:
             sleep 2
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' unrender-production-smoke)" = healthy
-          docker exec unrender-production-smoke python -c "import modal; from unrender.product.web import app; assert app.title == 'Unrender'"
+          docker exec unrender-production-smoke python -c "import modal; from unrender.product.web import create_app; assert callable(create_app)"
           docker exec unrender-production-smoke sh -c 'test "$(id -u)" = 10001'

@@ -27,7 +27,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - Location: `unrender/product/web.py:127-166`, `create_app`; `unrender/product/config.py:71-103`, `Settings.validate`
 - Evidence: the earlier app accepted any `Host` value and disabled Swagger UI in production while leaving the OpenAPI JSON endpoint enabled.
 - Impact: poisoned absolute URL generation or cache behavior at a permissive proxy, plus unnecessary production endpoint enumeration.
-- Fix: validate `UNRENDER_BASE_URL` as one origin, enforce `TrustedHostMiddleware`, and set both documentation and OpenAPI URLs to `None` in production. Added hostile-host and unexpected-field HTTP tests.
+- Fix: validate `UNRENDER_BASE_URL` as one origin, enforce `TrustedHostMiddleware`, and disable documentation/OpenAPI routes in every environment because the checked-in API contract is the supported source. Added hostile-host and unexpected-field HTTP tests.
 - Mitigation: the deployment edge must also preserve the intended host and TLS configuration.
 - False positive notes: a correctly configured edge could already reject hostile hosts, but that control was not visible in the repository.
 
@@ -204,6 +204,50 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - **Mutable production model/release identity (Medium):** production accepts only an owner/model Hub repository, full commit, and digest of every resolved snapshot filename/size/byte. The production function is separated from the mutable research path, uses exact direct dependency pins, and returns a release digest over reviewed inference/schema source, prompt, measured runtime packages, and model identity. Startup and the adapter reject missing/mismatched values. A real Modal canary and immutable platform deployment record remain external gates.
 - **Outer rejection hardening and readiness abuse (Low):** security headers now wrap TrustedHost, body, and application rejection paths; hostile-Host tests confirm the body is not consumed. Readiness performs a disk probe but now consumes the stable client-address admission bucket and must remain private to the platform health network; liveness remains cheap and unmetered.
 
+## Third exact-tree remediation pass
+
+The exact review of commit `13375b5` found another set of release-blocking concurrency,
+resource, browser-isolation, and operating-contract issues. The following changes are
+implemented in this branch; the final committed SHA still requires the independent
+read-only review listed in `docs/LAUNCH_READINESS.md`.
+
+- **Worker ownership and restart safety (High):** claims now carry a unique owner,
+  unpredictable token, monotonic generation, heartbeat, and expiry. Every progress,
+  result-version, provider-dispatch/outcome, terminal, audit, and refund mutation checks
+  that identity and its live lease in the same transaction. Startup and periodic reapers
+  use expiry-only compare-and-swap recovery, serialize startup reconciliation, and
+  age/recheck orphan files. Adversarial tests cover fresh peer leases, two reapers, stale
+  terminal/refund paths, one new-owner terminal result, multi-instance startup, and a
+  provider call that outlives shutdown grace while its lease continues to heartbeat.
+- **Migration and snapshot atomicity (Medium):** migrations run under a dedicated
+  cross-process lock and one explicit exclusive transaction, resume the legacy partial
+  v4 rename shape, and are tested from full v1-v4 shapes plus a crash after every
+  mutating v4-to-v5 statement. Modal resolves the exact `infer_one` contract, normalizes
+  release digests case-insensitively, and offers a non-spending resolution check. Model
+  bytes are descriptor-opened without following directory or file links, verified before
+  and after reads, copied to a private content address, made read-only, and loaded only
+  from that immutable materialization.
+- **Browser and request resource isolation (Medium):** logout/account changes abort the
+  prior controller, increment an auth epoch, blank every private image/table/form/key
+  surface, revoke object URLs, and make delayed bodies, 401 handlers, dialog loaders,
+  control-finalizers, and an old logout unable to mutate a new account. ASGI body limits
+  count streamed chunks without retaining another body, uploads spool to bounded private
+  files, and upload/render, expensive-route, and password-KDF concurrency are separately
+  capped.
+- **Bounded tenant state and complete inventories (Medium):** sessions, keys, jobs,
+  uploads, audit detail/rollups, credit entries, idempotency records, and billing events
+  have retention/count/byte budgets with restart cleanup. Jobs, keys, and audit expose
+  stable cursor pages; active keys have a small cap and a revoke-all operation. Tests
+  exercise state pressure, cleanup, restart, and the formerly hidden 101st-key case.
+- **Spend, backups, and release controls (Medium/Low):** provider dispatch is durable;
+  pre-dispatch cancellation/failure refunds once, while post-dispatch ambiguity is
+  neither free nor automatically redriven. Per-user/global failure circuits stop later
+  spend. Backup holds the operational mutation lock across database and committed-file
+  capture; restore validates roots, hashes, active paths, integrity, and foreign keys.
+  PyMuPDF was removed and replaced with hash-locked pypdfium2/PDFium plus SBOM/policy
+  drift checks. Swagger/OpenAPI is not advertised, finite numbers fail closed, outer 500s
+  retain CSP/nosniff, imports are lazy, health is cheap, and live-mode test webhooks fail.
+
 ## Open deployment findings
 
 ### 20. Hostile document scanning and edge timeouts are deployment controls
@@ -213,7 +257,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - Evidence: decoded pixels, PDF pages/passwords, supported magic, streamed/chunked body bytes, tenant storage, and upload bandwidth are bounded in the app. PDFs are parsed but not malware-scanned/content-disarmed, and socket/CPU timeouts depend on the chosen edge/runtime.
 - Impact: an invited attacker could submit a parser-hostile document or hold expensive connections within platform limits.
 - Fix: before external customer data, record edge body/timeouts, isolate parsing, fuzz hostile images/PDFs, and add malware/CDR scanning or explicitly reject PDFs for the first beta.
-- Mitigation: registration is closed in production; credits and per-tenant quotas constrain persistence; PyMuPDF/Pillow are locked and pixel/page/file limits fail closed.
+- Mitigation: registration is closed in production; credits and per-tenant quotas constrain persistence; pypdfium2/PDFium and Pillow are hash-locked, PDFium native calls are serialized, and pixel/page/file limits fail closed.
 - False positive notes: some deployment platforms impose safe limits automatically; verify and record the exact runtime behavior.
 
 ### 21. Application rate limiting remains single-node

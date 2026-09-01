@@ -25,7 +25,7 @@ Unrender's wedge is narrower: automated first-pass extraction plus mandatory sou
 ## Offer and pricing hypothesis
 
 - Free: the saved verification fixture, always zero provider cost.
-- Initial paid hypothesis: **US$99 for 100 chart credits**, one credit per real extraction attempt; failed and cancelled attempts are refunded automatically.
+- Initial paid hypothesis: **US$99 for 100 chart credits**, one credit per real extraction attempt. A cancellation or failure refunds only when durable provider dispatch has not occurred; after dispatch, the credit is consumed because provider spend may already have happened. A recent-failure circuit stops later attempts before dispatch and refunds those unspent reservations.
 - No subscription at validation stage. A credit pack maps cleanly to variable inference cost and avoids inventing recurring value before retention is known.
 
 This is a planning hypothesis, not a live offer. The code only accepts Stripe test-mode secrets. The owner must create a test Price, validate willingness to pay, and approve final copy before enabling checkout.

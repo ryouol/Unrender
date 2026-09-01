@@ -6,10 +6,12 @@
 2. Provide a persistent, encrypted `/data` volume owned by UID/GID `10001`.
 3. Terminate TLS at the load balancer and set the exact public `UNRENDER_BASE_URL`.
 4. Set `UNRENDER_ENV=production`, `UNRENDER_EXTRACTOR=modal`, `UNRENDER_WORKER_ENABLED=true`, `UNRENDER_SEED_DEMO=false`, and `UNRENDER_ALLOW_REGISTRATION=false`; production validation fails closed otherwise.
-5. Configure an approved model repository, its full 40-character commit, the SHA-256 manifest of the complete resolved snapshot, and the canaried provider-release digest as `UNRENDER_MODAL_MODEL`, `UNRENDER_MODAL_REVISION`, `UNRENDER_MODAL_MODEL_DIGEST`, and `UNRENDER_MODAL_PROVIDER_RELEASE`. Production resolves only that Hub commit into the dedicated `unrender-inference-cache` volume (not the mutable research volume), rejects writable/escaping snapshot files, verifies every model byte, and rejects inference from a different reviewed-source/runtime release. Record the immutable Modal deployment/image identity beside the canary; the application handshake is a drift detector, not a substitute for platform attestation. Mount provider credentials through the platform secret manager.
+5. Configure an approved model repository, its full 40-character commit, the SHA-256 manifest of the complete resolved snapshot, and the canaried provider-release digest as `UNRENDER_MODAL_MODEL`, `UNRENDER_MODAL_REVISION`, `UNRENDER_MODAL_MODEL_DIGEST`, and `UNRENDER_MODAL_PROVIDER_RELEASE`. The exact deployment function name is `infer_one`. Production resolves only that Hub commit into the dedicated `unrender-inference-cache` volume (not the mutable research volume), descriptor-opens every path without following swapped directories/files, copies verified bytes into a private read-only content address, and rejects inference from a different reviewed-source/runtime release. Run `unrender-admin check-provider-contract` as a non-spending deployment-resolution canary, then record the immutable Modal deployment/image identity beside the real approved canary. The application handshake is a drift detector, not a substitute for platform attestation. Mount provider credentials through the platform secret manager.
 6. Leave Stripe variables empty unless running an approved test-mode checkout. Live secret keys are rejected by configuration.
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
+
+Set the platform termination grace beyond the maximum provider call duration. On shutdown the worker stops claiming immediately and readiness turns false; if a dispatched provider call exceeds `UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS`, the process logs the missed warning threshold but keeps heartbeating and waits for the fenced terminal commit. The platform must not send an earlier hard kill.
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
@@ -42,18 +44,24 @@ Provider success/failure and latency can be derived from the structured lifecycl
 
 ## Backup and restore
 
-Back up both the SQLite database and storage tree as one recovery set.
-
-For a consistent SQLite backup while the app is live:
+Use the coordinated admin command; do not combine an SQLite `.backup` with a later live `rsync`. The command takes an exclusive mutation lock, snapshots SQLite through its backup API, copies only committed upload/job objects, and writes a SHA-256 inventory before atomically publishing the recovery directory:
 
 ```bash
-sqlite3 /data/unrender.sqlite3 ".backup '/backup/unrender.sqlite3'"
-rsync -a --delete /data/storage/ /backup/storage/
+UNRENDER_DATA_DIR=/data unrender-admin backup \
+  --destination /backup/unrender-2026-09-01T020000Z
 ```
 
-Prefer a volume snapshot after briefly draining new uploads. Encrypt backups, restrict access, and test restore monthly.
+The destination must not exist and must be outside `/data`. If any upload/job/database mutation is active, backup refuses immediately; drain writes and retry. Encrypt backups, restrict access, copy the completed directory as one unit, and alert on recovery-set age. A platform volume snapshot is acceptable only when the same mutation lock/drain contract is demonstrated.
 
-Restore into a new empty volume and preserve file paths relative to `/data`. Before exposing the volume to the app, run `PRAGMA integrity_check`, confirm database and source files are owned by UID/GID `10001` with `0600` files and `0700` directories, and compare a sample of stored paths to the restored tree. Then start the production configuration with its required worker, keep ingress closed until `/health/ready` passes, and sample several job sources/exports. Never restore only the database or only the files, and do not weaken production validation to perform a restore drill.
+Restore into a new absent data directory:
+
+```bash
+unrender-admin restore \
+  --source /backup/unrender-2026-09-01T020000Z \
+  --target /recovery/unrender-data
+```
+
+Restore rejects symbolic/special paths, extra/missing files, hash or size drift, an existing/nested target, SQLite integrity errors, and foreign-key violations. It rewrites stored absolute source paths from the captured root to the new root before atomically publishing the target. Confirm the restored tree is owned by UID/GID `10001` with `0600` files and `0700` directories, start the required worker with ingress closed, wait for `/health/ready`, and sample job sources/exports. Never restore only the database or only the files, edit the manifest, or weaken production validation for a drill.
 
 Target assumptions for beta: RPO 24 hours and RTO 4 hours. These are internal objectives, not a customer SLA.
 
@@ -61,7 +69,7 @@ Target assumptions for beta: RPO 24 hours and RTO 4 hours. These are internal ob
 
 ### Provider outage
 
-Pause new-submission ingress and communicate that extraction is delayed. In the current single-process topology, production cannot run the web process with its worker disabled; keeping review/export live during a provider outage requires the documented split web/worker scale-up. Normalized provider failures return reserved credits. Resume submissions only after a provider canary returns the approved release digest.
+Pause new-submission ingress and communicate that extraction is delayed. In the current single-process topology, production cannot run the web process with its worker disabled; keeping review/export live during a provider outage requires the documented split web/worker scale-up. An attempt is refunded only when dispatch was never recorded. A dispatched provider failure consumes its credit; repeated recent failures open the pre-dispatch circuit so later attempts do not spend and are refunded. Resume submissions only after the non-spending contract check and an approved real canary return the expected deployment/release identity.
 
 ### Suspected credential leak
 
@@ -77,4 +85,4 @@ Pause uploads, let housekeeping drain the deletion outbox, expand the volume, an
 
 ## Rollback
 
-Deploy immutable image tags. Before a schema-changing release, snapshot `/data`. This release uses schema version 5 with forward migrations from versions 1–4 and no down migration. Version 5 adds bounded idempotency response/tombstone state. Roll back application code only when it still supports the on-disk schema; otherwise restore the coordinated snapshot.
+Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. This release uses schema version 6 with crash-atomic, cross-process-serialized forward migrations from versions 1–5 and no down migration. Version 6 adds worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.

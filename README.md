@@ -8,7 +8,7 @@ The product is designed for research and consulting teams that need chart data t
 
 - Account, session, CSRF, tenant, API-key, and rate-limit boundaries
 - Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
-- Persistent `queued → running → review → approved` jobs with bounded restart recovery, cancellation, failure refunds, retention cleanup, and a retryable deletion outbox
+- Persistent `queued → running → review → approved` jobs with fenced worker leases, bounded restart recovery, pre-dispatch refunds, retention cleanup, and a retryable deletion outbox
 - Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
 - Side-by-side source review, editable values, version history, and an audit trail
 - JSON, CSV, and XLSX exports; XLSX includes an audit sheet
@@ -54,14 +54,14 @@ UNRENDER_WORKER_ENABLED=true
 UNRENDER_SEED_DEMO=false
 UNRENDER_ALLOW_REGISTRATION=false
 UNRENDER_MODAL_APP=unrender
-UNRENDER_MODAL_FUNCTION=infer-one
+UNRENDER_MODAL_FUNCTION=infer_one
 UNRENDER_MODAL_MODEL=owner/approved-unrender-model
 UNRENDER_MODAL_REVISION=<full 40-character model commit>
 UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
 UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, resolves only the named Hub commit, rejects writable or escaping snapshot files, verifies the complete snapshot digest, and measures its reviewed source plus runtime package versions into the canaried release digest. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, resolves only the named Hub commit, copies it through descriptor-verified paths into a private read-only content address, verifies the complete snapshot digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 
@@ -71,7 +71,7 @@ Production startup rejects HTTP base URLs, replay extraction, seeded demo accoun
 4. The result enters review; it is never presented as verified automatically.
 5. Corrections create immutable result versions.
 6. Approval and exports are appended to the audit trail.
-7. A failed or cancelled extraction returns its reserved credit exactly once.
+7. A cancellation/failure before provider dispatch returns its reserved credit exactly once. Once provider dispatch is durably recorded, the attempt consumes the credit even if the provider fails or cancellation arrives later; this prevents unbounded free paid inference.
 
 The saved fixture costs zero credits because it makes no provider call.
 
@@ -86,7 +86,7 @@ curl -X POST "http://127.0.0.1:8000/api/v1/extractions?page_index=0" \
   -F "file=@chart.png"
 ```
 
-Every submission requires a tenant-scoped idempotency key. An exact retry inside the configured 720-hour default replay window returns the stored response without creating another job or reserving another credit; changed or expired keys return `409`. The expired response is compacted to a tombstone for another 365 days by default, after which the record may be removed, so clients must never recycle keys. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive API documentation is available at `/api/docs` outside production. The stable response, retention horizon, and error contracts are documented in [`docs/API.md`](docs/API.md).
+Every submission requires a tenant-scoped idempotency key. An exact retry inside the configured 720-hour default replay window returns the stored response without creating another job or reserving another credit; changed or expired keys return `409`. The expired response is compacted to a tombstone for another 365 days by default, after which the record may be removed, so clients must never recycle keys. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive schemas are intentionally disabled; the stable response, retention horizon, and error contracts are maintained in [`docs/API.md`](docs/API.md).
 
 ## Verify a change
 
@@ -95,6 +95,7 @@ ruff check unrender/product unrender/schema/chart_schema.py tests/test_product.p
 mypy unrender/product
 pytest -q
 node --check unrender/product/static/app.js
+python scripts/check_release_licenses.py
 docker build -t unrender:local .
 ```
 
@@ -128,9 +129,10 @@ The base Qwen/Unsloth model artifacts used by the research pipeline are publishe
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deploy, backup, restore, alerts, and incident steps
 - [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — controls, threats, and accepted limits
 - [`docs/LAUNCH_READINESS.md`](docs/LAUNCH_READINESS.md) — evidence-backed gate checklist and owner blockers
+- [`docs/REMEDIATION_EVIDENCE.md`](docs/REMEDIATION_EVIDENCE.md) — exact-review fixes, local gate results, and external release gates
 - [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md) — license/provenance inventory and counsel questions
 - [`docs/LAUNCH_PLAN.md`](docs/LAUNCH_PLAN.md) — 30-day distribution and measurement plan
 
 ## License
 
-The code in this repository is Apache-2.0; see [`LICENSE`](LICENSE). Bundled IBM Plex Sans font files are covered by the included SIL Open Font License. Model weights, source charts, and third-party datasets retain their own terms; review [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before distribution.
+The repository's own code is Apache-2.0; see [`LICENSE`](LICENSE). That does not determine the obligations of the combined product. The former PyMuPDF AGPL/commercial-license dependency has been removed from product code and locks; PDF handling now uses locked pypdfium2/PDFium, whose upstream permissive terms and shipped dependency notices are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The checked-in CycloneDX inventory and machine policy validate that replacement. This engineering gate is not legal approval: public/commercial release remains blocked until the owner and qualified counsel approve the entity, privacy/terms, retention, subprocessors, support/refund terms, and intended distribution model in [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md).

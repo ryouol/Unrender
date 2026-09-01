@@ -6,7 +6,17 @@ This is an engineering inventory and set of counsel questions, not legal advice.
 
 - Repository license: Apache-2.0 (`LICENSE`).
 - New product code is authored in this repository under that license.
-- Dependency licenses must be captured in the release SBOM/container scan before distribution.
+- `release/sbom.cdx.json` inventories the hash-locked runtime. `release/dependency-license-policy.json` and `scripts/check_release_licenses.py` validate inventory drift. These are engineering evidence, not legal advice or proof that distribution is permitted.
+
+## PDF renderer replacement and remaining legal gate
+
+The former product runtime used `PyMuPDF==1.28.2`, which created an unresolved AGPL-3.0-or-later/commercial-license decision. Engineering removed every product/test import and both lock entries. PDF validation, password rejection, page limits, and page rasterization now use hash-locked `pypdfium2==5.13.0`; the replacement has render/encrypted-document regressions, dependency audits, an updated SBOM, and a drift-failing machine policy.
+
+Upstream records pypdfium2 as Apache-2.0 OR BSD-3-Clause and PDFium as BSD-style with additional third-party license notices included in platform wheels. Distributors must retain the applicable wheel license files. This is an engineering replacement, not a legal opinion or approval of every transitive term.
+
+**Public or commercial release remains blocked for separate owner/counsel work.** Before release, the owner and qualified counsel must approve the contracting entity, address/contact, intended hosted/distributed model, privacy/terms, subprocessors/regions, retention/deletion promises, support/refund language, weight/data provenance, and all shipped dependency notices.
+
+`python scripts/check_release_licenses.py` proves only that the reviewed replacement and inventory have not drifted. Its `--release` mode intentionally continues to fail on the non-dependency owner/counsel approval above. Do not infer general sellability from a permissive dependency, package metadata, the repository license, or an SBOM.
 
 ## Models and tooling
 
@@ -42,4 +52,4 @@ Counsel/owner gate: produce a dataset bill of materials and signed provenance st
 
 The current privacy and terms pages are conspicuous drafts. Required owner inputs include legal entity, physical/contact address, governing law, processor/subprocessor list, deployment region, retention/deletion policy, security commitments, refund terms, support channel, age restriction, and incident-notification obligations.
 
-No customer data or live payment should be accepted until counsel approves these documents and the operator can fulfill their promises.
+No customer data, public/commercial distribution, or live payment should be accepted until the privacy/commercial documents, distribution model, dependency notices, and other listed provenance questions are approved by the responsible owner and qualified counsel and the operator can fulfill their promises.

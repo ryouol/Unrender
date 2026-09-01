@@ -25,6 +25,8 @@ Successful response: `202 Accepted` with the job representation.
 
 Submissions fail before persistence when the account has no credit or when its byte, outstanding-upload, storage, or request quota is exhausted. Default tenant limits are documented in `.env.example` and may be reduced by an operator.
 
+One credit is reserved per attempt. Cancellation or failure before durable provider dispatch returns that reservation once. After dispatch, provider spend may have occurred, so a failure/cancellation consumes the credit and is not automatically redriven. Repeated recent provider failures open a circuit before dispatch; those blocked attempts are refunded because no call was made.
+
 ## Read an extraction
 
 `GET /api/v1/extractions/{job_id}`
@@ -68,8 +70,8 @@ Relevant status codes:
 - `413` streamed body, tenant source storage, or result-history storage limit exceeded;
 - `422` invalid upload or result contract;
 - `429` request, upload-bandwidth, outstanding-upload, retained-version, or request-key quota reached;
-- `503` provider or optional billing unavailable.
+- `503` provider/circuit/concurrent-work capacity or optional billing unavailable.
 
 ## Compatibility policy
 
-The `/api/v1` upload/status surface is additive within v1. Removing or changing a field's meaning requires `/api/v2`. Browser-internal `/api/*` endpoints are not a public compatibility contract yet. Browser result-history lists return bounded metadata pages and fetch one selected version body at a time; each job and tenant also has a configured retained-version/byte ceiling.
+The `/api/v1` upload/status surface is additive within v1. Removing or changing a field's meaning requires `/api/v2`. Browser-internal `/api/*` endpoints are not a public compatibility contract yet. Browser jobs, audit detail, and API-key inventories return bounded stable-cursor pages; result-history lists return bounded metadata pages and fetch one selected version body at a time. Each retained collection also has a configured count/byte/state ceiling. OpenAPI/Swagger endpoints are intentionally disabled on every environment; this file is the maintained public contract.

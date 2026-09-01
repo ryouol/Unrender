@@ -80,6 +80,22 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             base_url="https://example.com",
             seed_demo_account=False,
         ).validate()
+    with pytest.raises(ValueError, match="MODAL_REVISION"):
+        settings_for(
+            tmp_path,
+            environment="production",
+            base_url="https://example.com",
+            extractor_backend="modal",
+            seed_demo_account=False,
+        ).validate()
+    settings_for(
+        tmp_path,
+        environment="production",
+        base_url="https://example.com",
+        extractor_backend="modal",
+        seed_demo_account=False,
+        modal_model_revision="0123456789abcdef",
+    ).validate()
     with pytest.raises(ValueError, match="test-mode"):
         settings_for(
             tmp_path,

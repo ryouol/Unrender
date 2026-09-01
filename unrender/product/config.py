@@ -87,6 +87,8 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
+            if not self.modal_model_revision:
+                raise ValueError("UNRENDER_MODAL_REVISION must pin the production model")
         if self.max_upload_bytes <= 0 or self.max_pdf_pages <= 0:
             raise ValueError("Upload limits must be positive")
         if self.max_image_pixels <= 0 or self.rate_limit_per_minute <= 0:

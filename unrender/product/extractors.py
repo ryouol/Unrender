@@ -109,7 +109,11 @@ class ModalExtractor:
             chart=chart,
             raw=str(payload.get("raw", "")),
             extractor="modal",
-            model_version=self.settings.modal_model_path,
+            model_version=(
+                f"{self.settings.modal_model_path}@{self.settings.modal_model_revision}"
+                if self.settings.modal_model_revision
+                else self.settings.modal_model_path
+            ),
         )
 
 

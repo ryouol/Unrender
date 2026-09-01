@@ -620,21 +620,7 @@ class ProductService:
             if not row:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] == "queued":
-                now = timestamp()
-                conn.execute(
-                    "UPDATE jobs SET status='cancelled',progress_stage='Cancelled',"
-                    "cancel_requested=1,reservation_active=0,updated_at=? WHERE id=?",
-                    (now, job_id),
-                )
-                if row["reservation_active"]:
-                    self._change_credits(
-                        conn,
-                        user_id=user_id,
-                        delta=1,
-                        reason="job_cancelled_refund",
-                        idempotency_key=f"job:{job_id}:refund:{row['attempt']}",
-                    )
-                self._audit(conn, user_id=user_id, job_id=job_id, event_type="job_cancelled")
+                self._finish_cancelled_in_transaction(conn, row)
             elif row["status"] == "running":
                 conn.execute(
                     "UPDATE jobs SET cancel_requested=1,"
@@ -676,7 +662,7 @@ class ProductService:
             conn.execute(
                 "UPDATE jobs SET status='queued',progress_stage='Waiting for extraction',"
                 "attempt=?,cancel_requested=0,reservation_active=?,error_code=NULL,"
-                "error_message=NULL,approved_at=NULL,updated_at=? WHERE id=?",
+                "error_message=NULL,updated_at=? WHERE id=?",
                 (attempt, credit_cost, now, job_id),
             )
             self._audit(
@@ -956,7 +942,8 @@ class ProductService:
                     "UPDATE jobs SET status='review',progress_stage='Ready for review',"
                     "reservation_active=0,extractor=?,model_version=?,raw_result=?,"
                     "original_result_json=COALESCE(original_result_json,?),"
-                    "current_result_json=?,error_code=NULL,error_message=NULL,updated_at=? "
+                    "current_result_json=?,error_code=NULL,error_message=NULL,"
+                    "approved_at=NULL,updated_at=? "
                     "WHERE id=?",
                     (
                         output.extractor,
@@ -1007,11 +994,19 @@ class ProductService:
                     reason="job_failed_refund",
                     idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
                 )
+            preserved_status = self._preserved_result_status(current)
+            status = preserved_status or "failed"
+            stage = (
+                "Reprocess failed; previous approval retained"
+                if preserved_status == "approved"
+                else "Reprocess failed; previous review retained"
+                if preserved_status == "review"
+                else "Needs attention"
+            )
             conn.execute(
-                "UPDATE jobs SET status='failed',progress_stage='Needs attention',"
-                "reservation_active=0,error_code=?,error_message=?,updated_at=? "
-                "WHERE id=?",
-                (code, message[:500], timestamp(), current["id"]),
+                "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,"
+                "cancel_requested=0,error_code=?,error_message=?,updated_at=? WHERE id=?",
+                (status, stage, code, message[:500], timestamp(), current["id"]),
             )
             self._audit(
                 conn,
@@ -1039,17 +1034,33 @@ class ProductService:
                 reason="job_cancelled_refund",
                 idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
             )
+        preserved_status = self._preserved_result_status(current)
+        status = preserved_status or "cancelled"
+        stage = (
+            "Reprocess cancelled; previous approval retained"
+            if preserved_status == "approved"
+            else "Reprocess cancelled; previous review retained"
+            if preserved_status == "review"
+            else "Cancelled"
+        )
         conn.execute(
-            "UPDATE jobs SET status='cancelled',progress_stage='Cancelled',"
-            "reservation_active=0,updated_at=? WHERE id=?",
-            (timestamp(), current["id"]),
+            "UPDATE jobs SET status=?,progress_stage=?,reservation_active=0,"
+            "cancel_requested=0,updated_at=? WHERE id=?",
+            (status, stage, timestamp(), current["id"]),
         )
         self._audit(
             conn,
             user_id=current["user_id"],
             job_id=current["id"],
             event_type="job_cancelled",
+            details={"preserved_status": preserved_status},
         )
+
+    @staticmethod
+    def _preserved_result_status(current: sqlite3.Row) -> str | None:
+        if not current["current_result_json"]:
+            return None
+        return "approved" if current["approved_at"] else "review"
 
     def recover_interrupted_jobs(self) -> int:
         with self.database.transaction(immediate=True) as conn:

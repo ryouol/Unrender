@@ -248,6 +248,52 @@ def test_cancel_request_wins_when_provider_fails(tmp_path: Path) -> None:
     assert service.account(user_id)["credits"] == 3
 
 
+def test_reprocess_failure_and_cancel_preserve_approved_result(tmp_path: Path) -> None:
+    service = service_for(tmp_path)
+    user_id = service.session_user(service.demo_session()["session"])["id"]
+    upload = service.prepare_upload(
+        user_id=user_id, filename="customer-chart.png", content=png_bytes(color="blue")
+    )
+    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    fixture = json.loads(
+        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+    )
+    service.extractor = SimpleNamespace(
+        extract=lambda _: ExtractionOutput(
+            chart=ChartData.model_validate(fixture["result"]),
+            raw="approved result preservation test",
+            extractor="test",
+            model_version="test-pinned",
+        )
+    )
+    assert service.process_one()
+    approved = service.approve(user_id=user_id, job_id=job["id"])
+    approved_result = approved["result"]
+    approved_at = approved["approved_at"]
+    assert service.account(user_id)["credits"] == 2
+
+    service.reprocess(user_id=user_id, job_id=job["id"])
+
+    def fail_provider(_: bytes) -> None:
+        raise ExtractionError("provider_unavailable", "provider failed")
+
+    service.extractor = SimpleNamespace(extract=fail_provider)
+    assert service.process_one()
+    after_failure = service.get_job(user_id=user_id, job_id=job["id"])
+    assert after_failure["status"] == "approved"
+    assert after_failure["approved_at"] == approved_at
+    assert after_failure["result"] == approved_result
+    assert after_failure["error"]["code"] == "provider_unavailable"
+    assert service.account(user_id)["credits"] == 2
+
+    service.reprocess(user_id=user_id, job_id=job["id"])
+    after_cancel = service.cancel(user_id=user_id, job_id=job["id"])
+    assert after_cancel["status"] == "approved"
+    assert after_cancel["approved_at"] == approved_at
+    assert after_cancel["result"] == approved_result
+    assert service.account(user_id)["credits"] == 2
+
+
 def test_admin_cli_prompts_for_password_and_creates_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

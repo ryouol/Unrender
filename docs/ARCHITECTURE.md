@@ -49,7 +49,7 @@ prepared upload
   approved ── correction ────────► review
 ```
 
-An active reservation is stored on the job. Refunds use an attempt-scoped idempotency key, so retries cannot return the same credit twice. Startup moves interrupted `running` jobs back to `queued` without another charge. Reprocessing creates a new attempt and reservation.
+An active reservation is stored on the job. Refunds use an attempt-scoped idempotency key, so retries cannot return the same credit twice. Startup moves interrupted `running` jobs back to `queued` without another charge. Reprocessing creates a new attempt and reservation while retaining the last review/approval as a fallback. A successful new extraction returns to `review`; a failed or cancelled attempt refunds the reservation and restores the preserved result state.
 
 The exact saved fixture is the only zero-credit job. It is hash-matched and replayed from deterministic ground truth; it never calls a provider.
 

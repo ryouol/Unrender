@@ -9,6 +9,7 @@ The product is designed for research and consulting teams that need chart data t
 - Account, session, CSRF, tenant, API-key, and rate-limit boundaries
 - Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
 - Persistent `queued → running → review → approved` jobs with restart recovery, cancellation, failure refunds, and retention cleanup
+- Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
 - Side-by-side source review, editable values, version history, and an audit trail
 - JSON, CSV, and XLSX exports; XLSX includes an audit sheet
 - A programmatic upload/status API

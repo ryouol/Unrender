@@ -20,6 +20,7 @@ Customer chart sources, extracted values, corrections, exports, identities, sess
 - signed, idempotent Stripe webhooks, checkout-destination allowlisting, and a hard block on live secret keys;
 - API keys that are hashed at rest, listed without hashes, and immediately revocable;
 - CSV/XLSX formula neutralization while the JSON export preserves exact values;
+- SHA-locked Python dependencies, commit-pinned CI actions, and an immutable Python base-image digest;
 - no paid call in default replay/demo mode.
 
 ## Abuse cases considered

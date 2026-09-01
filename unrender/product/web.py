@@ -174,7 +174,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' blob: data:; style-src 'self'; "
+            "default-src 'self'; img-src 'self'; style-src 'self'; "
             "script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
             "base-uri 'self'; form-action 'self'"
         )

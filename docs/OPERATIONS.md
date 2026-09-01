@@ -11,6 +11,8 @@
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
 
+The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
+
 `/health/live` proves the process responds. `/health/ready` verifies the database schema and storage path. Neither calls the external inference provider.
 
 ## Logs and alerts

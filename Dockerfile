@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.11-slim AS runtime
+FROM python:3.11.16-slim-trixie@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

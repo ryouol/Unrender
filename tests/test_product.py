@@ -3,6 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,11 +20,12 @@ from PIL import Image
 from unrender.product import admin
 from unrender.product.config import Settings
 from unrender.product.database import Database
-from unrender.product.extractors import ReplayExtractor
+from unrender.product.extractors import ExtractionError, ExtractionOutput, ReplayExtractor
 from unrender.product.security import hash_password, verify_password
 from unrender.product.service import ProductError, ProductService
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.web import CSRF_COOKIE, create_app
+from unrender.schema.chart_schema import ChartData
 
 STATIC_DIR = Path(__file__).parents[1] / "unrender" / "product" / "static"
 
@@ -134,6 +138,11 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
         settings_for(tmp_path, base_url="https://example.com/unrender").validate()
 
 
+def test_runtime_lock_includes_the_production_provider_client() -> None:
+    lock = (STATIC_DIR.parents[2] / "requirements-app.lock").read_text(encoding="utf-8")
+    assert "\nmodal==" in lock
+
+
 def test_passwords_are_salted_and_verified() -> None:
     first = hash_password("correct horse battery staple")
     second = hash_password("correct horse battery staple")
@@ -157,6 +166,86 @@ def test_operator_can_provision_when_public_registration_is_closed(tmp_path: Pat
     assert ledger["reason"] == "operator_grant"
     session = service.authenticate("invited@example.com", "an operator supplied password")
     assert service.session_user(session["session"])["id"] == user_id
+
+
+def test_cancel_wins_atomic_race_with_worker_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path)
+    user_id = service.session_user(service.demo_session()["session"])["id"]
+    upload = service.prepare_upload(
+        user_id=user_id, filename="customer-chart.png", content=png_bytes(color="blue")
+    )
+    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    fixture = json.loads(
+        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+    )
+    service.extractor = SimpleNamespace(
+        extract=lambda _: ExtractionOutput(
+            chart=ChartData.model_validate(fixture["result"]),
+            raw="atomic completion test",
+            extractor="test",
+            model_version="test-pinned",
+        )
+    )
+
+    original_transaction = service.database.transaction
+    completion_waiting = threading.Event()
+    allow_completion = threading.Event()
+    transaction_count = 0
+    count_lock = threading.Lock()
+
+    @contextmanager
+    def gated_transaction(*, immediate: bool = False) -> Iterator[object]:
+        nonlocal transaction_count
+        with count_lock:
+            transaction_count += 1
+            current_count = transaction_count
+        if current_count == 4:
+            completion_waiting.set()
+            assert allow_completion.wait(timeout=5)
+        with original_transaction(immediate=immediate) as conn:
+            yield conn
+
+    monkeypatch.setattr(service.database, "transaction", gated_transaction)
+    worker = threading.Thread(target=service.process_one)
+    worker.start()
+    assert completion_waiting.wait(timeout=5)
+    service.cancel(user_id=user_id, job_id=job["id"])
+    allow_completion.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert service.get_job(user_id=user_id, job_id=job["id"])["status"] == "cancelled"
+    assert service.account(user_id)["credits"] == 3
+
+
+def test_cancel_request_wins_when_provider_fails(tmp_path: Path) -> None:
+    service = service_for(tmp_path)
+    user_id = service.session_user(service.demo_session()["session"])["id"]
+    upload = service.prepare_upload(
+        user_id=user_id, filename="customer-chart.png", content=png_bytes(color="blue")
+    )
+    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    provider_started = threading.Event()
+    provider_release = threading.Event()
+
+    def fail_after_cancel(_: bytes) -> None:
+        provider_started.set()
+        assert provider_release.wait(timeout=5)
+        raise ExtractionError("provider_unavailable", "provider failed")
+
+    service.extractor = SimpleNamespace(extract=fail_after_cancel)
+    worker = threading.Thread(target=service.process_one)
+    worker.start()
+    assert provider_started.wait(timeout=5)
+    service.cancel(user_id=user_id, job_id=job["id"])
+    provider_release.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert service.get_job(user_id=user_id, job_id=job["id"])["status"] == "cancelled"
+    assert service.account(user_id)["credits"] == 3
 
 
 def test_admin_cli_prompts_for_password_and_creates_account(

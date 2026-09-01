@@ -124,7 +124,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 
 - Rule ID: FASTAPI-ABUSE-001
 - Severity: Low
-- Location: `unrender/product/web.py:189-224`; `unrender/product/service.py:1091-1109`, `rate_limit`
+- Location: `unrender/product/web.py:189-224`; `unrender/product/service.py:1101-1119`, `rate_limit`
 - Evidence: SQLite buckets use `request.client.host`; a reverse proxy can collapse users to one address, and multiple replicas would not share state.
 - Impact: false throttling behind a proxy or inconsistent abuse enforcement across replicas.
 - Fix: select a deployment platform, enforce per-IP/account limits at its trusted edge, and move shared limits to a managed store before horizontal scaling.

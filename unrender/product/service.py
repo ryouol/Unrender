@@ -930,13 +930,15 @@ class ProductService:
                 )
             output = self.extractor.extract(image)
             self._validate_product_chart(output.chart)
-            current = self._job_row(user_id=row["user_id"], job_id=job_id)
-            if current["cancel_requested"]:
-                self._finish_cancelled(current)
-                return True
             encoded = output.chart.model_dump_json()
             now = timestamp()
             with self.database.transaction(immediate=True) as conn:
+                current = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if not current or current["status"] != "running":
+                    return True
+                if current["cancel_requested"]:
+                    self._finish_cancelled_in_transaction(conn, current)
+                    return True
                 version = conn.execute(
                     "SELECT COALESCE(MAX(version),0)+1 AS value "
                     "FROM result_versions WHERE job_id=?",
@@ -994,6 +996,9 @@ class ProductService:
             current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
             if not current or current["status"] not in {"running", "queued"}:
                 return
+            if current["cancel_requested"]:
+                self._finish_cancelled_in_transaction(conn, current)
+                return
             if current["reservation_active"]:
                 self._change_credits(
                     conn,
@@ -1021,25 +1026,30 @@ class ProductService:
             current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
             if not current or current["status"] not in {"running", "queued"}:
                 return
-            if current["reservation_active"]:
-                self._change_credits(
-                    conn,
-                    user_id=current["user_id"],
-                    delta=1,
-                    reason="job_cancelled_refund",
-                    idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
-                )
-            conn.execute(
-                "UPDATE jobs SET status='cancelled',progress_stage='Cancelled',"
-                "reservation_active=0,updated_at=? WHERE id=?",
-                (timestamp(), current["id"]),
-            )
-            self._audit(
+            self._finish_cancelled_in_transaction(conn, current)
+
+    def _finish_cancelled_in_transaction(
+        self, conn: sqlite3.Connection, current: sqlite3.Row
+    ) -> None:
+        if current["reservation_active"]:
+            self._change_credits(
                 conn,
                 user_id=current["user_id"],
-                job_id=current["id"],
-                event_type="job_cancelled",
+                delta=1,
+                reason="job_cancelled_refund",
+                idempotency_key=f"job:{current['id']}:refund:{current['attempt']}",
             )
+        conn.execute(
+            "UPDATE jobs SET status='cancelled',progress_stage='Cancelled',"
+            "reservation_active=0,updated_at=? WHERE id=?",
+            (timestamp(), current["id"]),
+        )
+        self._audit(
+            conn,
+            user_id=current["user_id"],
+            job_id=current["id"],
+            event_type="job_cancelled",
+        )
 
     def recover_interrupted_jobs(self) -> int:
         with self.database.transaction(immediate=True) as conn:

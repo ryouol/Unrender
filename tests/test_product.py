@@ -10,6 +10,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,7 +32,7 @@ from unrender.product.extractors import (
     ReplayExtractor,
 )
 from unrender.product.security import hash_password, password_needs_rehash, verify_password
-from unrender.product.service import ProductError, ProductService
+from unrender.product.service import ProductError, ProductService, timestamp, utcnow
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.web import CSRF_COOKIE, create_app
 from unrender.schema.chart_schema import ChartData
@@ -161,6 +162,7 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
         allow_registration=False,
         modal_model_path="approved/unrender-model",
         modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+        modal_model_digest="b" * 64,
         modal_provider_release="a" * 64,
         worker_enabled=True,
     ).validate()
@@ -175,6 +177,20 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             worker_enabled=True,
             modal_model_path="approved/unrender-model",
             modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+            modal_model_digest="b" * 64,
+        ).validate()
+    with pytest.raises(ValueError, match="MODEL_DIGEST"):
+        settings_for(
+            tmp_path,
+            environment="production",
+            base_url="https://example.com",
+            extractor_backend="modal",
+            seed_demo_account=False,
+            allow_registration=False,
+            worker_enabled=True,
+            modal_model_path="approved/unrender-model",
+            modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+            modal_provider_release="a" * 64,
         ).validate()
     with pytest.raises(ValueError, match="WORKER_ENABLED"):
         settings_for(
@@ -226,7 +242,13 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
         "raw": fixture["raw"],
         "provider_release": "b" * 64,
     }
-    remote = SimpleNamespace(remote=lambda *_: response)
+    remote_calls: list[tuple[object, ...]] = []
+
+    def remote_call(*args: object) -> dict[str, object]:
+        remote_calls.append(args)
+        return response
+
+    remote = SimpleNamespace(remote=remote_call)
     modal = SimpleNamespace(
         Function=SimpleNamespace(from_name=lambda *_: remote),
     )
@@ -237,6 +259,7 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
             extractor_backend="modal",
             modal_model_path="approved/unrender-model",
             modal_model_revision="1" * 40,
+            modal_model_digest="2" * 64,
             modal_provider_release=release,
         )
     )
@@ -245,6 +268,7 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
 
     response["provider_release"] = release
     output = extractor.extract(png_bytes())
+    assert remote_calls[-1][1:] == ("approved/unrender-model", "1" * 40, "2" * 64)
     assert output.model_version.endswith(f"+provider:{release[:12]}")
 
 
@@ -541,10 +565,71 @@ def test_schema_v2_upgrades_to_storage_quota_and_idempotency_state(tmp_path: Pat
         idempotency = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='api_idempotency'"
         ).fetchone()
-    assert version == 4
+    assert version == 5
     assert "source_byte_size" in job_columns
     assert {"user_id", "byte_size"} <= deletion_columns
     assert idempotency is not None
+    with database.connect() as conn:
+        idempotency_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(api_idempotency)")
+        }
+    assert {"expires_at", "expired_at"} <= idempotency_columns
+
+
+def test_schema_v4_idempotency_migration_preserves_rows_and_enforces_expiry(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "migration-v4" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute("DROP INDEX api_idempotency_expiry_idx")
+        conn.execute("DROP TABLE api_idempotency")
+        conn.execute(
+            """
+            CREATE TABLE api_idempotency (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                idempotency_key TEXT NOT NULL,
+                request_sha256 TEXT NOT NULL,
+                response_json TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                PRIMARY KEY(user_id, idempotency_key)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO users(id,email,password_hash,credit_balance,created_at)
+            VALUES ('legacy-user','legacy@example.com','hash',0,'2026-01-01T00:00:00.000Z')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO api_idempotency(
+                user_id,idempotency_key,request_sha256,response_json,created_at,completed_at
+            ) VALUES (
+                'legacy-user','legacy-key','request-sha','{\"job_id\":\"legacy-job\"}',
+                '2026-01-01T00:00:00.000Z','2026-01-01T00:00:01.000Z'
+            )
+            """
+        )
+        conn.execute("UPDATE schema_meta SET version=4")
+
+    database.initialize()
+    with database.connect() as conn:
+        version = conn.execute("SELECT version FROM schema_meta").fetchone()["version"]
+        columns = {
+            row["name"]: row
+            for row in conn.execute("PRAGMA table_info(api_idempotency)").fetchall()
+        }
+        migrated = conn.execute(
+            "SELECT * FROM api_idempotency WHERE user_id='legacy-user'"
+        ).fetchone()
+    assert version == 5
+    assert columns["expires_at"]["notnull"] == 1
+    assert migrated["response_json"] == '{"job_id":"legacy-job"}'
+    assert migrated["expires_at"] == "2026-01-31T00:00:00.000Z"
+    assert migrated["expired_at"] is None
 
 
 def test_tenant_upload_quota_and_bandwidth_limit_leave_no_orphan_files(
@@ -611,9 +696,12 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     job = service.save_correction(user_id=user_id, job_id=job["id"], result=corrected)
     assert job["result"]["title"].endswith("reviewed")
     versions = service.job_versions(user_id=user_id, job_id=job["id"])
-    assert [item["version"] for item in versions] == [2, 1]
-    assert versions[0]["source"] == "correction"
-    assert versions[1]["source"] == "extraction"
+    assert [item["version"] for item in versions["items"]] == [2, 1]
+    assert versions["items"][0]["source"] == "correction"
+    assert versions["items"][1]["source"] == "extraction"
+    assert "result" not in versions["items"][0]
+    restored = service.job_version(user_id=user_id, job_id=job["id"], version=1)
+    assert restored["result"]["title"] == "Budget (Quarter)"
     job = service.approve(user_id=user_id, job_id=job["id"])
     assert job["status"] == "approved"
 
@@ -629,6 +717,82 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     assert "result_corrected" in events
     assert "result_approved" in events
     assert events.count("result_exported") == 3
+
+
+def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
+    tmp_path: Path,
+) -> None:
+    service = service_for(tmp_path, max_result_versions_per_job=22)
+    session = service.demo_session()
+    user = service.session_user(session["session"])
+    assert user is not None
+    user_id = str(user["id"])
+    upload = service.prepare_demo_upload(user_id)
+    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    assert service.process_one()
+    for correction in range(21):
+        result = service.get_job(user_id=user_id, job_id=job["id"])["result"]
+        result["title"] = f"Correction {correction + 1}"
+        service.save_correction(user_id=user_id, job_id=job["id"], result=result)
+
+    first_page = service.job_versions(user_id=user_id, job_id=job["id"])
+    assert len(first_page["items"]) == 20
+    assert first_page["next_before"] == 3
+    assert all("result" not in item for item in first_page["items"])
+    second_page = service.job_versions(
+        user_id=user_id,
+        job_id=job["id"],
+        before=first_page["next_before"],
+    )
+    assert [item["version"] for item in second_page["items"]] == [2, 1]
+    assert second_page["next_before"] is None
+    assert service.job_version(user_id=user_id, job_id=job["id"], version=1)["result"]
+    with pytest.raises(ProductError, match="version limit"):
+        service.save_correction(
+            user_id=user_id,
+            job_id=job["id"],
+            result=service.get_job(user_id=user_id, job_id=job["id"])["result"],
+        )
+    with pytest.raises(ProductError, match="version limit"):
+        service.reprocess(user_id=user_id, job_id=job["id"])
+
+
+def test_result_history_byte_quota_fails_closed_and_refunds(tmp_path: Path) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        max_history_bytes_per_user=1,
+    )
+    user_id = customer_id(service)
+    fixture = json.loads(
+        (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+    )
+    service.extractor = SimpleNamespace(
+        extract=lambda _: ExtractionOutput(
+            chart=ChartData.model_validate(fixture["result"]),
+            raw="history quota test",
+            extractor="test",
+            model_version="test-pinned",
+        )
+    )
+    upload = service.prepare_upload(
+        user_id=user_id,
+        filename="verified.webp",
+        content=png_bytes(color="navy"),
+    )
+    job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+    assert service.account(user_id)["credits"] == 2
+    assert service.process_one()
+    failed = service.get_job(user_id=user_id, job_id=job["id"])
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "history_storage_quota_reached"
+    assert service.account(user_id)["credits"] == 3
+    with pytest.raises(ProductError, match="history storage limit"):
+        service.reprocess(user_id=user_id, job_id=job["id"])
+    assert service.account(user_id)["credits"] == 3
+    with service.database.connect() as conn:
+        count = conn.execute("SELECT COUNT(*) AS count FROM result_versions").fetchone()["count"]
+    assert count == 0
 
 
 def test_demo_sessions_are_isolated_and_cannot_create_customer_data(tmp_path: Path) -> None:
@@ -1112,6 +1276,65 @@ def test_api_submission_is_tenant_idempotent_and_conflicts_on_request_drift(
             )
 
 
+def test_expired_idempotency_key_is_tombstoned_through_the_retention_window(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        settings_for(
+            tmp_path,
+            seed_demo_account=False,
+            idempotency_ttl_hours=1,
+        )
+    )
+    with TestClient(app) as client:
+        secret = register_and_create_api_key(client, email="expiry@example.com")
+        headers = {
+            "Authorization": f"Bearer {secret}",
+            "Idempotency-Key": "expiry-window-0001",
+        }
+        source = png_bytes(color="green")
+        first = client.post(
+            "/api/v1/extractions",
+            headers=headers,
+            files={"file": ("chart.png", source, "image/png")},
+        )
+        assert first.status_code == 202
+        with app.state.service.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE api_idempotency SET expires_at=?",
+                (timestamp(utcnow() - timedelta(minutes=1)),),
+            )
+        app.state.service.cleanup_expired()
+
+        replay = client.post(
+            "/api/v1/extractions",
+            headers=headers,
+            files={"file": ("chart.png", source, "image/png")},
+        )
+        assert replay.status_code == 409
+        assert replay.json()["error"]["code"] == "idempotency_key_expired"
+        assert client.get("/api/me").json()["credits"] == 2
+        with app.state.service.database.connect() as conn:
+            assert conn.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()["count"] == 1
+            tombstone = conn.execute(
+                "SELECT response_json,expired_at FROM api_idempotency"
+            ).fetchone()
+        assert tombstone["response_json"] is None
+        assert tombstone["expired_at"] is not None
+
+        with app.state.service.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE api_idempotency SET expired_at=?",
+                (timestamp(utcnow() - timedelta(days=366)),),
+            )
+        app.state.service.cleanup_expired()
+        with app.state.service.database.connect() as conn:
+            assert (
+                conn.execute("SELECT COUNT(*) AS count FROM api_idempotency").fetchone()["count"]
+                == 0
+            )
+
+
 def test_zero_credit_api_submission_leaves_no_rows_or_files(tmp_path: Path) -> None:
     app = create_app(
         settings_for(
@@ -1158,6 +1381,25 @@ def test_streaming_body_limit_rejects_chunked_payload_before_json_parsing(
         )
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "request_too_large"
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+
+    consumed = 0
+
+    def hostile_host_body() -> Iterator[bytes]:
+        nonlocal consumed
+        for _ in range(300):
+            consumed += 1
+            yield b"x" * 1024
+
+    with TestClient(app) as client:
+        hostile = client.post(
+            "/api/auth/login",
+            headers={"Content-Type": "application/json", "Host": "attacker.example"},
+            content=hostile_host_body(),
+        )
+    assert hostile.status_code == 400
+    assert consumed == 0
+    assert "default-src 'self'" in hostile.headers["Content-Security-Policy"]
 
 
 def test_test_mode_checkout_and_signed_webhook_flow(
@@ -1227,12 +1469,52 @@ def test_test_mode_checkout_and_signed_webhook_flow(
         assert client.get("/api/me").json()["credits"] == 100
 
 
-def test_rate_limit_excludes_health_checks(tmp_path: Path) -> None:
+def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        settings_for(
+            tmp_path,
+            seed_demo_account=False,
+            rate_limit_per_minute=2,
+        )
+    )
+    payload = {"email": "known@example.com", "password": "wrong password"}
+    with TestClient(app) as client:
+        app.state.service.register("known@example.com", "known password is long enough")
+        first = client.post(
+            "/api/auth/login",
+            json=payload,
+            headers={"Authorization": "Bearer attacker-a", "X-Forwarded-For": "198.51.100.1"},
+        )
+        second = client.post(
+            "/api/auth/login",
+            json=payload,
+            headers={
+                "Cookie": "unrender_session=attacker-b",
+                "X-Forwarded-For": "198.51.100.2",
+            },
+        )
+        blocked = client.post(
+            "/api/auth/login",
+            json=payload,
+            headers={"Authorization": "Bearer attacker-c", "X-Forwarded-For": "198.51.100.3"},
+        )
+    assert first.status_code == second.status_code == 401
+    assert blocked.status_code == 429
+    with app.state.service.database.connect() as conn:
+        buckets = conn.execute("SELECT bucket_key,request_count FROM rate_limits").fetchall()
+    assert len(buckets) == 1
+    assert int(buckets[0]["request_count"]) == 3
+    assert "attacker" not in str(buckets[0]["bucket_key"])
+
+
+def test_live_health_is_cheap_while_readiness_is_admission_limited(tmp_path: Path) -> None:
     app = create_app(settings_for(tmp_path, rate_limit_per_minute=2))
     with TestClient(app) as client:
-        assert client.get("/").status_code == 200
-        assert client.get("/").status_code == 200
-        assert client.get("/").status_code == 429
+        assert client.get("/health/ready").status_code == 200
+        assert client.get("/health/ready").status_code == 200
+        assert client.get("/health/ready").status_code == 429
         assert client.get("/health/live").status_code == 200
 
 

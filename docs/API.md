@@ -17,7 +17,9 @@ Multipart body:
 
 - `file` — PNG, JPEG, WebP, or PDF, required.
 
-`page_index` is a zero-based query parameter and defaults to `0`. An exact retry with the same account, key, filename, page, and bytes returns the stored `202` response without another upload, job, or credit reservation. Reusing a key for a different request returns `idempotency_conflict`.
+`page_index` is a zero-based query parameter and defaults to `0`. An exact retry with the same account, key, filename, page, and bytes returns the stored `202` response without another upload, job, or credit reservation during `UNRENDER_IDEMPOTENCY_TTL_HOURS` (720 hours by default). Reusing a live key for different input returns `idempotency_conflict`.
+
+After the replay window, the key returns `idempotency_key_expired` and its response body is removed. That compact tombstone is retained for `UNRENDER_IDEMPOTENCY_TOMBSTONE_DAYS` (365 days by default), after which housekeeping may delete it. Clients must generate a new random key for each new logical request and must never recycle old keys; the server deliberately does not promise replay or duplicate detection after the documented tombstone horizon.
 
 Successful response: `202 Accepted` with the job representation.
 
@@ -62,12 +64,12 @@ Relevant status codes:
 - `402` no chart credits;
 - `403` CSRF/origin/registration policy;
 - `404` tenant-scoped resource not found;
-- `409` invalid lifecycle transition, idempotency conflict, or same-key request already in progress;
-- `413` streamed body or tenant storage limit exceeded;
+- `409` invalid lifecycle transition, idempotency conflict/expiry, or same-key request already in progress;
+- `413` streamed body, tenant source storage, or result-history storage limit exceeded;
 - `422` invalid upload or result contract;
-- `429` request, upload-bandwidth, or outstanding-upload quota reached;
+- `429` request, upload-bandwidth, outstanding-upload, retained-version, or request-key quota reached;
 - `503` provider or optional billing unavailable.
 
 ## Compatibility policy
 
-The `/api/v1` upload/status surface is additive within v1. Removing or changing a field's meaning requires `/api/v2`. Browser-internal `/api/*` endpoints are not a public compatibility contract yet.
+The `/api/v1` upload/status surface is additive within v1. Removing or changing a field's meaning requires `/api/v2`. Browser-internal `/api/*` endpoints are not a public compatibility contract yet. Browser result-history lists return bounded metadata pages and fetch one selected version body at a time; each job and tenant also has a configured retained-version/byte ceiling.

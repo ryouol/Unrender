@@ -89,6 +89,7 @@ class ModalExtractor:
                 image_bytes,
                 self.settings.modal_model_path,
                 self.settings.modal_model_revision,
+                self.settings.modal_model_digest,
             )
         except Exception as exc:  # provider errors are normalized for the worker
             raise ExtractionError(

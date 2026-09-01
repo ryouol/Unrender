@@ -28,8 +28,8 @@ The transport layer parses HTTP and owns cookies/headers. `ProductService` owns 
 - Files are addressed with server-generated UUIDs under a configured storage root; original names are display metadata only.
 - Upload type is derived from file content, not the client MIME header. Images are decoded and dimension-limited; PDFs are opened, password checked, and page-limited.
 - The ASGI boundary buffers only a configured maximum, so chunked bodies are rejected before JSON parsing or multipart spooling can exceed the route limit.
-- Customer uploads require available credit and remain under per-tenant bandwidth, outstanding-upload, and total stored-byte limits. Job copies count toward stored bytes.
-- Public API submissions reserve upload, job, and credit in one SQLite transaction. A tenant-scoped request hash makes `Idempotency-Key` retries replay the saved response and rejects key reuse with different input.
+- Customer uploads require available credit and remain under per-tenant bandwidth, outstanding-upload, and total stored-byte limits. Job copies count toward stored bytes. Result history has separate per-job version and per-tenant byte ceilings; list routes return metadata pages and load one selected body explicitly.
+- Public API submissions reserve upload, job, and credit in one SQLite transaction. A tenant-scoped request hash makes `Idempotency-Key` retries replay the saved response and rejects changed or expired reuse. Full responses expire on a configured horizon, then compact tombstones preserve the expired outcome for a separately configured retention period; clients must not recycle keys after that documented period.
 - State changes through the browser require a valid session and CSRF header. Cross-origin state changes are rejected.
 - Stripe events are applied only after signature verification and are idempotent by event ID. Configuration rejects live-mode secret keys.
 - Each anonymous sample session is a distinct ephemeral demo tenant. Server-side capability checks permit only the exact saved fixture and deny arbitrary upload, API-key, and billing surfaces.
@@ -73,6 +73,6 @@ This topology is appropriate for a controlled single-node beta. Do not mount one
 
 - The embedded worker is at-least-once around process interruption; provider calls themselves are not cancellable mid-request.
 - SQLite backups and storage snapshots must be coordinated by the operator.
-- Rate limits are credential/session scoped for authenticated traffic and IP scoped before authentication; all counters remain local to one database.
-- The Modal adapter relies on deployment credentials outside this repository. Production also requires an approved provider-release digest and rejects a runtime handshake mismatch, but the owner must still run a real canary before launch.
+- Every non-liveness request first consumes a bucket derived only from the ASGI client address. Successfully authenticated routes also consume a bucket derived from the durable database user ID; raw cookies, bearer values, and forwarded headers never choose an application bucket. All counters remain local to one database, and the selected trusted edge must supply the intended client address.
+- The Modal adapter relies on deployment credentials outside this repository. Production accepts only an owner/model Hub repository, a full commit, and the matching complete-snapshot digest. The inference function uses exact direct package pins and returns a release digest covering reviewed provider/schema source, the extraction prompt, measured runtime packages, and model identity. The app rejects a handshake mismatch, but an immutable Modal deployment/image record and a real canary remain owner gates.
 - There is no organization/team model, SSO, or per-role authorization yet.

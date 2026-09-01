@@ -24,6 +24,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -37,6 +38,50 @@ from unrender.product.worker import JobWorker
 logger = logging.getLogger("unrender.web")
 SESSION_COOKIE = "unrender_session"
 CSRF_COOKIE = "unrender_csrf"
+
+
+def _security_headers(path: str, *, secure_cookies: bool) -> dict[str, str]:
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "same-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "Content-Security-Policy": (
+            "default-src 'self'; img-src 'self'; style-src 'self'; "
+            "script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
+            "base-uri 'self'; form-action 'self'"
+        ),
+        "Cache-Control": "no-store" if path.startswith("/api/") else "no-cache",
+    }
+    if secure_cookies:
+        headers["Strict-Transport-Security"] = "max-age=31536000"
+    return headers
+
+
+class SecurityHeadersMiddleware:
+    """Apply the browser policy even to outer Host/body admission failures."""
+
+    def __init__(self, app: ASGIApp, *, secure_cookies: bool):
+        self.app = app
+        self.secure_cookies = secure_cookies
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in _security_headers(
+                    str(scope.get("path", "")), secure_cookies=self.secure_cookies
+                ).items():
+                    headers[name] = value
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 class BodyLimitMiddleware:
@@ -223,28 +268,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     allowed_hosts = [expected_host] if expected_host else []
     if settings.environment != "production":
         allowed_hosts.extend(["testserver", "localhost", "127.0.0.1"])
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
     app.add_middleware(BodyLimitMiddleware, upload_limit=settings.max_upload_bytes)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     def secure_response(response: Response, request: Request) -> Response:
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "same-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self'; style-src 'self'; "
-            "script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "base-uri 'self'; form-action 'self'"
-        )
-        response.headers["Cache-Control"] = (
-            "no-store" if request.url.path.startswith("/api/") else "no-cache"
-        )
-        if settings.secure_cookies:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        for name, value in _security_headers(
+            request.url.path, secure_cookies=settings.secure_cookies
+        ).items():
+            response.headers[name] = value
         return response
+
+    def rate_group(request: Request) -> str:
+        path_parts = request.url.path.strip("/").split("/")
+        is_job_status = (
+            request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
+        )
+        return "poll" if is_job_status else "request"
+
+    def rate_limit_for(group: str) -> int:
+        return (
+            max(240, settings.rate_limit_per_minute * 2)
+            if group == "poll"
+            else settings.rate_limit_per_minute
+        )
+
+    def allowed_request(bucket: str, *, group: str) -> bool:
+        try:
+            return service.rate_limit(f"{bucket}:{group}", limit=rate_limit_for(group))
+        except Exception:
+            return False
 
     @app.middleware("http")
     async def request_guard(request: Request, call_next):
@@ -274,33 +326,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request,
                 )
         client = request.client.host if request.client else "unknown"
-        credential = request.cookies.get(SESSION_COOKIE) or request.headers.get("authorization", "")
-        principal = credential if credential else f"ip:{client}"
-        bucket = hashlib.sha256(principal.encode("utf-8")).hexdigest()[:24]
-        path_parts = request.url.path.strip("/").split("/")
-        is_job_status = (
-            request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
-        )
-        rate_group = "poll" if is_job_status else "request"
-        rate_limit = (
-            max(240, settings.rate_limit_per_minute * 2)
-            if rate_group == "poll" and credential
-            else settings.rate_limit_per_minute
-        )
-        if request.url.path not in {"/health/live", "/health/ready"}:
-            try:
-                allowed = service.rate_limit(f"{bucket}:{rate_group}", limit=rate_limit)
-            except Exception:
-                allowed = False
-            if not allowed:
-                return secure_response(
-                    JSONResponse(
-                        {"error": {"code": "rate_limited", "message": "Try again in a minute"}},
-                        status_code=429,
-                        headers={"Retry-After": "60"},
-                    ),
-                    request,
-                )
+        ip_bucket = hashlib.sha256(f"ip:{client}".encode()).hexdigest()[:24]
+        group = rate_group(request)
+        if request.url.path != "/health/live" and not allowed_request(
+            f"ip:{ip_bucket}", group=group
+        ):
+            return secure_response(
+                JSONResponse(
+                    {"error": {"code": "rate_limited", "message": "Try again in a minute"}},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                ),
+                request,
+            )
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
             if origin:
@@ -322,6 +360,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         return secure_response(response, request)
 
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
+    app.add_middleware(SecurityHeadersMiddleware, secure_cookies=settings.secure_cookies)
+
     @app.exception_handler(ProductError)
     async def product_error(_: Request, exc: ProductError):
         return JSONResponse(
@@ -342,15 +383,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"error": {"code": "invalid_request", "message": message}}, status_code=422
         )
 
+    def authenticated_request(request: Request, user: Any) -> Any:
+        principal = hashlib.sha256(f"user:{user['id']}".encode()).hexdigest()[:24]
+        group = rate_group(request)
+        if not allowed_request(f"user:{principal}", group=group):
+            raise ProductError("rate_limited", "Try again in a minute", 429)
+        return user
+
     def current_user(
+        request: Request,
         session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
     ):
         user = service.session_user(session)
         if not user:
             raise ProductError("authentication_required", "Sign in to continue", 401)
-        return user
+        return authenticated_request(request, user)
 
     def csrf_user(
+        request: Request,
         session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_header: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ):
@@ -359,16 +409,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ProductError("authentication_required", "Sign in to continue", 401)
         if not service.verify_csrf(session, csrf_header):
             raise ProductError("csrf_rejected", "Refresh the page and try again", 403)
-        return user
+        return authenticated_request(request, user)
 
-    def api_user(authorization: Annotated[str | None, Header()] = None):
+    def api_user(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
         secret = None
         if authorization and authorization.startswith("Bearer "):
             secret = authorization.removeprefix("Bearer ").strip()
         user = service.api_key_user(secret)
         if not user:
             raise ProductError("invalid_api_key", "Provide a valid Unrender API key", 401)
-        return user
+        return authenticated_request(request, user)
 
     current_user_dependency = Depends(current_user)
     csrf_user_dependency = Depends(csrf_user)
@@ -494,8 +547,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"items": service.job_audit(user_id=user["id"], job_id=job_id)}
 
     @app.get("/api/jobs/{job_id}/versions")
-    def job_versions(job_id: str, user: Any = current_user_dependency):
-        return {"items": service.job_versions(user_id=user["id"], job_id=job_id)}
+    def job_versions(
+        job_id: str,
+        before: int | None = None,
+        user: Any = current_user_dependency,
+    ):
+        return service.job_versions(user_id=user["id"], job_id=job_id, before=before)
+
+    @app.get("/api/jobs/{job_id}/versions/{version}")
+    def job_version(job_id: str, version: int, user: Any = current_user_dependency):
+        return service.job_version(user_id=user["id"], job_id=job_id, version=version)
 
     @app.patch("/api/jobs/{job_id}/result")
     def save_result(

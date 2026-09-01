@@ -5,12 +5,12 @@ Scope: the FastAPI product surface in `unrender/product/`, its browser client, S
 
 ## Outcome
 
-No open Critical or High repository finding is known after remediation. The first independent review of immutable pre-remediation HEAD `007db52` found three High, multiple Medium, and two Low/documentation issues; the fixes and regression evidence are recorded below. A fresh independent re-review of the final tree remains required before merge. Three Low/Medium deployment risks remain explicit controlled-beta gates because they require the chosen edge, storage platform, or an external test environment.
+No open Critical or High repository finding is known after remediation. The first independent review of immutable pre-remediation HEAD `007db52` found three High, multiple Medium, and two Low/documentation issues. A second exact-tree review of immutable HEAD `8733a00` found one High, three Medium, and two Low defense-in-depth issues; the current working tree remediates each repository-controlled item below. A fresh independent review of the final committed tree remains required before merge. Three Low/Medium deployment risks remain explicit controlled-beta gates because they require the chosen edge, storage platform, or an external test environment.
 
 Evidence run locally:
 
 - `ruff check --select S unrender/product` — passed;
-- `pip-audit -r requirements-app.lock` with pip-audit 2.10.1 — no known vulnerabilities;
+- `pip-audit` over the runtime, development, and build locks with pip-audit 2.10.1 — no known vulnerabilities;
 - hash-locked runtime, development, and build toolchains; the plain wheel includes every dependency needed by its product CLIs;
 - current-tree and full-Git-history secret-pattern scans — zero matches for common live Stripe, GitHub, AWS, and private-key formats;
 - systematic searches for DOM HTML sinks, string-to-code execution, unsafe message/storage use, SQL construction, unsafe deserialization, shell execution, unrestricted CORS, and debug/docs exposure;
@@ -186,7 +186,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - Severity: Medium
 - Evidence: production advertised registration that it always rejected; rapid polling shared an IP bucket and stopped on `429`; asynchronous refunds left displayed credits stale; cropping was pointer-only.
 - Impact: invited users hit a dead conversion path, active jobs appeared stuck, balances appeared wrong, and keyboard users could not complete multi-chart pages.
-- Fix: expose non-secret public registration/sample flags, hide disabled CTAs, scope authenticated request buckets to credentials, give adaptive/backoff polling a dedicated allowance, refresh account state on transitions, reset delay on job switches, and provide validated keyboard percentage crop fields.
+- Fix: expose non-secret public registration/sample flags, hide disabled CTAs, give polling a dedicated allowance, refresh account state on transitions, reset delay on job switches, and provide validated keyboard percentage crop fields. The later exact review replaced raw-credential buckets with stable client-address and database-user buckets, as recorded below.
 
 ### 19. Provider failures emitted no actionable telemetry
 
@@ -195,6 +195,14 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - Evidence: normalized provider failures changed job state but emitted no `unrender.*` lifecycle record, so the documented provider alert could not be built.
 - Impact: an operator could miss a provider outage until customers reported it.
 - Fix: emit privacy-safe structured start/success/failure records with opaque job ID, provider/error code, and elapsed milliseconds; exclude source names, chart values, raw output, tenant identity, and credentials. Regression tests assert both required fields and absent private details.
+
+## Second exact-tree review remediations
+
+- **Attacker-selected rate principals (High):** the old limiter hashed a raw session cookie or bearer value before authentication, so an attacker could rotate arbitrary bytes and force repeated password KDF work plus unbounded buckets. Every non-liveness request now consumes an ASGI-client-address bucket; authenticated dependencies also consume a durable database-user bucket. Forwarded headers and raw credentials never select application buckets. Regression tests rotate Authorization, Cookie, and `X-Forwarded-For` values and still hit one pre-auth bucket.
+- **Unbounded result history (Medium):** retained versions now have a configured per-job count and per-tenant UTF-8 byte ceiling enforced in the same write transaction. Reprocessing checks available history capacity before reserving a credit/provider call. The list route returns at most 50 metadata rows with a cursor, and the browser fetches one chosen version body explicitly. Tests cover pagination, count/byte rejection, refund behavior, and no full bodies in list responses.
+- **Silent idempotency expiry (Medium):** API request records carry an explicit replay expiry. After expiry, the response is erased and the key returns `idempotency_key_expired` throughout a separately configured compact-tombstone horizon; old tombstones are then bounded by retention and a per-tenant record ceiling. The public contract states that clients must never recycle keys after that horizon. Regression tests prove no second job/charge during tombstone retention and eventual compaction.
+- **Mutable production model/release identity (Medium):** production accepts only an owner/model Hub repository, full commit, and digest of every resolved snapshot filename/size/byte. The production function is separated from the mutable research path, uses exact direct dependency pins, and returns a release digest over reviewed inference/schema source, prompt, measured runtime packages, and model identity. Startup and the adapter reject missing/mismatched values. A real Modal canary and immutable platform deployment record remain external gates.
+- **Outer rejection hardening and readiness abuse (Low):** security headers now wrap TrustedHost, body, and application rejection paths; hostile-Host tests confirm the body is not consumed. Readiness performs a disk probe but now consumes the stable client-address admission bucket and must remain private to the platform health network; liveness remains cheap and unmetered.
 
 ## Open deployment findings
 
@@ -213,7 +221,7 @@ The dependency result is a point-in-time advisory check, not proof that dependen
 - Rule ID: FASTAPI-ABUSE-001
 - Severity: Low
 - Location: `unrender/product/web.py:189-224`; `unrender/product/service.py:1101-1119`, `rate_limit`
-- Evidence: authenticated traffic is scoped to a digest of its session/bearer credential and unauthenticated traffic to client IP, but SQLite counters are not shared across replicas.
+- Evidence: all non-liveness traffic consumes a digest of the ASGI client address and authenticated routes additionally consume a digest of durable database user ID, but SQLite counters are not shared across replicas.
 - Impact: horizontal replicas would enforce inconsistent abuse limits; pre-auth IP attribution still depends on the trusted edge.
 - Fix: select a deployment platform, enforce per-IP/account limits at its trusted edge, and move shared limits to a managed store before horizontal scaling.
 - Mitigation: the documented controlled beta is one node; upload bytes and stored volume have separate tenant bounds.

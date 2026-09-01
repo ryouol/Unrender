@@ -47,10 +47,16 @@ class Settings:
     max_unattached_uploads: int = 5
     max_upload_bytes_per_minute: int = 40 * 1024 * 1024
     rate_limit_per_minute: int = 120
+    max_result_versions_per_job: int = 25
+    max_history_bytes_per_user: int = 16 * 1024 * 1024
+    idempotency_ttl_hours: int = 24 * 30
+    idempotency_tombstone_days: int = 365
+    max_idempotency_records_per_user: int = 100_000
     modal_app_name: str = "unrender"
     modal_function_name: str = "infer-one"
     modal_model_path: str = "runs/qwen3vl4b-table-fair/merged"
     modal_model_revision: str = ""
+    modal_model_digest: str = ""
     modal_provider_release: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
@@ -109,6 +115,11 @@ class Settings:
                 raise ValueError(
                     "UNRENDER_MODAL_REVISION must be a full 40-character commit in production"
                 )
+            if not _PROVIDER_RELEASE.fullmatch(self.modal_model_digest.casefold()):
+                raise ValueError(
+                    "UNRENDER_MODAL_MODEL_DIGEST must be a 64-character model-manifest digest "
+                    "in production"
+                )
             if not _PROVIDER_RELEASE.fullmatch(self.modal_provider_release.casefold()):
                 raise ValueError(
                     "UNRENDER_MODAL_PROVIDER_RELEASE must be a 64-character release digest "
@@ -122,6 +133,14 @@ class Settings:
             raise ValueError("UNRENDER_MAX_USER_STORAGE_BYTES must allow at least one upload")
         if self.max_unattached_uploads <= 0 or self.max_upload_bytes_per_minute <= 0:
             raise ValueError("Tenant upload limits must be positive")
+        if self.max_result_versions_per_job <= 0 or self.max_history_bytes_per_user <= 0:
+            raise ValueError("Result-history limits must be positive")
+        if (
+            self.idempotency_ttl_hours <= 0
+            or self.idempotency_tombstone_days <= 0
+            or self.max_idempotency_records_per_user <= 0
+        ):
+            raise ValueError("Idempotency limits must be positive")
         if self.session_ttl_hours <= 0 or self.upload_ttl_hours <= 0 or self.retention_days <= 0:
             raise ValueError("Session, upload, and retention periods must be positive")
         if self.credit_pack_size <= 0 or self.initial_credits < 0:
@@ -166,10 +185,20 @@ class Settings:
                 "UNRENDER_MAX_UPLOAD_BYTES_PER_MINUTE", 40 * 1024 * 1024
             ),
             rate_limit_per_minute=_int("UNRENDER_RATE_LIMIT_PER_MINUTE", 120),
+            max_result_versions_per_job=_int("UNRENDER_MAX_RESULT_VERSIONS_PER_JOB", 25),
+            max_history_bytes_per_user=_int(
+                "UNRENDER_MAX_HISTORY_BYTES_PER_USER", 16 * 1024 * 1024
+            ),
+            idempotency_ttl_hours=_int("UNRENDER_IDEMPOTENCY_TTL_HOURS", 24 * 30),
+            idempotency_tombstone_days=_int("UNRENDER_IDEMPOTENCY_TOMBSTONE_DAYS", 365),
+            max_idempotency_records_per_user=_int(
+                "UNRENDER_MAX_IDEMPOTENCY_RECORDS_PER_USER", 100_000
+            ),
             modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer-one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),
             modal_model_revision=os.getenv("UNRENDER_MODAL_REVISION", ""),
+            modal_model_digest=os.getenv("UNRENDER_MODAL_MODEL_DIGEST", ""),
             modal_provider_release=os.getenv("UNRENDER_MODAL_PROVIDER_RELEASE", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),

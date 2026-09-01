@@ -6,14 +6,14 @@
 2. Provide a persistent, encrypted `/data` volume owned by UID/GID `10001`.
 3. Terminate TLS at the load balancer and set the exact public `UNRENDER_BASE_URL`.
 4. Set `UNRENDER_ENV=production`, `UNRENDER_EXTRACTOR=modal`, `UNRENDER_WORKER_ENABLED=true`, `UNRENDER_SEED_DEMO=false`, and `UNRENDER_ALLOW_REGISTRATION=false`; production validation fails closed otherwise.
-5. Configure an approved model repository, its full 40-character commit, and the canaried provider-release digest as `UNRENDER_MODAL_MODEL`, `UNRENDER_MODAL_REVISION`, and `UNRENDER_MODAL_PROVIDER_RELEASE`. Production rejects local/mutable targets and every inference response with a different release digest. Mount provider credentials through the platform secret manager.
+5. Configure an approved model repository, its full 40-character commit, the SHA-256 manifest of the complete resolved snapshot, and the canaried provider-release digest as `UNRENDER_MODAL_MODEL`, `UNRENDER_MODAL_REVISION`, `UNRENDER_MODAL_MODEL_DIGEST`, and `UNRENDER_MODAL_PROVIDER_RELEASE`. Production resolves only that Hub commit into the dedicated `unrender-inference-cache` volume (not the mutable research volume), rejects writable/escaping snapshot files, verifies every model byte, and rejects inference from a different reviewed-source/runtime release. Record the immutable Modal deployment/image identity beside the canary; the application handshake is a drift detector, not a substitute for platform attestation. Mount provider credentials through the platform secret manager.
 6. Leave Stripe variables empty unless running an approved test-mode checkout. Live secret keys are rejected by configuration.
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
-`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider.
+`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. The readiness route is covered by the client-IP admission bucket and should also be private to the platform health network; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider.
 
 Provision controlled-beta accounts from a trusted one-off operator shell attached to the same encrypted `/data` volume. The password is prompted without echo and is never accepted as a command-line argument; the command does not start a worker or recover running jobs:
 
@@ -77,4 +77,4 @@ Pause uploads, let housekeeping drain the deletion outbox, expand the volume, an
 
 ## Rollback
 
-Deploy immutable image tags. Before a schema-changing release, snapshot `/data`. This release uses schema version 4 with forward migrations from versions 1–3 and no down migration. Roll back application code only when it still supports the on-disk schema; otherwise restore the coordinated snapshot.
+Deploy immutable image tags. Before a schema-changing release, snapshot `/data`. This release uses schema version 5 with forward migrations from versions 1–4 and no down migration. Version 5 adds bounded idempotency response/tombstone state. Roll back application code only when it still supports the on-disk schema; otherwise restore the coordinated snapshot.

@@ -778,8 +778,11 @@ async function toggleAudit() {
 
 async function restoreVersion(version) {
   try {
+    const saved = await api(
+      `/api/jobs/${routeSegment(state.currentJob.id)}/versions/${routeSegment(version.version)}`,
+    );
     state.currentJob = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/result`, {
-      method: "PATCH", body: { result: version.result },
+      method: "PATCH", body: { result: saved.result },
     });
     await loadJobs();
     renderJob();
@@ -787,6 +790,50 @@ async function restoreVersion(version) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+async function loadVersions(before = null, append = false) {
+  const list = byId("version-list");
+  const query = before === null ? "" : `?before=${encodeURIComponent(before)}`;
+  const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/versions${query}`);
+  if (!append) list.replaceChildren();
+  else list.querySelector("[data-load-older]")?.remove();
+
+  for (const item of payload.items) {
+    const entry = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `Version ${item.version} · ${item.source}`;
+    const time = document.createElement("time");
+    time.dateTime = item.created_at;
+    time.textContent = formatDate(item.created_at);
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.className = "text-button";
+    restore.textContent = "Restore as new correction";
+    restore.addEventListener("click", () => restoreVersion(item));
+    entry.append(title, time, restore);
+    list.append(entry);
+  }
+  if (payload.next_before !== null) {
+    const moreEntry = document.createElement("li");
+    moreEntry.dataset.loadOlder = "true";
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "text-button";
+    more.textContent = "Load older versions";
+    more.addEventListener("click", async () => {
+      more.disabled = true;
+      try {
+        await loadVersions(payload.next_before, true);
+      } catch (error) {
+        more.disabled = false;
+        showToast(error.message);
+      }
+    });
+    moreEntry.append(more);
+    list.append(moreEntry);
+  }
+  return payload.items.length;
 }
 
 async function toggleVersions() {
@@ -797,23 +844,8 @@ async function toggleVersions() {
     return;
   }
   try {
-    const payload = await api(`/api/jobs/${routeSegment(state.currentJob.id)}/versions`);
-    list.replaceChildren(...payload.items.map((item) => {
-      const entry = document.createElement("li");
-      const title = document.createElement("strong");
-      title.textContent = `Version ${item.version} · ${item.source}`;
-      const time = document.createElement("time");
-      time.dateTime = item.created_at;
-      time.textContent = formatDate(item.created_at);
-      const restore = document.createElement("button");
-      restore.type = "button";
-      restore.className = "text-button";
-      restore.textContent = "Restore as new correction";
-      restore.addEventListener("click", () => restoreVersion(item));
-      entry.append(title, time, restore);
-      return entry;
-    }));
-    if (!payload.items.length) {
+    const count = await loadVersions();
+    if (!count) {
       const empty = document.createElement("li");
       empty.textContent = "No extracted result yet.";
       list.append(empty);

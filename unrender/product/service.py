@@ -37,6 +37,7 @@ from unrender.schema.chart_schema import CHART_TYPES, ChartData
 _SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 _NUMERIC_CELL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+_MAX_RESULT_JSON_BYTES = 1_000_000
 logger = logging.getLogger("unrender.product")
 
 
@@ -666,6 +667,13 @@ class ProductService:
         *,
         request_sha256: str,
     ) -> dict[str, Any]:
+        if row["expired_at"] or str(row["expires_at"]) <= timestamp():
+            raise ProductError(
+                "idempotency_key_expired",
+                "That Idempotency-Key is outside its replay window; use a new key only for a "
+                "new logical request",
+                409,
+            )
         if not hmac.compare_digest(str(row["request_sha256"]), request_sha256):
             raise ProductError(
                 "idempotency_conflict",
@@ -763,10 +771,39 @@ class ProductService:
                 now = utcnow()
                 created_at = timestamp(now)
                 conn.execute(
+                    "UPDATE api_idempotency SET response_json=NULL,expired_at=expires_at "
+                    "WHERE user_id=? AND expires_at<=? AND expired_at IS NULL",
+                    (user_id, created_at),
+                )
+                conn.execute(
+                    "DELETE FROM api_idempotency WHERE user_id=? AND expired_at<?",
+                    (
+                        user_id,
+                        timestamp(now - timedelta(days=self.settings.idempotency_tombstone_days)),
+                    ),
+                )
+                idempotency_count = conn.execute(
+                    "SELECT COUNT(*) AS count FROM api_idempotency WHERE user_id=?",
+                    (user_id,),
+                ).fetchone()["count"]
+                if int(idempotency_count) >= self.settings.max_idempotency_records_per_user:
+                    raise ProductError(
+                        "idempotency_quota_reached",
+                        "This account has reached its retained request-key limit",
+                        429,
+                    )
+                conn.execute(
                     "INSERT INTO api_idempotency("
-                    "user_id,idempotency_key,request_sha256,response_json,created_at,completed_at"
-                    ") VALUES (?,?,?,NULL,?,NULL)",
-                    (user_id, stored_key, request_sha256, created_at),
+                    "user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,"
+                    "expires_at,expired_at"
+                    ") VALUES (?,?,?,NULL,?,NULL,?,NULL)",
+                    (
+                        user_id,
+                        stored_key,
+                        request_sha256,
+                        created_at,
+                        timestamp(now + timedelta(hours=self.settings.idempotency_ttl_hours)),
+                    ),
                 )
                 upload_path = self.storage.save_upload(
                     user_id=user_id,
@@ -915,23 +952,86 @@ class ProductService:
             for row in rows
         ]
 
-    def job_versions(self, *, user_id: str, job_id: str) -> list[dict[str, Any]]:
+    def job_versions(
+        self,
+        *,
+        user_id: str,
+        job_id: str,
+        before: int | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
         self._job_row(user_id=user_id, job_id=job_id)
+        bounded_limit = min(max(limit, 1), 50)
+        if before is not None and before <= 0:
+            raise ProductError("invalid_version_cursor", "Version cursor must be positive", 422)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT version,source,chart_json,created_at FROM result_versions "
-                "WHERE job_id=? AND user_id=? ORDER BY version DESC LIMIT 100",
-                (job_id, user_id),
+                "SELECT version,source,created_at,LENGTH(CAST(chart_json AS BLOB)) AS byte_size "
+                "FROM result_versions WHERE job_id=? AND user_id=? "
+                "AND (? IS NULL OR version<?) ORDER BY version DESC LIMIT ?",
+                (job_id, user_id, before, before, bounded_limit + 1),
             ).fetchall()
-        return [
+        has_more = len(rows) > bounded_limit
+        page = rows[:bounded_limit]
+        items = [
             {
                 "version": int(row["version"]),
                 "source": row["source"],
-                "result": json.loads(row["chart_json"]),
                 "created_at": row["created_at"],
+                "byte_size": int(row["byte_size"]),
             }
-            for row in rows
+            for row in page
         ]
+        return {
+            "items": items,
+            "next_before": int(page[-1]["version"]) if has_more and page else None,
+        }
+
+    def job_version(self, *, user_id: str, job_id: str, version: int) -> dict[str, Any]:
+        self._job_row(user_id=user_id, job_id=job_id)
+        with self.database.connect() as conn:
+            row = conn.execute(
+                "SELECT version,source,chart_json,created_at FROM result_versions "
+                "WHERE job_id=? AND user_id=? AND version=?",
+                (job_id, user_id, version),
+            ).fetchone()
+        if not row:
+            raise ProductError("version_not_found", "Result version not found", 404)
+        return {
+            "version": int(row["version"]),
+            "source": row["source"],
+            "result": json.loads(row["chart_json"]),
+            "created_at": row["created_at"],
+        }
+
+    def _next_result_version(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        job_id: str,
+        encoded_bytes: int = 0,
+    ) -> int:
+        usage = conn.execute(
+            "SELECT COALESCE(MAX(version),0) AS latest,COUNT(*) AS job_versions,"
+            "(SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB))),0) "
+            "FROM result_versions WHERE user_id=?) AS user_bytes "
+            "FROM result_versions WHERE job_id=? AND user_id=?",
+            (user_id, job_id, user_id),
+        ).fetchone()
+        if int(usage["job_versions"]) >= self.settings.max_result_versions_per_job:
+            raise ProductError(
+                "version_quota_reached",
+                "This extraction has reached its retained version limit",
+                429,
+            )
+        if int(usage["user_bytes"]) + encoded_bytes > self.settings.max_history_bytes_per_user:
+            raise ProductError(
+                "history_storage_quota_reached",
+                "This workspace has reached its result-history storage limit",
+                413,
+            )
+        return int(usage["latest"]) + 1
 
     def save_correction(
         self, *, user_id: str, job_id: str, result: dict[str, Any]
@@ -950,10 +1050,12 @@ class ProductService:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] not in {"review", "approved"}:
                 raise ProductError("job_not_editable", "Wait for extraction before editing", 409)
-            version = conn.execute(
-                "SELECT COALESCE(MAX(version),0)+1 AS value FROM result_versions WHERE job_id=?",
-                (job_id,),
-            ).fetchone()["value"]
+            version = self._next_result_version(
+                conn,
+                user_id=user_id,
+                job_id=job_id,
+                encoded_bytes=len(encoded.encode("utf-8")),
+            )
             now = timestamp()
             conn.execute(
                 "INSERT INTO result_versions("
@@ -999,7 +1101,7 @@ class ProductService:
                     raise ValueError("Chart values must be finite")
                 if isinstance(point.x, str) and len(point.x) > 500:
                     raise ValueError("Chart labels are too long")
-        if len(chart.model_dump_json()) > 1_000_000:
+        if len(chart.model_dump_json().encode()) > _MAX_RESULT_JSON_BYTES:
             raise ValueError("Chart result is too large")
 
     def approve(self, *, user_id: str, job_id: str) -> dict[str, Any]:
@@ -1058,6 +1160,17 @@ class ProductService:
                 raise ProductError("job_not_found", "Extraction not found", 404)
             if row["status"] not in {"review", "approved", "failed", "cancelled"}:
                 raise ProductError("job_busy", "This extraction is already in progress", 409)
+            estimated_result_bytes = (
+                len(str(row["current_result_json"]).encode())
+                if row["current_result_json"]
+                else _MAX_RESULT_JSON_BYTES
+            )
+            self._next_result_version(
+                conn,
+                user_id=user_id,
+                job_id=job_id,
+                encoded_bytes=estimated_result_bytes,
+            )
             attempt = int(row["attempt"]) + 1
             credit_cost = 0 if self._is_free_demo_fixture(row["source_sha256"]) else 1
             if credit_cost:
@@ -1472,11 +1585,12 @@ class ProductService:
                 if current["cancel_requested"]:
                     self._finish_cancelled_in_transaction(conn, current)
                     return True
-                version = conn.execute(
-                    "SELECT COALESCE(MAX(version),0)+1 AS value "
-                    "FROM result_versions WHERE job_id=?",
-                    (job_id,),
-                ).fetchone()["value"]
+                version = self._next_result_version(
+                    conn,
+                    user_id=str(row["user_id"]),
+                    job_id=job_id,
+                    encoded_bytes=len(encoded.encode("utf-8")),
+                )
                 source = "extraction" if version == 1 else "reprocess"
                 conn.execute(
                     "INSERT INTO result_versions("
@@ -1529,6 +1643,17 @@ class ProductService:
                     "job_id": job_id,
                     "error_code": exc.code,
                     "duration_ms": round((time.monotonic() - (provider_started or started)) * 1000),
+                },
+            )
+            self._finish_failed(row, exc.code, str(exc))
+        except ProductError as exc:
+            logger.warning(
+                "job_result_rejected",
+                extra={
+                    "event_name": "job_result_rejected",
+                    "job_id": job_id,
+                    "error_code": exc.code,
+                    "duration_ms": round((time.monotonic() - started) * 1000),
                 },
             )
             self._finish_failed(row, exc.code, str(exc))
@@ -1737,8 +1862,8 @@ class ProductService:
         now = timestamp()
         cutoff = timestamp(utcnow() - timedelta(days=self.settings.retention_days))
         demo_cutoff = timestamp(utcnow() - timedelta(hours=self.settings.session_ttl_hours))
-        idempotency_cutoff = timestamp(
-            utcnow() - timedelta(hours=max(24, self.settings.upload_ttl_hours))
+        idempotency_tombstone_cutoff = timestamp(
+            utcnow() - timedelta(days=self.settings.idempotency_tombstone_days)
         )
         upload_paths: list[str] = []
         job_paths: list[str] = []
@@ -1781,8 +1906,13 @@ class ProductService:
                 (int(utcnow().timestamp()) - 3600,),
             )
             conn.execute(
-                "DELETE FROM api_idempotency WHERE created_at<?",
-                (idempotency_cutoff,),
+                "UPDATE api_idempotency SET response_json=NULL,expired_at=expires_at "
+                "WHERE expires_at<=? AND expired_at IS NULL",
+                (now,),
+            )
+            conn.execute(
+                "DELETE FROM api_idempotency WHERE expired_at<?",
+                (idempotency_tombstone_cutoff,),
             )
             expired_demo_users = conn.execute(
                 "SELECT users.id FROM users LEFT JOIN sessions ON sessions.user_id=users.id "

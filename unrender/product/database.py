@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 SCHEMA = """
@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS result_versions (
     UNIQUE(job_id, version)
 );
 
+CREATE INDEX IF NOT EXISTS result_versions_user_idx ON result_versions(user_id);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -157,8 +159,11 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
     response_json TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT,
+    expires_at TEXT NOT NULL,
+    expired_at TEXT,
     PRIMARY KEY(user_id, idempotency_key)
 );
+
 """
 
 
@@ -205,6 +210,34 @@ UPDATE schema_meta SET version=4;
 """
 
 
+MIGRATE_V4_TO_V5 = """
+ALTER TABLE api_idempotency RENAME TO api_idempotency_v4;
+CREATE TABLE api_idempotency (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    response_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    expires_at TEXT NOT NULL,
+    expired_at TEXT,
+    PRIMARY KEY(user_id, idempotency_key)
+);
+INSERT INTO api_idempotency(
+    user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,
+    expires_at,expired_at
+)
+SELECT user_id,idempotency_key,request_sha256,response_json,created_at,completed_at,
+       COALESCE(expires_at, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+30 days')),
+       expired_at
+FROM api_idempotency_v4;
+DROP TABLE api_idempotency_v4;
+CREATE INDEX IF NOT EXISTS api_idempotency_expiry_idx
+ON api_idempotency(user_id, expired_at);
+UPDATE schema_meta SET version=5;
+"""
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -239,11 +272,26 @@ class Database:
                         )
                     conn.executescript(MIGRATE_V3_TO_V4)
                     continue
+                if row["version"] == 4:
+                    columns = {
+                        column["name"]
+                        for column in conn.execute("PRAGMA table_info(api_idempotency)")
+                    }
+                    if "expires_at" not in columns:
+                        conn.execute("ALTER TABLE api_idempotency ADD COLUMN expires_at TEXT")
+                    if "expired_at" not in columns:
+                        conn.execute("ALTER TABLE api_idempotency ADD COLUMN expired_at TEXT")
+                    conn.executescript(MIGRATE_V4_TO_V5)
+                    continue
                 if row["version"] == SCHEMA_VERSION:
                     break
                 raise RuntimeError(
                     f"Database schema {row['version']} is not supported; expected {SCHEMA_VERSION}"
                 )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS api_idempotency_expiry_idx "
+                "ON api_idempotency(user_id, expired_at)"
+            )
 
     def connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

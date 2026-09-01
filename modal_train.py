@@ -21,8 +21,12 @@ Diagnostics from MODEL_STATUS_REVIEW.md (no retraining; ~$1-3 each on L4):
     # The base MUST be the Unsloth mirror the LoRA was trained on, PINNED to an
     # exact revision so its processor matches the merged model — an unpinned
     # Qwen/ HEAD is a different-processor confound (see PREREGISTRATION.md).
-    modal run --detach modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
-    UNRENDER_GPU=A100 modal run --detach modal_train.py::evaluate --model unsloth/Qwen3-VL-8B-Instruct --revision <8B-sha> --subset common300  # 8B locked until gate passes
+    modal run --detach modal_train.py::evaluate \
+        --model unsloth/Qwen3-VL-4B-Instruct \
+        --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
+    UNRENDER_GPU=A100 modal run --detach modal_train.py::evaluate \
+        --model unsloth/Qwen3-VL-8B-Instruct \
+        --revision <8B-sha> --subset common300  # locked until gate passes
     modal run --detach modal_train.py::evaluate --subset common300   # the LoRA on the same 300
     # item 2 - decoder sweep on the LoRA's invalid+valid charts (greedy vs rep penalty)
     modal run --detach modal_train.py::sweep
@@ -34,19 +38,61 @@ default L4 (24GB, ~$0.80/hr) fits the 4B QLoRA; use A100 for the 8B launch run.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
+import re
+import stat
+from functools import lru_cache
+from pathlib import Path
 
 import modal
 
 app = modal.App("unrender")
 
-# Bump this reviewed contract identifier whenever provider code changes. The
-# returned release digest also covers installed inference package versions and
-# the exact extraction prompt, so dependency/image drift fails the web-app gate.
-INFER_PROVIDER_CONTRACT = "unrender-infer-one-v1"
+# Production inference is deliberately separate from the mutable research image.
+# This contract changes automatically when any reviewed provider/schema source
+# changes, rather than relying on an operator to remember a manual version bump.
+INFER_PROVIDER_CONTRACT = "unrender-infer-one-v2"
+INFER_DIRECT_DEPENDENCIES = {
+    "accelerate": "1.12.0",
+    "huggingface-hub": "0.36.0",
+    "pillow": "12.3.0",
+    "pydantic": "2.13.5",
+    "torch": "2.9.1",
+    "transformers": "4.57.6",
+}
+_MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _inference_source_digest() -> str:
+    root = Path(__file__).resolve().parent
+    paths = (
+        Path("modal_train.py"),
+        Path("unrender/eval/providers.py"),
+        Path("unrender/prompts.py"),
+        Path("unrender/schema/chart_schema.py"),
+        Path("unrender/schema/json_to_csv.py"),
+        Path("unrender/schema/validate.py"),
+    )
+    digest = hashlib.sha256()
+    for relative in paths:
+        payload = (root / relative).read_bytes()
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(payload).digest())
+    return digest.hexdigest()
+
+
+INFER_SOURCE_SHA256 = _inference_source_digest()
 
 VOL = modal.Volume.from_name("unrender-vol", create_if_missing=True)
 V = "/vol"  # mount point; paths under it persist across runs
+INFER_VOL = modal.Volume.from_name("unrender-inference-cache", create_if_missing=True)
+INFER_V = "/model-cache"
 
 # GPU for train/eval, chosen at `modal run` time via env var (the decorator is
 # evaluated locally, so this is the one knob that can't be a function arg).
@@ -99,6 +145,17 @@ train_image = (
     .add_local_python_source("unrender")
 )
 
+# The customer-facing function has a small, exact direct dependency surface.
+# Transitive package versions are measured into every canaried release digest;
+# the owner still records the resulting Modal image/deployment identity before
+# enabling production traffic.
+infer_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(*(f"{name}=={version}" for name, version in INFER_DIRECT_DEPENDENCIES.items()))
+    .env({"HF_HOME": f"{INFER_V}/huggingface"})
+    .add_local_python_source("unrender")
+)
+
 # Frontier-API image: just the eval scorer's deps + the Gemini SDK (no torch — a
 # Gemini call needs no GPU stack). rapidfuzz pin matches train_image so the score
 # is identical to the base/LoRA arms (cell@5_exact doesn't use it, but series_name
@@ -133,6 +190,77 @@ def _resolve_model(model_path: str) -> str:
     return model_path
 
 
+def _snapshot_digest(snapshot: Path) -> str:
+    """Hash names, sizes, and bytes for every file in one immutable Hub snapshot."""
+
+    digest = hashlib.sha256()
+    files = sorted(path for path in snapshot.rglob("*") if path.is_file())
+    if not files:
+        raise ValueError("The resolved model snapshot is empty")
+    repository_cache = snapshot.parents[1].resolve()
+    for path in files:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(repository_cache):
+            raise ValueError("The model snapshot contains a file outside its repository cache")
+        if resolved.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ValueError("The model snapshot contains a group/world-writable file")
+        relative = path.relative_to(snapshot).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(path.stat().st_size).encode("ascii"))
+        digest.update(b"\0")
+        with path.open("rb") as source:
+            while chunk := source.read(8 * 1024 * 1024):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=4)
+def _production_model_snapshot(model_path: str, revision: str, expected_digest: str) -> str:
+    """Resolve only an exact Hub commit and verify the complete local snapshot."""
+
+    if not _MODEL_REPOSITORY.fullmatch(model_path):
+        raise ValueError("Production inference requires an owner/model Hub repository")
+    if not _MODEL_COMMIT.fullmatch(revision.casefold()):
+        raise ValueError("Production inference requires a full 40-character Hub commit")
+    if not _DIGEST.fullmatch(expected_digest.casefold()):
+        raise ValueError("Production inference requires a 64-character model-manifest digest")
+
+    from huggingface_hub import snapshot_download
+
+    snapshot = Path(snapshot_download(repo_id=model_path, revision=revision)).resolve()
+    if snapshot.name.casefold() != revision.casefold():
+        raise ValueError("The Hub client did not resolve the requested immutable commit")
+    actual_digest = _snapshot_digest(snapshot)
+    if not hmac.compare_digest(actual_digest, expected_digest.casefold()):
+        raise ValueError("The resolved model files do not match the approved manifest")
+    return str(snapshot)
+
+
+def _provider_release_digest(
+    *,
+    runtime_versions: dict[str, str],
+    model_path: str,
+    revision: str,
+    model_digest: str,
+    prompt_sha256: str,
+) -> str:
+    manifest = {
+        "contract": INFER_PROVIDER_CONTRACT,
+        "source_sha256": INFER_SOURCE_SHA256,
+        "prompt_sha256": prompt_sha256,
+        "packages": dict(sorted(runtime_versions.items())),
+        "model": {
+            "repository": model_path,
+            "revision": revision.casefold(),
+            "manifest_sha256": model_digest.casefold(),
+        },
+    }
+    return hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _load_subset_ids(name: str):
     """Frozen subset name (e.g. ``common300``) -> the committed id list shipped in
     the package at ``unrender/eval/subsets/<name>.json``."""
@@ -141,13 +269,11 @@ def _load_subset_ids(name: str):
 
     import unrender.eval as _ev
 
-    return json.loads(
-        (Path(_ev.__file__).parent / "subsets" / f"{name}.json").read_text()
-    )["ids"]
+    return json.loads((Path(_ev.__file__).parent / "subsets" / f"{name}.json").read_text())["ids"]
 
 
 def _parse_eval_specs(spec: str):
-    """"real_v0,common300,v2:300" -> ordered eval descriptors for the post-train
+    """ "real_v0,common300,v2:300" -> ordered eval descriptors for the post-train
     chain. Forms: "common300" (the frozen v1 subset), "real_v0" (a real set dir),
     "v0"/"v1"/"v2" (a synthetic test split); an optional ":N" caps the row count
     (e.g. "v2:300"). Pure string parsing -> unit-testable."""
@@ -222,6 +348,7 @@ def generate_data_v2(n: int = 20000, seed: int = 9012):
     split(out=out, val_size=500, test_size=1000)
     n_img = len(list((Path(out) / "images").glob("*.png")))
     import json as _json
+
     ready.write_text(_json.dumps({"n": n, "seed": seed, "images": n_img, "v2_fixed": True}))
     VOL.commit()
     print(f"gen_v2 DONE: {n_img} images + splits + READY.json committed to {out}")
@@ -247,9 +374,15 @@ def gen_geometry_data(train_files: str = "v1,v0"):
 
 
 @app.function(image=train_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=3600)
-def preflight(train_files: str = "v2,v1,v0", val_files: str = "v2,v1,v0",
-              batch_size: int = 2, grad_accum: int = 4, epochs: float = 1.0,
-              labelfree_weight: float = 1.5, verify_all: str = ""):
+def preflight(
+    train_files: str = "v2,v1,v0",
+    val_files: str = "v2,v1,v0",
+    batch_size: int = 2,
+    grad_accum: int = 4,
+    epochs: float = 1.0,
+    labelfree_weight: float = 1.5,
+    verify_all: str = "",
+):
     """$0.02 insurance before a multi-hour train: verify ON THE VOLUME that
     (1) every split file exists and parses, (2) every referenced image exists,
     (3) images decode (ALL of `verify_all`'s sets — they went through
@@ -310,12 +443,20 @@ def preflight(train_files: str = "v2,v1,v0", val_files: str = "v2,v1,v0",
     # under sft_lora's max_seq_length=4096. Use the merged fair model's processor
     # from the Volume (no network).
     from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(f"{V}/runs/qwen3vl4b-table-fair/merged", trust_remote_code=True)
+
+    tok = AutoTokenizer.from_pretrained(
+        f"{V}/runs/qwen3vl4b-table-fair/merged", trust_remote_code=True
+    )
     prompt_len = len(tok(rows_of(tags[0], "train.jsonl")[0]["messages"][0]["content"]).input_ids)
     worst = max(len(tok(t).input_ids) for _, t in longest)
     budget = 4096 - prompt_len - worst
-    print(f"  token budget: prompt={prompt_len} + worst_target={worst} -> {budget} left for image tokens")
-    assert budget >= 900, f"longest target leaves only {budget} tokens for the image — raise max_seq_length"
+    print(
+        f"  token budget: prompt={prompt_len} + worst_target={worst} "
+        f"-> {budget} left for image tokens"
+    )
+    assert budget >= 900, (
+        f"longest target leaves only {budget} tokens for the image — raise max_seq_length"
+    )
 
     steps = int(n_records / (batch_size * grad_accum) * epochs)
     for gpu, sps, rate in (("L4", 11.0, 0.80), ("A100", 3.7, 2.10)):
@@ -337,13 +478,22 @@ def fetch_real_data(dirname: str = "real_v0"):
     import urllib.request
     from pathlib import Path
 
+    from unrender.data_gen.split_dataset import _row
+    from unrender.eval.build_real_set import label_to_chartdata
+
     # OWID only: FRED is unreachable from Modal egress (DNS fails / datacenter IPs
     # time out). The local tool (unrender.eval.fetch_real_set) still does FRED for a
     # machine that can reach it; here we use OWID, which resolves and serves cleanly.
     from unrender.eval.fetch_real_set import (
-        OWID, _OWID_COUNTRY, _OWID_HI, _OWID_LO, _owid_urls, _is_png, make_line_label, parse_owid_csv)
-    from unrender.eval.build_real_set import label_to_chartdata
-    from unrender.data_gen.split_dataset import _row
+        _OWID_COUNTRY,
+        _OWID_HI,
+        _OWID_LO,
+        OWID,
+        _is_png,
+        _owid_urls,
+        make_line_label,
+        parse_owid_csv,
+    )
     from unrender.schema.chart_schema import canonical_json
 
     root = Path(f"{V}/data/{dirname}")
@@ -375,8 +525,10 @@ def fetch_real_data(dirname: str = "real_v0"):
     print(f"OWID ({len(OWID)}):")
     for out_id, slug, title, ylab, yunit in OWID:
         png_url, csv_url = _owid_urls(slug)
-        src = (f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
-               f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}")
+        src = (
+            f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
+            f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}"
+        )
         try:
             add(out_id, png_url, csv_url, parse_owid_csv, title, ylab, yunit, title, src, rows)
         except Exception as e:  # noqa: BLE001 — one bad source shouldn't abort the batch
@@ -407,26 +559,39 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     from unrender.prompts import EXTRACTION_PROMPT
 
     out_dir = f"{V}/outputs/eval_{dirname}__gemini"
-    pred = run(provider="gemini", model=model, data=f"{V}/data/{dirname}/test.jsonl",
-               out=out_dir, limit=0, seed=0, prompt=EXTRACTION_PROMPT)
+    pred = run(
+        provider="gemini",
+        model=model,
+        data=f"{V}/data/{dirname}/test.jsonl",
+        out=out_dir,
+        limit=0,
+        seed=0,
+        prompt=EXTRACTION_PROMPT,
+    )
     VOL.commit()
     try:
-        subprocess.run(["python", "-m", "unrender.eval.score", "--predictions", str(pred)],
-                       check=True, cwd="/root")
+        subprocess.run(
+            ["python", "-m", "unrender.eval.score", "--predictions", str(pred)],
+            check=True,
+            cwd="/root",
+        )
     except Exception as e:  # noqa: BLE001 — predictions are committed; re-score locally
         print(f"⚠ in-container scoring failed ({e}); predictions ARE saved — re-score locally.")
     VOL.commit()
 
 
-@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1200)
-def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/merged", revision: str = ""):
-    """Extract ONE chart image → ChartData JSON + CSV, SAME prompt/decoder as eval
-    (greedy). Cold start loads the merged model (~1–2 min); the call itself is seconds.
-    The `infer` entrypoint ships a local image's bytes here, so you can throw any chart
-    at the fine-tuned model with one command."""
-    import hashlib
+@app.function(
+    image=infer_image,
+    volumes={INFER_V: INFER_VOL},
+    secrets=[modal.Secret.from_name("hf-token")],
+    gpu=GPU,
+    cpu=4.0,
+    memory=32768,
+    timeout=1200,
+)
+def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: str):
+    """Production boundary: exact Hub commit + verified weights + source release."""
     import importlib.metadata
-    import json
     import tempfile
 
     from unrender.eval import providers as _providers
@@ -435,33 +600,59 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
     from unrender.schema.json_to_csv import chart_to_csv
     from unrender.schema.validate import parse_chart_json
 
-    release_manifest = {
-        "contract": INFER_PROVIDER_CONTRACT,
-        "prompt_sha256": hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
-        "packages": {
-            package: importlib.metadata.version(package)
-            for package in (
-                "accelerate",
-                "bitsandbytes",
-                "datasets",
-                "peft",
-                "pydantic",
-                "torch",
-                "transformers",
-                "trl",
-                "unsloth",
-            )
-        },
+    runtime_packages = set(INFER_DIRECT_DEPENDENCIES) | {"numpy", "safetensors", "tokenizers"}
+    runtime_versions = {
+        package: importlib.metadata.version(package) for package in sorted(runtime_packages)
     }
-    provider_release = hashlib.sha256(
-        json.dumps(release_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    for package, expected in INFER_DIRECT_DEPENDENCIES.items():
+        if runtime_versions[package] != expected:
+            raise RuntimeError(f"Inference dependency drift: {package}")
+    snapshot = _production_model_snapshot(model_path, revision, model_digest)
+    provider_release = _provider_release_digest(
+        runtime_versions=runtime_versions,
+        model_path=model_path,
+        revision=revision,
+        model_digest=model_digest,
+        prompt_sha256=hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
+    )
 
     _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
     _providers.HF_MODEL_CONFIG.clear()
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as f:
+        f.write(image_bytes)
+        f.flush()
+        raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot)
+    pred, errs = parse_chart_json(raw)
+    return {
+        "raw": raw,
+        "json": pred.model_dump() if pred else None,
+        "csv": chart_to_csv(pred) if pred else None,
+        "parse_errors": errs,
+        "provider_release": provider_release,
+    }
+
+
+@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1200)
+def research_infer_one(
+    image_bytes: bytes,
+    model_path: str = "runs/qwen3vl4b-table-fair/merged",
+    revision: str = "",
+):
+    """Explicit research-only inference for mutable Volume paths and comparisons."""
+
+    import tempfile
+
+    from unrender.eval import providers as _providers
+    from unrender.eval.providers import hf_vlm_provider
+    from unrender.prompts import EXTRACTION_PROMPT
+    from unrender.schema.json_to_csv import chart_to_csv
+    from unrender.schema.validate import parse_chart_json
+
+    _providers.HF_GEN_CONFIG.clear()
+    _providers.HF_MODEL_CONFIG.clear()
     if revision:
         _providers.HF_MODEL_CONFIG["revision"] = revision
-
     with tempfile.NamedTemporaryFile(suffix=".png") as f:
         f.write(image_bytes)
         f.flush()
@@ -472,7 +663,7 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
         "json": pred.model_dump() if pred else None,
         "csv": chart_to_csv(pred) if pred else None,
         "parse_errors": errs,
-        "provider_release": provider_release,
+        "provider_release": "research-unattested",
     }
 
 
@@ -484,7 +675,9 @@ def infer_one(image_bytes: bytes, model_path: str = "runs/qwen3vl4b-table-fair/m
     memory=8192,
     timeout=3600,
 )
-def publish_hf(repo_id: str, model_path: str = "runs/qwen3vl4b-table-fair/merged", private: bool = False):
+def publish_hf(
+    repo_id: str, model_path: str = "runs/qwen3vl4b-table-fair/merged", private: bool = False
+):
     """Push the merged fine-tune from the Volume to the Hugging Face Hub so anyone can
     `from_pretrained` it. CPU-only (uploads the folder; no model load). Needs an
     `hf-token` Modal secret carrying HF_TOKEN. NOT run by default — publishing makes
@@ -499,8 +692,11 @@ def publish_hf(repo_id: str, model_path: str = "runs/qwen3vl4b-table-fair/merged
         raise SystemExit(f"no merged model at {src} on the Volume — train it first")
     api = HfApi(token=os.environ["HF_TOKEN"])
     api.create_repo(repo_id, private=private, exist_ok=True)
-    api.upload_folder(repo_id=repo_id, folder_path=src,
-                      commit_message="Unrender chart->data LoRA (Qwen3-VL-4B, merged 16bit)")
+    api.upload_folder(
+        repo_id=repo_id,
+        folder_path=src,
+        commit_message="Unrender chart->data LoRA (Qwen3-VL-4B, merged 16bit)",
+    )
     print(f"published {src} -> https://huggingface.co/{repo_id}")
 
 
@@ -548,7 +744,8 @@ def train_model(
     val_fname = fname.replace("train", "val", 1)
     val_paths = (
         [f"{V}/data/synthetic_{t.strip()}/{val_fname}" for t in val_files.split(",") if t.strip()]
-        if val_files else None
+        if val_files
+        else None
     )
     train(
         train_paths=paths,
@@ -579,14 +776,21 @@ def train_model(
         ids = common300_ids if spec["subset"] == "common300" else None
         print(f"\n=== chained eval: {spec} ===")
         try:
-            _eval_impl(model_path=f"runs/{out_name}/merged", data=spec["data"],
-                       limit=spec["limit"], subset=spec["subset"], subset_ids=ids)
+            _eval_impl(
+                model_path=f"runs/{out_name}/merged",
+                data=spec["data"],
+                limit=spec["limit"],
+                subset=spec["subset"],
+                subset_ids=ids,
+            )
         except Exception as e:  # noqa: BLE001
-            print(f"⚠ chained eval {spec} failed ({e}) — model + earlier evals are safe; "
-                  f"re-run standalone: modal run --detach modal_train.py::evaluate "
-                  f"--model runs/{out_name}/merged --data {spec['data']}"
-                  + (f" --subset {spec['subset']}" if spec["subset"] else "")
-                  + (f" --limit {spec['limit']}" if spec["limit"] else ""))
+            print(
+                f"⚠ chained eval {spec} failed ({e}) — model + earlier evals are safe; "
+                f"re-run standalone: modal run --detach modal_train.py::evaluate "
+                f"--model runs/{out_name}/merged --data {spec['data']}"
+                + (f" --subset {spec['subset']}" if spec["subset"] else "")
+                + (f" --limit {spec['limit']}" if spec["limit"] else "")
+            )
     VOL.commit()
 
 
@@ -655,9 +859,7 @@ def _eval_impl(
 
         if only_ids:
             subset_file = f"{out_dir}/subset_ids.json"
-            Path(subset_file).write_text(
-                _json.dumps({"ids": sorted(str(i) for i in only_ids)})
-            )
+            Path(subset_file).write_text(_json.dumps({"ids": sorted(str(i) for i in only_ids)}))
             score_cmd += ["--subset", subset_file]
     if decode != "table":
         score_cmd += ["--decode", decode]
@@ -702,9 +904,16 @@ def eval_model(
     name like ``common300``) restricts to that frozen id list; ``subset`` is kept
     only to label the output dir. See _eval_impl for the body."""
     _eval_impl(
-        model_path=model_path, data=data, limit=limit, out_name=out_name,
-        subset=subset, subset_ids=subset_ids, repetition_penalty=repetition_penalty,
-        max_new_tokens=max_new_tokens, revision=revision, decode=decode,
+        model_path=model_path,
+        data=data,
+        limit=limit,
+        out_name=out_name,
+        subset=subset,
+        subset_ids=subset_ids,
+        repetition_penalty=repetition_penalty,
+        max_new_tokens=max_new_tokens,
+        revision=revision,
+        decode=decode,
     )
 
 
@@ -745,7 +954,8 @@ def sweep_model(
     valid_ids = set(ok_ids[:n_valid])
     subset_ids = set(invalid_ids) | valid_ids
     print(
-        f"[sweep] subset: {len(invalid_ids)} invalid + {len(valid_ids)} valid = {len(subset_ids)} charts"
+        f"[sweep] subset: {len(invalid_ids)} invalid + {len(valid_ids)} valid "
+        f"= {len(subset_ids)} charts"
     )
 
     def _summarize(rows, arm):
@@ -780,22 +990,20 @@ def sweep_model(
         results.append(_summarize(read_jsonl(Path(pred)), f"rep{rp}"))
 
     print(
-        f"\n=== decoder sweep  (subset N={len(subset_ids)}, greedy valid-cell floor={valid_floor:.1f}%) ==="
+        f"\n=== decoder sweep  (subset N={len(subset_ids)}, "
+        f"greedy valid-cell floor={valid_floor:.1f}%) ==="
     )
-    print(
-        f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict"
-    )
+    print(f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict")
     for r in results:
         ok = r["invalid_pct"] < 1.0 and (valid_floor - r["valid_cell"]) <= 1.0
         verdict = "" if r["arm"] == "greedy" else ("ADOPT" if ok else "reject")
         print(
-            f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}"
+            f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%"
+            f"{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}"
         )
 
 
-@app.function(
-    image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1800
-)
+@app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1800)
 def probe_model(model_path: str):
     """Load a saved model the exact way hf_vlm_provider does, one piece at a
     time, with full tracebacks — for debugging broken exports without burning a
@@ -842,9 +1050,7 @@ def probe_model(model_path: str):
             ],
         }
     ]
-    text = proc.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+    text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = proc(
         text=[text], images=[Image.open(img_path).convert("RGB")], return_tensors="pt"
     ).to(net.device)
@@ -852,9 +1058,7 @@ def probe_model(model_path: str):
         out = net.generate(**inputs, max_new_tokens=64, do_sample=False)
     print(
         "[probe] generate: OK ->",
-        proc.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)[
-            :200
-        ],
+        proc.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)[:200],
     )
 
 
@@ -872,14 +1076,21 @@ def gen(n: int = 5000):
 
 
 @app.local_entrypoint()
-def check(train_files: str = "v2,v1,v0", val_files: str = "v2,v1,v0", epochs: float = 1.0,
-          verify_all: str = "v2"):
+def check(
+    train_files: str = "v2,v1,v0",
+    val_files: str = "v2,v1,v0",
+    epochs: float = 1.0,
+    verify_all: str = "v2",
+):
     """Pre-train preflight (CPU, ~$0.02): data integrity + token budget + cost
     estimate for the one-shot. Run this, read PASS, then launch ::train.
     `verify_all` sets get EVERY image decoded (default v2 — the freshest set);
     others are sampled. Pass verify_all="" for the fast sampled-only pass."""
-    print(preflight.remote(train_files=train_files, val_files=val_files, epochs=epochs,
-                           verify_all=verify_all))
+    print(
+        preflight.remote(
+            train_files=train_files, val_files=val_files, epochs=epochs, verify_all=verify_all
+        )
+    )
 
 
 @app.local_entrypoint()
@@ -892,8 +1103,10 @@ def gen_v2(n: int = 20000, seed: int = 9012):
         modal run --detach modal_train.py::train --train-files v2,v1,v0 --out-name qwen3vl4b-v2
     """
     call = generate_data_v2.spawn(n=n, seed=seed)
-    print(f"submitted gen_v2 (FunctionCall {call.object_id}); returns now — use --detach. "
-          f"Done when data/synthetic_v2/READY.json exists on the Volume.")
+    print(
+        f"submitted gen_v2 (FunctionCall {call.object_id}); returns now — use --detach. "
+        f"Done when data/synthetic_v2/READY.json exists on the Volume."
+    )
 
 
 @app.local_entrypoint()
@@ -911,7 +1124,9 @@ def smoke():
     model loads back). Exercising val here means the first time the eval +
     load_best_model_at_end code runs is NOT the multi-hour paid run. Total ~$0.5,
     mostly the one-time base-model download."""
-    train_model.remote(train_files="v1", out_name="smoke", max_steps=30, val_files="v1", val_size=64)
+    train_model.remote(
+        train_files="v1", out_name="smoke", max_steps=30, val_files="v1", val_size=64
+    )
     eval_model.remote(model_path="runs/smoke/merged", data="v1", limit=5)
 
 
@@ -948,7 +1163,7 @@ def infer(image: str, model: str = "runs/qwen3vl4b-table-fair/merged", revision:
         egs = sorted(Path("data/real_v0/images").glob("*.png"))[:3]
         hint = ("\n  try: " + "  ".join(str(e) for e in egs)) if egs else ""
         raise SystemExit(f"no image at {image!r} — pass --image <path to a real chart PNG>.{hint}")
-    out = infer_one.remote(p.read_bytes(), model, revision)
+    out = research_infer_one.remote(p.read_bytes(), model, revision)
     if out["json"]:
         print("\n=== JSON ===\n" + _json.dumps(out["json"], indent=2, ensure_ascii=False))
         print("\n=== CSV ===\n" + (out["csv"] or ""))
@@ -996,8 +1211,10 @@ def train(
     checkpoint (sft_lora._latest_checkpoint) and finished evals resume too.
 
     The numeric-loss-on-table pivot (refine-logs/NUMERIC_TABLE_PLAN.md):
-        modal run --detach modal_train.py::train --out-name qwen3vl4b-table-fair    --numeric-loss-weight 1
-        modal run --detach modal_train.py::train --out-name qwen3vl4b-table-numloss --numeric-loss-weight 3
+        modal run --detach modal_train.py::train \
+            --out-name qwen3vl4b-table-fair --numeric-loss-weight 1
+        modal run --detach modal_train.py::train \
+            --out-name qwen3vl4b-table-numloss --numeric-loss-weight 3
 
     `--geometry` trains the geometry-supervision arm on train.geom.jsonl (run
     `gen_geom` first; geometry+val needs a val.geom.jsonl). Precision levers:
@@ -1029,7 +1246,8 @@ def train(
         common300_ids=_load_subset_ids("common300") if "common300" in eval_after else None,
     )
     print(
-        f"submitted train '{out_name}' (FunctionCall {call.object_id}); returns now — use --detach. "
+        f"submitted train '{out_name}' (FunctionCall {call.object_id}); "
+        "returns now — use --detach. "
         f"Pull when done: modal volume get unrender-vol runs/{out_name} ./runs/{out_name}"
         + (f"\nchained evals after training: {eval_after}" if eval_after else "")
     )
@@ -1047,8 +1265,10 @@ def evaluate(
     decode: str = "table",
 ):
     """Eval one model. Examples (item 1 base-model controls on the frozen subset):
-        modal run modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
-        modal run modal_train.py::evaluate --subset common300   # the LoRA on the same 300 (apples-to-apples)
+        modal run modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct \
+            --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
+        modal run modal_train.py::evaluate --subset common300
+            # LoRA on the same 300 (apples-to-apples)
 
     `--revision` pins a Hub base to an exact commit; the base control must use the
     Unsloth mirror + matching revision (PREREGISTRATION.md), not an unpinned HEAD.

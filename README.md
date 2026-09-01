@@ -57,10 +57,11 @@ UNRENDER_MODAL_APP=unrender
 UNRENDER_MODAL_FUNCTION=infer-one
 UNRENDER_MODAL_MODEL=owner/approved-unrender-model
 UNRENDER_MODAL_REVISION=<full 40-character model commit>
+UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
 UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, and an unapproved provider release. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, resolves only the named Hub commit, rejects writable or escaping snapshot files, verifies the complete snapshot digest, and measures its reviewed source plus runtime package versions into the canaried release digest. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 
@@ -85,7 +86,7 @@ curl -X POST "http://127.0.0.1:8000/api/v1/extractions?page_index=0" \
   -F "file=@chart.png"
 ```
 
-Every submission requires a tenant-scoped idempotency key; an exact retry returns the stored response without creating another job or reserving another credit, while reusing the key for different content returns `409`. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive API documentation is available at `/api/docs` outside production. The stable response and error contracts are documented in [`docs/API.md`](docs/API.md).
+Every submission requires a tenant-scoped idempotency key. An exact retry inside the configured 720-hour default replay window returns the stored response without creating another job or reserving another credit; changed or expired keys return `409`. The expired response is compacted to a tombstone for another 365 days by default, after which the record may be removed, so clients must never recycle keys. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive API documentation is available at `/api/docs` outside production. The stable response, retention horizon, and error contracts are documented in [`docs/API.md`](docs/API.md).
 
 ## Verify a change
 

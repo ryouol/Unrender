@@ -30,15 +30,18 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Product lint
         run: |
-          ruff format --check unrender/product tests/test_product.py
-          ruff check unrender/product unrender/schema/chart_schema.py tests/test_product.py
+          ruff format --check unrender/product modal_train.py tests/test_product.py tests/test_train_config.py
+          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py tests/test_product.py tests/test_train_config.py
           ruff check --select S unrender/product
       - name: Product types
         run: mypy unrender/product
       - name: Frontend syntax
         run: node --check unrender/product/static/app.js
       - name: Runtime dependency audit
-        run: pip-audit -r requirements-app.lock
+        run: |
+          pip-audit -r requirements-app.lock
+          pip-audit -r requirements-dev.lock
+          pip-audit -r requirements-build.lock
       - name: Tests
         run: pytest -q
       - name: Build package
@@ -64,6 +67,7 @@ jobs:
       - name: Smoke production runtime dependencies
         env:
           UNRENDER_MODAL_REVISION: 0123456789abcdef0123456789abcdef01234567
+          UNRENDER_MODEL_DIGEST: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           UNRENDER_PROVIDER_RELEASE: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         run: |
           docker run --detach --name unrender-production-smoke \
@@ -74,10 +78,11 @@ jobs:
             --env UNRENDER_SEED_DEMO=false \
             --env UNRENDER_MODAL_MODEL=approved/unrender-model \
             --env UNRENDER_MODAL_REVISION="$UNRENDER_MODAL_REVISION" \
+            --env UNRENDER_MODAL_MODEL_DIGEST="$UNRENDER_MODEL_DIGEST" \
             --env UNRENDER_MODAL_PROVIDER_RELEASE="$UNRENDER_PROVIDER_RELEASE" \
             unrender:ci
           trap 'docker rm --force unrender-production-smoke >/dev/null 2>&1 || true' EXIT
-          for attempt in $(seq 1 25); do
+          for _ in $(seq 1 25); do
             status=$(docker inspect --format '{{.State.Health.Status}}' unrender-production-smoke)
             if [ "$status" = healthy ]; then break; fi
             if [ "$status" = unhealthy ]; then docker logs unrender-production-smoke; exit 1; fi

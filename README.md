@@ -1,6 +1,6 @@
 # Unrender
 
-Unrender is a review-first workspace for turning chart images and PDF pages into structured data. It keeps the source beside an editable table, records every correction, and exports JSON, CSV, or XLSX with model and approval metadata.
+Unrender is a review-first workspace for turning chart images and PDF pages into structured data. It keeps the source beside an editable table, records every correction, and exports JSON, CSV, or XLSX. The XLSX audit sheet carries source, model, status, and approval metadata; JSON and CSV are data-only exports.
 
 The product is designed for research and consulting teams that need chart data they can inspect and defend. It does **not** promise automatic accuracy: extraction results remain unverified until a person reviews and approves them.
 
@@ -8,12 +8,12 @@ The product is designed for research and consulting teams that need chart data t
 
 - Account, session, CSRF, tenant, API-key, and rate-limit boundaries
 - Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
-- Persistent `queued → running → review → approved` jobs with restart recovery, cancellation, failure refunds, and retention cleanup
+- Persistent `queued → running → review → approved` jobs with bounded restart recovery, cancellation, failure refunds, retention cleanup, and a retryable deletion outbox
 - Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
 - Side-by-side source review, editable values, version history, and an audit trail
 - JSON, CSV, and XLSX exports; XLSX includes an audit sheet
-- A programmatic upload/status API
-- An exact saved sample that runs without a GPU or external call
+- A tenant-idempotent programmatic upload/status API with credit, bandwidth, outstanding-upload, and storage quotas
+- An isolated, ephemeral saved-sample workspace that runs without a GPU or external call
 - An existing Modal inference adapter for the evaluated Qwen3-VL LoRA
 - Optional Stripe **test-mode only** credit checkout with signed, idempotent webhooks
 
@@ -26,12 +26,14 @@ Python 3.11 is required.
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pip install --require-hashes -r requirements-build.lock
+python -m pip install --no-deps --no-build-isolation -e .
 cp .env.example .env
 unrender-serve
 ```
 
-Open `http://127.0.0.1:8000`, then choose **Open the reviewed sample**. Replay mode accepts only the bundled verification fixture and performs no paid inference. A different upload fails safely and returns its reserved credit.
+Open `http://127.0.0.1:8000`, then choose **Open the reviewed sample**. Each sample visitor receives an isolated ephemeral tenant that can run only the bundled verification fixture and cannot create API keys, use billing, or upload arbitrary files. Replay performs no paid inference.
 
 The same demo runs in a container:
 
@@ -48,15 +50,17 @@ UNRENDER_ENV=production
 UNRENDER_BASE_URL=https://unrender.example.com
 UNRENDER_DATA_DIR=/data
 UNRENDER_EXTRACTOR=modal
+UNRENDER_WORKER_ENABLED=true
 UNRENDER_SEED_DEMO=false
 UNRENDER_ALLOW_REGISTRATION=false
 UNRENDER_MODAL_APP=unrender
 UNRENDER_MODAL_FUNCTION=infer-one
 UNRENDER_MODAL_MODEL=owner/approved-unrender-model
 UNRENDER_MODAL_REVISION=<full 40-character model commit>
+UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, local/mutable model paths, and non-commit revisions. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, and an unapproved provider release. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 
@@ -75,13 +79,13 @@ The saved fixture costs zero credits because it makes no provider call.
 Create an API key in the workspace, then submit a chart:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/extractions \
+curl -X POST "http://127.0.0.1:8000/api/v1/extractions?page_index=0" \
   -H "Authorization: Bearer $UNRENDER_API_KEY" \
-  -F "file=@chart.png" \
-  -F "page_index=0"
+  -H "Idempotency-Key: $(uuidgen)" \
+  -F "file=@chart.png"
 ```
 
-Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive API documentation is available at `/api/docs` outside production. The stable response and error contracts are documented in [`docs/API.md`](docs/API.md).
+Every submission requires a tenant-scoped idempotency key; an exact retry returns the stored response without creating another job or reserving another credit, while reusing the key for different content returns `409`. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive API documentation is available at `/api/docs` outside production. The stable response and error contracts are documented in [`docs/API.md`](docs/API.md).
 
 ## Verify a change
 
@@ -93,7 +97,7 @@ node --check unrender/product/static/app.js
 docker build -t unrender:local .
 ```
 
-The product suite covers the complete saved-sample workflow, review/edit/approve/export behavior, tenant isolation, request protections, upload safety, refund idempotency, restart recovery, API keys, and Stripe test events. The research/evaluation suite remains part of the default test run.
+The product suite covers the complete saved-sample workflow, review/edit/approve/export behavior, visible/restorable result versions, tenant isolation, streamed-body and upload safety, tenant quotas, submission/refund idempotency, bounded restart recovery, API keys, and Stripe test events. The research/evaluation suite remains part of the default test run.
 
 ## Model evidence, stated narrowly
 

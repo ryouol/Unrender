@@ -36,7 +36,7 @@ Validate whether review-first digitization saves meaningful analyst time and sup
 
 ## Instrumentation events
 
-The audit model already records account, upload, queued, started, completed/failed/cancelled, correction, approval, and export events. Before the pilot, add privacy-safe aggregate metrics for queue age, latency, result versions, export format, failure code, and credit/refund counts. Never send chart content, titles, labels, cookies, or raw model output to analytics.
+The audit model records account, upload, queued, started, completed/failed/cancelled, correction, approval, and export events. Structured provider logs expose safe success/failure codes and latency. Before the pilot, connect platform aggregates for queue age, result versions, export format, credit/refund reconciliation, storage, and alert delivery. Never send chart content, titles, labels, filenames, tenant identity, cookies, or raw model output to analytics.
 
 ## Launch copy guardrails
 

@@ -6,14 +6,22 @@ Create an API key from the workspace. Send it as `Authorization: Bearer unr_…`
 
 ## Submit an extraction
 
-`POST /api/v1/extractions`
+`POST /api/v1/extractions?page_index=0`
 
-Multipart fields:
+Required headers:
 
-- `file` — PNG, JPEG, WebP, or PDF, required;
-- `page_index` — zero-based PDF page, default `0`.
+- `Authorization: Bearer unr_…`;
+- `Idempotency-Key` — 8–128 letters, numbers, `.`, `_`, `:`, or `-`, unique per logical submission.
+
+Multipart body:
+
+- `file` — PNG, JPEG, WebP, or PDF, required.
+
+`page_index` is a zero-based query parameter and defaults to `0`. An exact retry with the same account, key, filename, page, and bytes returns the stored `202` response without another upload, job, or credit reservation. Reusing a key for a different request returns `idempotency_conflict`.
 
 Successful response: `202 Accepted` with the job representation.
+
+Submissions fail before persistence when the account has no credit or when its byte, outstanding-upload, storage, or request quota is exhausted. Default tenant limits are documented in `.env.example` and may be reduced by an operator.
 
 ## Read an extraction
 
@@ -54,9 +62,10 @@ Relevant status codes:
 - `402` no chart credits;
 - `403` CSRF/origin/registration policy;
 - `404` tenant-scoped resource not found;
-- `409` invalid lifecycle transition;
+- `409` invalid lifecycle transition, idempotency conflict, or same-key request already in progress;
+- `413` streamed body or tenant storage limit exceeded;
 - `422` invalid upload or result contract;
-- `429` rate limited, with `Retry-After: 60`;
+- `429` request, upload-bandwidth, or outstanding-upload quota reached;
 - `503` provider or optional billing unavailable.
 
 ## Compatibility policy

@@ -16,7 +16,7 @@ The README led with the aspiration to recover exact values and beat frontier sys
 - Added validated upload/page/crop handling and private, generated storage paths.
 - Added persistent jobs, result versions, audit events, credit ledger, restart recovery, cancellation, refunds, retention, and an embedded worker.
 - Added saved-replay and Modal extractor implementations behind one typed boundary.
-- Added CSV, JSON, and XLSX exports with approval/model metadata.
+- Added data-only CSV/JSON exports plus XLSX with source, approval, and model audit metadata.
 - Added Stripe test-mode checkout/webhook handling with signature and replay protection; live secrets are rejected.
 - Added product regression tests, dependency lock, non-root container, CI, runbooks, legal/security inventories, and launch gates.
 

@@ -2,7 +2,7 @@
 
 ## Evidence
 
-The product was run locally with the replay extractor in the Codex in-app browser. The exact saved fixture was submitted, reviewed, corrected, approved, and reopened. API-key dialog open/close behavior and status synchronization were exercised.
+The product was run locally with the replay extractor in the Codex in-app browser. The isolated public demo was opened, processed, corrected, restored from history as a new correction, approved, exported, and signed out; direct database inspection confirmed that sign-out removed its tenant, jobs, and pending deletions. A disposable customer workspace exercised registration, the native file chooser, a 10%/10%/80%/80% keyboard crop, a queued live-provider failure with automatic credit refund, the free saved sample, and API-key create/revoke without exposing the full key in QA output.
 
 Captured evidence:
 
@@ -14,12 +14,14 @@ There is no baseline UI screenshot because no product interface existed at commi
 
 ## Viewports and findings
 
-- 1440×900: landing hierarchy, account entry, job list, source/editor split, action wrapping, table scroll, and source containment were visually checked.
-- 390×844: review panes collapse to one column; job list remains usable; primary actions wrap without horizontal overflow; API-key access remains visible; the table fits its container.
-- Measured mobile document overflow was non-positive. The review grid resolved to one column and the table client/scroll widths matched for the sample.
+- 1280×720: landing hierarchy, account entry, isolated-demo labels, job list, source/editor split, action wrapping, table scroll, history, audit, and source containment were visually checked. Earlier 1440×900 evidence remains in `docs/screenshots/`.
+- 390×844: review panes collapse to one column; the job list remains intentionally horizontally scrollable; primary actions wrap; API-key access remains visible; the table stays inside its container.
+- A two-job mobile state exposed a grid min-content regression with 460 px document width. The responsive grid/sidebar/list tracks now use zero-minimum sizing; the recheck measured document `scrollWidth` and `clientWidth` at 375 px with no page-level horizontal overflow.
+- Keyboard crop fields were filled through their accessible names. Applying the crop produced a visible selection at `left: 10%; top: 10%; width: 80%; height: 80%` before the job was queued.
 - A stale job-list status discovered during QA was fixed so polling refreshes the sidebar on lifecycle transitions.
 - The mobile sidebar previously hid API-key access; QA changed it to a visible compact footer.
 - The API-key close button previously submitted the form; it now closes without creating a key.
+- Browser diagnostics remained empty throughout the final customer/demo journeys.
 
 ## Accessibility baseline
 

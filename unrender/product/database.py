@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 SCHEMA = """
@@ -217,6 +217,7 @@ ON api_idempotency(user_id, expired_at);
 
 CREATE TABLE IF NOT EXISTS storage_reservations (
     id TEXT PRIMARY KEY,
+    owner_token TEXT NOT NULL,
     user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('staging','upload','job_copy')),
     byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
@@ -314,6 +315,9 @@ class Database:
         jobs = self._columns(conn, "jobs")
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
+        storage_reservations = self._columns(conn, "storage_reservations")
+        if "owner_token" in storage_reservations:
+            return 8
         if "result_reservation_bytes" in jobs:
             return 7
         if "lease_generation" in jobs:
@@ -359,6 +363,8 @@ class Database:
                 self._migrate_v5_to_v6(conn)
             elif version == 6:
                 self._migrate_v6_to_v7(conn)
+            elif version == 7:
+                self._migrate_v7_to_v8(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -549,6 +555,24 @@ class Database:
         )
         self._migration_execute(conn, "UPDATE schema_meta SET version=7")
 
+    def _migrate_v7_to_v8(self, conn: sqlite3.Connection) -> None:
+        self._add_column(
+            conn,
+            "storage_reservations",
+            "owner_token",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        # Reservations created by a pre-v8 process have no claimant that can
+        # present a v8 token.  Give each row a distinct opaque tombstone token so
+        # no post-upgrade caller can accidentally acquire or release it by using
+        # the migration default.
+        self._migration_execute(
+            conn,
+            "UPDATE storage_reservations SET owner_token=lower(hex(randomblob(24))) "
+            "WHERE owner_token=''",
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=8")
+
     def connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.path.parent, 0o700)
@@ -570,8 +594,13 @@ class Database:
         return conn
 
     @contextmanager
-    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        with self.operational_lock():
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+        exclusive_operation: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
+        with self.operational_lock(exclusive=exclusive_operation):
             conn = self.connect()
             try:
                 conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")

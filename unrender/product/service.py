@@ -59,9 +59,15 @@ class WorkerClaim:
 
 
 @dataclass(frozen=True)
+class StorageReservation:
+    reservation_id: str
+    owner_token: str
+
+
+@dataclass(frozen=True)
 class ReservedStagedUpload:
     staged: StagedUpload
-    reservation_id: str
+    reservation: StorageReservation
 
 
 def utcnow() -> datetime:
@@ -599,18 +605,20 @@ class ProductService:
         byte_count: int,
         kind: str,
         storage_path: Path | None = None,
-    ) -> str:
+    ) -> StorageReservation:
         reservation_id = self._id()
+        owner_token = random_token(24)
         now = utcnow()
         with self.database.transaction(immediate=True) as conn:
             self._assert_retained_byte_capacity(conn, additional_bytes=byte_count)
             self._insert_row(
                 conn,
                 "INSERT INTO storage_reservations("
-                "id,user_id,kind,byte_count,storage_path,created_at,expires_at"
-                ") VALUES (?,?,?,?,?,?,?)",
+                "id,owner_token,user_id,kind,byte_count,storage_path,created_at,expires_at"
+                ") VALUES (?,?,?,?,?,?,?,?)",
                 (
                     reservation_id,
+                    owner_token,
                     user_id,
                     kind,
                     byte_count,
@@ -622,21 +630,32 @@ class ProductService:
                 ),
                 user_id=user_id,
             )
-        return reservation_id
+        return StorageReservation(reservation_id=reservation_id, owner_token=owner_token)
 
     def _resize_storage_reservation(
         self,
         *,
         user_id: str,
-        reservation_id: str,
+        reservation: StorageReservation,
         byte_count: int,
         kind: str,
         storage_path: Path | None = None,
     ) -> None:
+        now = utcnow()
+        current_time = timestamp(now)
+        renewed_expiry = timestamp(
+            now + timedelta(seconds=self.settings.storage_reservation_ttl_seconds)
+        )
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
-                "SELECT byte_count FROM storage_reservations WHERE id=? AND user_id=?",
-                (reservation_id, user_id),
+                "SELECT byte_count FROM storage_reservations WHERE id=? AND owner_token=? "
+                "AND user_id=? AND expires_at>?",
+                (
+                    reservation.reservation_id,
+                    reservation.owner_token,
+                    user_id,
+                    current_time,
+                ),
             ).fetchone()
             if not row:
                 raise ProductError(
@@ -647,47 +666,114 @@ class ProductService:
             delta = byte_count - int(row["byte_count"])
             if delta > 0:
                 self._assert_retained_byte_capacity(conn, additional_bytes=delta)
-            conn.execute(
-                "UPDATE storage_reservations SET kind=?,byte_count=?,storage_path=? WHERE id=? "
-                "AND user_id=?",
+            changed = conn.execute(
+                "UPDATE storage_reservations SET kind=?,byte_count=?,storage_path=?,expires_at=? "
+                "WHERE id=? AND owner_token=? AND user_id=? AND expires_at>?",
                 (
                     kind,
                     byte_count,
                     str(storage_path) if storage_path is not None else None,
-                    reservation_id,
+                    renewed_expiry,
+                    reservation.reservation_id,
+                    reservation.owner_token,
                     user_id,
+                    current_time,
                 ),
+            ).rowcount
+            if changed != 1:
+                raise ProductError(
+                    "storage_reservation_lost",
+                    "The durable storage reservation expired before publication",
+                    503,
+                )
+
+    def _consume_storage_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        reservation: StorageReservation,
+        kind: str,
+        byte_count: int,
+        storage_path: Path,
+    ) -> None:
+        changed = conn.execute(
+            "DELETE FROM storage_reservations WHERE id=? AND owner_token=? AND user_id=? "
+            "AND kind=? AND byte_count=? AND storage_path=? AND expires_at>?",
+            (
+                reservation.reservation_id,
+                reservation.owner_token,
+                user_id,
+                kind,
+                byte_count,
+                str(storage_path),
+                timestamp(),
+            ),
+        ).rowcount
+        if changed != 1:
+            raise ProductError(
+                "storage_reservation_lost",
+                "The durable storage reservation expired before publication",
+                503,
             )
 
-    def _release_storage_reservation(self, *, user_id: str, reservation_id: str) -> None:
+    def _release_storage_reservation(
+        self, *, user_id: str, reservation: StorageReservation
+    ) -> None:
         with self.database.transaction(immediate=True) as conn:
+            self._drop_storage_reservation(conn, user_id=user_id, reservation=reservation)
+
+    @staticmethod
+    def _drop_storage_reservation(
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        reservation: StorageReservation,
+    ) -> bool:
+        return (
             conn.execute(
-                "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
-                (reservation_id, user_id),
-            )
+                "DELETE FROM storage_reservations WHERE id=? AND owner_token=? AND user_id=?",
+                (reservation.reservation_id, reservation.owner_token, user_id),
+            ).rowcount
+            == 1
+        )
 
     def _stage_upload_with_reservation(
         self, *, user_id: str, source: BinaryIO
     ) -> ReservedStagedUpload:
         staging_path = self.storage.root / "staging" / f"upload-{uuid.uuid4().hex}.tmp"
-        reservation_id = self._reserve_storage_bytes(
+        reservation = self._reserve_storage_bytes(
             user_id=user_id,
             byte_count=self.settings.max_upload_bytes,
             kind="staging",
             storage_path=staging_path,
         )
         try:
-            staged = self.storage.stage_upload(source, destination=staging_path)
+            with self.database.operational_lock():
+                staged = self.storage.stage_upload(source, destination=staging_path)
             self._resize_storage_reservation(
                 user_id=user_id,
-                reservation_id=reservation_id,
+                reservation=reservation,
                 byte_count=staged.inspection.byte_size,
                 kind="staging",
                 storage_path=staged.path,
             )
-            return ReservedStagedUpload(staged=staged, reservation_id=reservation_id)
+            return ReservedStagedUpload(staged=staged, reservation=reservation)
         except Exception:
-            self._release_storage_reservation(user_id=user_id, reservation_id=reservation_id)
+            try:
+                with self.database.operational_lock():
+                    self.storage.delete(staging_path)
+            except Exception:
+                with self.database.transaction(immediate=True) as conn:
+                    self._queue_deletion(
+                        conn,
+                        staging_path,
+                        "failed_staging_cleanup",
+                        user_id=user_id,
+                        byte_size=self.settings.max_upload_bytes,
+                    )
+            finally:
+                self._release_storage_reservation(user_id=user_id, reservation=reservation)
             raise
 
     def cleanup_storage_reservations(self) -> int:
@@ -1163,9 +1249,7 @@ class ProductService:
             self._consume_upload_bytes(user_id, inspection.byte_size)
         except Exception:
             self.storage.delete(staged.path)
-            self._release_storage_reservation(
-                user_id=user_id, reservation_id=reserved.reservation_id
-            )
+            self._release_storage_reservation(user_id=user_id, reservation=reserved.reservation)
             raise
         upload_id = self._id()
         safe_name = Path(filename or "chart").name[:180]
@@ -1175,7 +1259,7 @@ class ProductService:
         try:
             self._resize_storage_reservation(
                 user_id=user_id,
-                reservation_id=reserved.reservation_id,
+                reservation=reserved.reservation,
                 byte_count=inspection.byte_size,
                 kind="upload",
                 storage_path=expected_path,
@@ -1213,9 +1297,13 @@ class ProductService:
                     ),
                     user_id=user_id,
                 )
-                conn.execute(
-                    "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
-                    (reserved.reservation_id, user_id),
+                self._consume_storage_reservation(
+                    conn,
+                    user_id=user_id,
+                    reservation=reserved.reservation,
+                    kind="upload",
+                    byte_count=inspection.byte_size,
+                    storage_path=expected_path,
                 )
                 self._audit(
                     conn,
@@ -1227,9 +1315,7 @@ class ProductService:
             expected = path if path is not None else expected_path
             self.storage.delete(expected)
             self.storage.delete(staged.path)
-            self._release_storage_reservation(
-                user_id=user_id, reservation_id=reserved.reservation_id
-            )
+            self._release_storage_reservation(user_id=user_id, reservation=reserved.reservation)
             raise
         return {
             "id": upload_id,
@@ -1341,9 +1427,10 @@ class ProductService:
                     (user_id, stored_key),
                 ).fetchone()
                 if existing:
-                    conn.execute(
-                        "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
-                        (copy_reservation, user_id),
+                    self._drop_storage_reservation(
+                        conn,
+                        user_id=user_id,
+                        reservation=copy_reservation,
                     )
                     return self._idempotent_response(existing, request_sha256=request_sha256)
                 live_upload = conn.execute(
@@ -1432,14 +1519,18 @@ class ProductService:
                         stored_key,
                     ),
                 )
-                conn.execute(
-                    "DELETE FROM storage_reservations WHERE id=? AND user_id=?",
-                    (copy_reservation, user_id),
+                self._consume_storage_reservation(
+                    conn,
+                    user_id=user_id,
+                    reservation=copy_reservation,
+                    kind="job_copy",
+                    byte_count=int(live_upload["byte_size"]),
+                    storage_path=expected_source_path,
                 )
         except Exception:
             expected = source_path if source_path is not None else expected_source_path
             self.storage.delete(expected)
-            self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
+            self._release_storage_reservation(user_id=user_id, reservation=copy_reservation)
             raise
         return response
 
@@ -1537,9 +1628,7 @@ class ProductService:
 
         def abandon_staging() -> None:
             self.storage.delete(staged.path)
-            self._release_storage_reservation(
-                user_id=user_id, reservation_id=reserved.reservation_id
-            )
+            self._release_storage_reservation(user_id=user_id, reservation=reserved.reservation)
 
         if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
             abandon_staging()
@@ -1583,11 +1672,11 @@ class ProductService:
         job_id = self._id()
         expected_upload = self.storage.root / "uploads" / user_id / f"{upload_id}.source"
         expected_source = self.storage.root / "jobs" / user_id / f"{job_id}.source"
-        copy_reservation: str | None = None
+        copy_reservation: StorageReservation | None = None
         try:
             self._resize_storage_reservation(
                 user_id=user_id,
-                reservation_id=reserved.reservation_id,
+                reservation=reserved.reservation,
                 byte_count=inspection.byte_size,
                 kind="upload",
                 storage_path=expected_upload,
@@ -1601,7 +1690,7 @@ class ProductService:
         except Exception:
             abandon_staging()
             if copy_reservation is not None:
-                self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
+                self._release_storage_reservation(user_id=user_id, reservation=copy_reservation)
             raise
         if copy_reservation is None:  # pragma: no cover - guarded by reservation success above
             abandon_staging()
@@ -1616,9 +1705,15 @@ class ProductService:
                 ).fetchone()
                 if existing:
                     self.storage.delete(staged.path)
-                    conn.execute(
-                        "DELETE FROM storage_reservations WHERE id IN (?,?) AND user_id=?",
-                        (reserved.reservation_id, copy_reservation, user_id),
+                    self._drop_storage_reservation(
+                        conn,
+                        user_id=user_id,
+                        reservation=reserved.reservation,
+                    )
+                    self._drop_storage_reservation(
+                        conn,
+                        user_id=user_id,
+                        reservation=copy_reservation,
                     )
                     return self._idempotent_response(existing, request_sha256=request_sha256)
                 self._assert_upload_capacity(
@@ -1733,9 +1828,21 @@ class ProductService:
                     "WHERE user_id=? AND idempotency_key=?",
                     (encoded_response, timestamp(), user_id, stored_key),
                 )
-                conn.execute(
-                    "DELETE FROM storage_reservations WHERE id IN (?,?) AND user_id=?",
-                    (reserved.reservation_id, copy_reservation, user_id),
+                self._consume_storage_reservation(
+                    conn,
+                    user_id=user_id,
+                    reservation=reserved.reservation,
+                    kind="upload",
+                    byte_count=inspection.byte_size,
+                    storage_path=expected_upload,
+                )
+                self._consume_storage_reservation(
+                    conn,
+                    user_id=user_id,
+                    reservation=copy_reservation,
+                    kind="job_copy",
+                    byte_count=inspection.byte_size,
+                    storage_path=expected_source,
                 )
             return response
         except Exception:
@@ -1755,10 +1862,8 @@ class ProductService:
                             "api_submission_rollback",
                             user_id=user_id,
                         )
-            self._release_storage_reservation(
-                user_id=user_id, reservation_id=reserved.reservation_id
-            )
-            self._release_storage_reservation(user_id=user_id, reservation_id=copy_reservation)
+            self._release_storage_reservation(user_id=user_id, reservation=reserved.reservation)
+            self._release_storage_reservation(user_id=user_id, reservation=copy_reservation)
             raise
 
     def list_jobs_page(
@@ -2126,6 +2231,15 @@ class ProductService:
                 raise ProductError("job_busy", "This extraction is already in progress", 409)
             attempt = int(row["attempt"]) + 1
             credit_cost = 0 if self._is_free_demo_fixture(row["source_sha256"]) else 1
+            # Reprocessing creates the same terminal, audit, provider-attempt, and
+            # recovery obligations whether or not this particular fixture costs a
+            # credit.  Admit all of those rows before changing any durable job state.
+            self._admit_database_rows(
+                conn,
+                user_id=user_id,
+                additional_rows=1 + int(bool(credit_cost)),
+                new_future_rows=self._new_job_future_rows(),
+            )
             self._reserve_result_capacity(conn, user_id=user_id, job_id=job_id, attempt=attempt)
             now = timestamp()
             conn.execute(
@@ -2443,29 +2557,29 @@ class ProductService:
             selected = list(dict.fromkeys(paths[:limit]))
         deleted = 0
         for storage_path in selected:
-            with self.database.transaction(immediate=True) as conn:
+            # The exclusive operations lock spans both the final reference check
+            # and filesystem deletion.  Publication holds the shared side of the
+            # same lock, so it cannot commit a new reference between these steps.
+            with self.database.transaction(immediate=True, exclusive_operation=True) as conn:
                 if self._path_is_referenced(conn, storage_path):
                     conn.execute(
                         "DELETE FROM pending_deletions WHERE storage_path=?", (storage_path,)
                     )
                     continue
-            try:
-                with self.database.operational_lock():
+                try:
                     self.storage.delete(storage_path)
-            except Exception as exc:
-                with self.database.transaction(immediate=True) as conn:
+                except Exception as exc:
                     conn.execute(
                         "UPDATE pending_deletions SET "
                         "attempts=attempts+1,last_error=?,updated_at=? "
                         "WHERE storage_path=?",
                         (f"{type(exc).__name__}: {exc}"[:500], timestamp(), storage_path),
                     )
-            else:
-                with self.database.transaction(immediate=True) as conn:
+                else:
                     changed = conn.execute(
                         "DELETE FROM pending_deletions WHERE storage_path=?", (storage_path,)
                     ).rowcount
-                deleted += int(changed == 1)
+                    deleted += int(changed == 1)
         return deleted
 
     @staticmethod

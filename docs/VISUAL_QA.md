@@ -16,8 +16,10 @@ different principal marker. The logout request was also held for more than 1.2 s
 focus, pageshow, and visibility events still could not reconcile the old principal. A
 real key create/copy flow cleared its secret after copy.
 
-The maximum valid editor shape (50 series × 200 points, 10,000 logical rows) rendered
-100 table rows and 454 total mounted cells in 2.4 ms. Desktop was checked at 1280×720.
+The final maximum valid editor shape (50 series × 200 points, 10,000 logical rows)
+rendered 40 table rows and 467 total mounted descendants in 4.5 ms. The runtime now
+counts actual mounted descendants against the 500-node ceiling rather than estimating
+logical cells. Desktop was checked at 1280×720.
 At 390×844 the first pass exposed a 475 px intrinsic grid width; zero-minimum pane sizing
 fixed it, and the final document/body and viewport widths all measured 390 px. This pass
 is a targeted privacy, maximum-contract, and responsive regression—not a formal browser,
@@ -41,7 +43,7 @@ There is no baseline UI screenshot because no product interface existed at commi
 - The mobile sidebar previously hid API-key access; QA changed it to a visible compact footer.
 - The API-key close button previously submitted the form; it now closes without creating a key.
 - Browser diagnostics remained empty throughout the final customer/demo journeys.
-- Current-tree two-tab privacy, maximum-result, desktop, and mobile assertions completed in Chrome for Testing 147; the CI-safe Node harnesses preserve the auth/selection timing cases without a browser binary.
+- Current-tree two-tab privacy, maximum-result, desktop, and mobile assertions completed in Chrome for Testing 147 with zero console errors. The mixed-version probe held an old authorized response, delivered the terminal legacy storage task after every channel task, and proved that neither it nor the post-revocation check restored private state. The CI-safe Node harnesses preserve storage-only, new-tab, BFCache/focus, legacy-upgrade, mixed-version success/failure ordering, logout-loss, idempotency, export-version, and API-key timing cases without a browser binary. The in-app browser runtime was unavailable for this pass, so the documented local Chrome target was used.
 
 ## Accessibility baseline
 

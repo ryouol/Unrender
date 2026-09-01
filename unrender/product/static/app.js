@@ -17,15 +17,31 @@ const state = {
   viewEpoch: 0,
   viewController: new AbortController(),
   jobSubmission: null,
+  jobSubmissionPending: false,
   keySecretTimer: null,
+  keyDialogEpoch: 0,
+  keyController: new AbortController(),
+  keyListEpoch: 0,
+  keyCreatePending: false,
   authChannel: null,
+  legacyAuthChannel: null,
+  authRecord: null,
+  logoutStatus: "idle",
+  logoutRequest: null,
+  logoutCsrf: "",
   suppressPrincipalReconcileUntil: 0,
   objectUrls: new Set(),
   publicConfig: { registration_open: false, sample_available: false },
 };
 
-const AUTH_EVENT_KEY = "unrender.auth-change.v1";
-const EDITOR_PAGE_SIZE = 100;
+const AUTH_EVENT_KEY = "unrender.auth-state.v2";
+const LEGACY_AUTH_EVENT_KEY = "unrender.auth-change.v1";
+const AUTH_LOCK_NAME = "unrender.auth-state.v2.lock";
+const JOB_SUBMISSION_KEY = "unrender.job-submission.v1";
+const AUTH_PHASES = new Set([
+  "authenticated", "logout-pending", "logout-failed", "signed-out", "signed-out-unconfirmed",
+]);
+const EDITOR_PAGE_SIZE = 40;
 const EDITOR_MAX_ROWS = 10000;
 const EDITOR_MOUNTED_CELL_LIMIT = 500;
 
@@ -55,6 +71,7 @@ function csrfToken() {
 
 async function api(path, options = {}) {
   const epoch = options.authEpoch ?? state.authEpoch;
+  const authRecord = options.authRecord ?? readDurableAuthRecord();
   const method = (options.method || "GET").toUpperCase();
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
@@ -68,6 +85,7 @@ async function api(path, options = {}) {
   }
   const requestOptions = { ...options };
   delete requestOptions.authEpoch;
+  delete requestOptions.authRecord;
   let response;
   try {
     response = await fetch(path, {
@@ -78,17 +96,17 @@ async function api(path, options = {}) {
       signal: requestOptions.signal || state.authController.signal,
     });
   } catch (error) {
-    if (epoch !== state.authEpoch || error?.name === "AbortError") {
+    if (!authContextMatches(epoch, authRecord) || error?.name === "AbortError") {
       throw staleAuthError();
     }
     throw error;
   }
-  if (epoch !== state.authEpoch) {
+  if (!authContextMatches(epoch, authRecord)) {
     throw staleAuthError();
   }
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : null;
-  if (epoch !== state.authEpoch) {
+  if (!authContextMatches(epoch, authRecord)) {
     throw staleAuthError("A previous account response was discarded");
   }
   if (!response.ok) {
@@ -98,8 +116,8 @@ async function api(path, options = {}) {
     error.status = response.status;
     if (response.status === 401 && !path.startsWith("/api/auth/")) {
       const hadPrincipal = Boolean(state.principalMarker);
-      showPublic();
-      if (hadPrincipal) publishAuthChange("session-ended");
+      quarantineAuth("signed-out", { clearCsrf: true });
+      if (hadPrincipal) void publishAuthChange("session-ended");
       throw staleAuthError("The authenticated session ended");
     }
     throw error;
@@ -179,30 +197,363 @@ function clearApiKeySecret() {
   byId("dismiss-key-button").hidden = true;
 }
 
-function publishAuthChange(reason) {
-  state.suppressPrincipalReconcileUntil = ["logout", "session-ended"].includes(reason)
-    ? Number.POSITIVE_INFINITY
-    : 0;
-  const nonce = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-  const event = JSON.stringify({ reason, nonce });
-  try { localStorage.setItem(AUTH_EVENT_KEY, event); } catch (_) { /* unavailable */ }
-  state.authChannel?.postMessage(event);
+function invalidateApiKeyDialog() {
+  state.keyController.abort();
+  state.keyController = new AbortController();
+  state.keyDialogEpoch += 1;
+  state.keyListEpoch += 1;
+  state.keyCreatePending = false;
+  clearApiKeySecret();
 }
 
-function authChangeReason(event) {
-  const raw = typeof event === "string" ? event : event?.data ?? event?.newValue;
+function parseAuthRecord(raw) {
   try {
-    return JSON.parse(raw)?.reason || "unknown";
+    const value = JSON.parse(raw);
+    if (value?.version !== 2 || !AUTH_PHASES.has(value.phase)) return null;
+    if (!Number.isSafeInteger(value.revision) || value.revision < 1) return null;
+    if (typeof value.id !== "string" || !value.id || value.id.length > 160) return null;
+    if (value.phase === "authenticated"
+      && (typeof value.principalMarker !== "string" || !value.principalMarker)) return null;
+    return {
+      version: 2,
+      revision: value.revision,
+      id: value.id,
+      phase: value.phase,
+      principalMarker: value.phase === "authenticated" ? value.principalMarker : null,
+    };
   } catch (_) {
-    return "unknown";
+    return null;
   }
 }
 
-function resetPrivateState({ clearCsrf = true } = {}) {
+function readDurableAuthRecord() {
+  try { return parseAuthRecord(localStorage.getItem?.(AUTH_EVENT_KEY)); }
+  catch (_) { return null; }
+}
+
+function hasLegacyLogoutBarrier() {
+  try {
+    const value = JSON.parse(localStorage.getItem?.(LEGACY_AUTH_EVENT_KEY));
+    return value?.reason === "logout" || value?.reason === "session-ended";
+  } catch (_) {
+    return false;
+  }
+}
+
+function promotedLegacyBarrier(current) {
+  if (state.authRecord && state.authRecord.phase !== "authenticated") {
+    return state.authRecord;
+  }
+  return {
+    version: 2,
+    revision: (current?.revision || 0) + 1,
+    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+    phase: "logout-failed",
+    principalMarker: null,
+  };
+}
+
+function migrateLegacyAuthBarrier() {
+  const current = readDurableAuthRecord();
+  if (!hasLegacyLogoutBarrier() || (current && current.phase !== "authenticated")) {
+    return current;
+  }
+  // localStorage replaces one value atomically. Publishing this fail-closed
+  // record synchronously prevents boot, BFCache, focus, or a mixed-version tab
+  // from consulting /api/me between observing the legacy barrier and persisting
+  // its v2 replacement.
+  const promoted = promotedLegacyBarrier(current);
+  try { localStorage.setItem(AUTH_EVENT_KEY, JSON.stringify(promoted)); }
+  catch (_) { return promoted; }
+  const stored = readDurableAuthRecord();
+  // A quota/security failure may throw, while hardened or mocked storage can
+  // silently ignore a write. In either case, an observed legacy logout is a
+  // stronger privacy signal than an older authenticated v2 record.
+  if (!stored || stored.phase === "authenticated") return promoted;
+  return stored;
+}
+
+function retireLegacyAuthBarrier() {
+  try { localStorage.removeItem?.(LEGACY_AUTH_EVENT_KEY); }
+  catch (_) { return false; }
+  return !hasLegacyLogoutBarrier();
+}
+
+function legacyAuthReason(event) {
+  const raw = typeof event === "string" ? event : event?.data ?? event?.newValue;
+  try { return JSON.parse(raw)?.reason || "unknown"; }
+  catch (_) { return "unknown"; }
+}
+
+function encodeLegacyAuthWake(reason) {
+  return JSON.stringify({
+    reason,
+    nonce: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+  });
+}
+
+function emitLegacyAuthWake(reason) {
+  state.legacyAuthChannel?.postMessage(encodeLegacyAuthWake(reason));
+}
+
+function persistLegacyAuthBarrier(reason) {
+  const encoded = encodeLegacyAuthWake(reason);
+  // Deployed v1's storage listener discarded event.newValue and treated the
+  // wake as authenticated. Never mutate this key until the server has proved
+  // the old cookie unusable; an arbitrarily delayed storage task can then only
+  // reconcile to 401. The barrier remains for suspended/reloaded v1 tabs until
+  // a later explicit login has installed a new cookie and retires it.
+  try { localStorage.setItem(LEGACY_AUTH_EVENT_KEY, encoded); }
+  catch (_) { return false; }
+  return hasLegacyLogoutBarrier();
+}
+
+function sameAuthRecord(left, right) {
+  if (!left || !right) return left === right;
+  return left.revision === right.revision && left.id === right.id && left.phase === right.phase;
+}
+
+function authContextMatches(epoch, record) {
+  return epoch === state.authEpoch && sameAuthRecord(record, readDurableAuthRecord());
+}
+
+function blocksPrincipalRestore(record) {
+  return state.logoutStatus !== "idle" || Boolean(record && record.phase !== "authenticated");
+}
+
+function blocksExplicitLogin(record) {
+  return ["pending", "failed"].includes(state.logoutStatus)
+    || Boolean(record && ["logout-pending", "logout-failed"].includes(record.phase));
+}
+
+function updateLogoutGate() {
+  const record = state.authRecord;
+  const failed = record?.phase === "logout-failed" || state.logoutStatus === "failed";
+  const pending = record?.phase === "logout-pending" || state.logoutStatus === "pending";
+  const unconfirmed = record?.phase === "signed-out-unconfirmed"
+    || state.logoutStatus === "unconfirmed";
+  const retryable = failed || unconfirmed || (pending && !state.logoutRequest);
+  byId("logout-retry-panel").hidden = !retryable;
+  if (pending && retryable) {
+    byId("logout-status").textContent = "Account-wide sign-out was interrupted before confirmation.";
+  }
+  if (unconfirmed) {
+    byId("logout-status").textContent = "This browser is signed out, but account-wide revocation was not confirmed. Retry or sign in to continue.";
+  }
+  byId("retry-logout-button").disabled = Boolean(state.logoutRequest);
+  for (const formId of ["login-form", "register-form"]) {
+    const controls = byId(formId).querySelectorAll?.("input,button") || [];
+    for (const control of controls) control.disabled = pending || failed;
+  }
+  byId("open-sample-button").disabled = pending || failed;
+}
+
+function applyAuthRecord(record, { wipe = true } = {}) {
+  if (!record) {
+    // Missing or malformed durable data is never permission to clear an
+    // already-observed logout quarantine.
+    updateLogoutGate();
+    return state.authRecord;
+  }
+  if (sameAuthRecord(record, state.authRecord)) {
+    updateLogoutGate();
+    return record;
+  }
+  state.authRecord = record;
+  if (record.phase !== "authenticated") {
+    state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
+    state.logoutStatus = record.phase === "logout-failed"
+      ? "failed" : record.phase === "logout-pending"
+        ? "pending" : record.phase === "signed-out-unconfirmed" ? "unconfirmed" : "confirmed";
+    if (wipe) showPublic({ clearCsrf: record.phase === "signed-out", clearSubmission: true });
+  } else {
+    state.suppressPrincipalReconcileUntil = 0;
+    state.logoutStatus = "idle";
+    if (wipe) {
+      const submission = readDurableJobSubmission();
+      showPublic({
+        clearCsrf: false,
+        clearSubmission: Boolean(
+          submission && submission.principalMarker !== record.principalMarker
+        ),
+      });
+    }
+  }
+  updateLogoutGate();
+  return record;
+}
+
+function syncAuthRecordFromStorage(options = {}) {
+  const durable = migrateLegacyAuthBarrier() || readDurableAuthRecord();
+  if (!durable && blocksPrincipalRestore(state.authRecord)) {
+    updateLogoutGate();
+    return state.authRecord;
+  }
+  return applyAuthRecord(durable, options);
+}
+
+async function withAuthMutationLock(callback) {
+  if (globalThis.navigator?.locks?.request) {
+    return globalThis.navigator.locks.request(AUTH_LOCK_NAME, { mode: "exclusive" }, callback);
+  }
+  return callback();
+}
+
+async function writeAuthRecord(phase, { expected = undefined, principalMarker = null } = {}) {
+  return withAuthMutationLock(async () => {
+    const current = readDurableAuthRecord();
+    if (expected !== undefined && !sameAuthRecord(current, expected)) return null;
+    if (phase === "authenticated" && !retireLegacyAuthBarrier()) {
+      throw new Error("This browser could not retire its previous account privacy barrier");
+    }
+    const record = {
+      version: 2,
+      revision: Math.max(current?.revision || 0, state.authRecord?.revision || 0) + 1,
+      id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+      phase,
+      principalMarker: phase === "authenticated" ? principalMarker : null,
+    };
+    const encoded = JSON.stringify(record);
+    localStorage.setItem(AUTH_EVENT_KEY, encoded);
+    const stored = readDurableAuthRecord();
+    if (!sameAuthRecord(stored, record)) {
+      throw new Error("This browser could not persist the account privacy barrier");
+    }
+    state.authChannel?.postMessage(encoded);
+    return applyAuthRecord(record, { wipe: false });
+  });
+}
+
+async function publishAuthChange(reason, options = {}) {
+  if (reason === "authenticated") {
+    if (!options.explicitLogin || !options.principalMarker) return null;
+    if (blocksExplicitLogin(options.expected)) return null;
+    const authenticated = await writeAuthRecord("authenticated", {
+      expected: options.expected,
+      principalMarker: options.principalMarker,
+    });
+    if (authenticated) emitLegacyAuthWake("authenticated");
+    return authenticated;
+  }
+  const phase = reason === "logout" ? "logout-pending" : "signed-out";
+  const changed = await writeAuthRecord(phase, { expected: options.expected });
+  if (changed) {
+    const legacyReason = reason === "logout" ? "logout" : "session-ended";
+    // While logout is merely pending, BroadcastChannel is the only safe wake
+    // for a deployed v1 tab. Session-ended is reached from an authoritative
+    // 401, so its durable legacy barrier is safe to publish immediately.
+    if (reason !== "logout") persistLegacyAuthBarrier(legacyReason);
+    emitLegacyAuthWake(legacyReason);
+  }
+  return changed;
+}
+
+function quarantineAuth(phase, { clearCsrf = false } = {}) {
+  state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
+  state.logoutStatus = phase === "logout-failed"
+    ? "failed" : phase === "signed-out" ? "confirmed" : "pending";
+  showPublic({ clearCsrf });
+  updateLogoutGate();
+}
+
+function parseJobSubmission(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (value?.version !== 1 || typeof value.principalMarker !== "string") return null;
+    if (typeof value.fingerprint !== "string" || typeof value.key !== "string") return null;
+    if (!value.body || typeof value.body.upload_id !== "string") return null;
+    if (!Number.isSafeInteger(value.body.page_index) || value.body.page_index < 0) return null;
+    if (!Number.isFinite(value.createdAt) || Date.now() - value.createdAt > 30 * 86400000) {
+      return null;
+    }
+    if (value.phase !== "prepared" && value.phase !== "accepted") return null;
+    if (value.phase === "accepted" && typeof value.jobId !== "string") return null;
+    return value;
+  } catch (_) {
+    return null;
+  }
+}
+
+function readDurableJobSubmission() {
+  try { return parseJobSubmission(localStorage.getItem?.(JOB_SUBMISSION_KEY)); }
+  catch (_) { return null; }
+}
+
+function persistJobSubmission(submission) {
+  const encoded = JSON.stringify(submission);
+  localStorage.setItem(JOB_SUBMISSION_KEY, encoded);
+  const stored = readDurableJobSubmission();
+  if (!stored || stored.key !== submission.key || stored.fingerprint !== submission.fingerprint
+    || stored.phase !== submission.phase || stored.jobId !== submission.jobId) {
+    throw new Error("This browser could not durably save the extraction request key");
+  }
+  state.jobSubmission = stored;
+  return stored;
+}
+
+function clearDurableJobSubmission(expected = null) {
+  const current = readDurableJobSubmission();
+  if (expected && current?.key !== expected.key) return;
+  try { localStorage.removeItem?.(JOB_SUBMISSION_KEY); } catch (_) { /* fail closed below */ }
+  state.jobSubmission = null;
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function recoverDurableJobSubmission() {
+  if (state.jobSubmissionPending || !state.principalMarker) return false;
+  let submission = readDurableJobSubmission();
+  if (!submission) return false;
+  if (submission.principalMarker !== state.principalMarker) {
+    clearDurableJobSubmission(submission);
+    return false;
+  }
+  const epoch = state.authEpoch;
+  state.jobSubmission = submission;
+  state.jobSubmissionPending = true;
+  try {
+    let jobId = submission.jobId;
+    if (submission.phase !== "accepted") {
+      const job = await api("/api/jobs", {
+        method: "POST",
+        headers: { "Idempotency-Key": submission.key },
+        body: submission.body,
+      });
+      jobId = job.id;
+      submission = persistJobSubmission({
+        ...submission,
+        phase: "accepted",
+        jobId,
+      });
+      await refreshAccount();
+      await loadJobs();
+    }
+    if (epoch !== state.authEpoch || state.principalMarker !== submission.principalMarker) {
+      throw staleAuthError();
+    }
+    if (!state.jobs.some((job) => job.id === jobId)) await loadJobs();
+    if (!state.jobs.some((job) => job.id === jobId)) return false;
+    await openJob(jobId, { throwOnError: true });
+    if (state.currentJob?.id !== jobId) throw staleAuthError();
+    clearDurableJobSubmission(submission);
+    return true;
+  } catch (error) {
+    showToast(error);
+    return false;
+  } finally {
+    state.jobSubmissionPending = false;
+  }
+}
+
+function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   stopPolling();
   resetViewSelection();
   window.clearTimeout(showToast.timer);
-  clearApiKeySecret();
+  invalidateApiKeyDialog();
   state.authController.abort();
   state.authController = new AbortController();
   state.authEpoch += 1;
@@ -219,7 +570,8 @@ function resetPrivateState({ clearCsrf = true } = {}) {
   state.editorRows = [];
   state.editorSeries = [];
   state.editorPage = 0;
-  state.jobSubmission = null;
+  if (clearSubmission) clearDurableJobSubmission();
+  state.jobSubmissionPending = false;
   state.principalMarker = null;
   state.pollDelay = 1500;
   byId("job-list").replaceChildren();
@@ -234,6 +586,7 @@ function resetPrivateState({ clearCsrf = true } = {}) {
   byId("login-form").reset();
   byId("register-form").reset();
   byId("generate-key-button").hidden = false;
+  byId("generate-key-button").disabled = false;
   if (byId("api-key-dialog").open) byId("api-key-dialog").close();
   for (const id of [
     "job-status", "job-title", "job-meta", "source-page-label", "edit-state",
@@ -271,12 +624,13 @@ function resetPrivateState({ clearCsrf = true } = {}) {
   setHidden("version-list", true);
 }
 
-function showPublic({ clearCsrf = true } = {}) {
-  resetPrivateState({ clearCsrf });
+function showPublic({ clearCsrf = true, clearSubmission = true } = {}) {
+  resetPrivateState({ clearCsrf, clearSubmission });
   setHidden("marketing-view", false);
   setHidden("workspace-view", true);
   setHidden("account-bar", true);
   setHidden("public-nav", false);
+  updateLogoutGate();
 }
 
 function applyPublicConfig() {
@@ -313,8 +667,17 @@ function showMainView(name) {
   }
 }
 
-async function refreshAccount(options = {}) {
-  const account = await api("/api/me", options);
+async function fetchAccount(options = {}) {
+  return api("/api/me", options);
+}
+
+function applyAccount(account) {
+  const durable = readDurableAuthRecord();
+  if (durable?.phase === "authenticated"
+    && durable.principalMarker !== account.principal_marker) {
+    quarantineAuth("signed-out", { clearCsrf: false });
+    throw staleAuthError("The account changed before the response could be shown");
+  }
   if (state.principalMarker && state.principalMarker !== account.principal_marker) {
     resetPrivateState({ clearCsrf: false });
   }
@@ -324,13 +687,33 @@ async function refreshAccount(options = {}) {
   return account;
 }
 
+async function refreshAccount(options = {}) {
+  return applyAccount(await fetchAccount(options));
+}
+
 async function reconcilePrincipal() {
-  if (Date.now() < state.suppressPrincipalReconcileUntil) return;
+  const canonical = syncAuthRecordFromStorage({ wipe: true });
+  if (blocksPrincipalRestore(canonical)) return;
+  const authEpoch = state.authEpoch;
   try {
     const previous = state.principalMarker;
-    const account = await refreshAccount();
+    const account = await fetchAccount({ authEpoch, authRecord: canonical });
+    if (!authContextMatches(authEpoch, canonical)) throw staleAuthError();
+    let authenticated = canonical;
+    if (!authenticated) {
+      authenticated = await publishAuthChange("authenticated", {
+        explicitLogin: true,
+        expected: null,
+        principalMarker: account.principal_marker,
+      });
+    }
+    if (!authenticated || authenticated.principalMarker !== account.principal_marker) {
+      throw staleAuthError("The authenticated principal did not match the durable browser state");
+    }
+    applyAccount(account);
     if (previous !== account.principal_marker || !state.jobs.length) {
       await loadJobs();
+      if (await recoverDurableJobSubmission()) return;
       if (state.jobs.length) await openJob(state.jobs[0].id);
       else showMainView("empty-view");
     }
@@ -340,36 +723,40 @@ async function reconcilePrincipal() {
 }
 
 function handleExternalAuthChange(event) {
-  const reason = authChangeReason(event);
-  if (["logout", "session-ended"].includes(reason)) {
-    // Keep reconciliation blocked until an explicit successful authentication.
-    // A timeout could restore a principal while server-side revocation is delayed.
-    state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
-  } else {
-    state.suppressPrincipalReconcileUntil = 0;
+  // Notifications are only wakeups. The canonical durable record decides what
+  // may be rendered, so malformed, duplicated, or reordered events cannot lower
+  // a logout barrier.
+  const canonical = syncAuthRecordFromStorage({ wipe: true });
+  if (["logout", "session-ended"].includes(legacyAuthReason(event))
+    && (!canonical || canonical.phase === "authenticated")) {
+    applyAuthRecord(promotedLegacyBarrier(canonical), { wipe: true });
+    return;
   }
-  showPublic({ clearCsrf: false });
-  if (reason !== "logout" && reason !== "session-ended") void reconcilePrincipal();
+  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal();
+}
+
+function handleAuthLifecycleBoundary() {
+  const canonical = syncAuthRecordFromStorage({ wipe: true });
+  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal();
 }
 
 function installAuthCoordination() {
-  try {
-    const previousReason = authChangeReason(localStorage.getItem?.(AUTH_EVENT_KEY));
-    if (["logout", "session-ended"].includes(previousReason)) {
-      state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
-    }
-  } catch (_) { /* unavailable */ }
+  syncAuthRecordFromStorage({ wipe: false });
   if (typeof BroadcastChannel === "function") {
     state.authChannel = new BroadcastChannel(AUTH_EVENT_KEY);
     state.authChannel.addEventListener("message", handleExternalAuthChange);
+    state.legacyAuthChannel = new BroadcastChannel(LEGACY_AUTH_EVENT_KEY);
+    state.legacyAuthChannel.addEventListener("message", handleExternalAuthChange);
   }
   window.addEventListener("storage", (event) => {
-    if (event.key === AUTH_EVENT_KEY) handleExternalAuthChange();
+    if (event.key === AUTH_EVENT_KEY || event.key === LEGACY_AUTH_EVENT_KEY) {
+      handleExternalAuthChange(event);
+    }
   });
-  window.addEventListener("focus", () => { void reconcilePrincipal(); });
-  window.addEventListener("pageshow", () => { void reconcilePrincipal(); });
+  window.addEventListener("focus", handleAuthLifecycleBoundary);
+  window.addEventListener("pageshow", handleAuthLifecycleBoundary);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") void reconcilePrincipal();
+    if (document.visibilityState === "visible") handleAuthLifecycleBoundary();
   });
 }
 
@@ -381,15 +768,14 @@ async function boot() {
     state.publicConfig = { registration_open: false, sample_available: false };
   }
   applyPublicConfig();
-  if (Date.now() < state.suppressPrincipalReconcileUntil) {
+  const canonical = syncAuthRecordFromStorage({ wipe: false });
+  if (blocksPrincipalRestore(canonical)) {
     showPublic({ clearCsrf: false });
     return;
   }
   try {
-    await refreshAccount();
-    await loadJobs();
-    if (state.jobs.length) await openJob(state.jobs[0].id);
-    else showMainView("empty-view");
+    await reconcilePrincipal();
+    if (!state.account) return;
   } catch (error) {
     if (error.status === 401) showPublic();
     else showError("auth-error", error);
@@ -412,6 +798,11 @@ async function submitAuth(event, mode) {
   clearError("auth-error");
   const form = event.currentTarget;
   const data = new FormData(form);
+  const expected = readDurableAuthRecord();
+  if (blocksExplicitLogin(expected) || state.logoutRequest) {
+    showError("auth-error", new Error("Finish signing out everywhere before signing in again"));
+    return;
+  }
   resetPrivateState();
   const epoch = state.authEpoch;
   try {
@@ -419,11 +810,19 @@ async function submitAuth(event, mode) {
       method: "POST",
       body: { email: data.get("email"), password: data.get("password") },
       authEpoch: epoch,
+      authRecord: expected,
     });
     form.reset();
-    await refreshAccount();
-    publishAuthChange("authenticated");
+    const account = await fetchAccount({ authEpoch: epoch, authRecord: expected });
+    const committed = await publishAuthChange("authenticated", {
+      explicitLogin: true,
+      expected,
+      principalMarker: account.principal_marker,
+    });
+    if (!committed) throw staleAuthError("A sign-out barrier superseded this login");
+    applyAccount(account);
     await loadJobs();
+    if (await recoverDurableJobSubmission()) return;
     showMainView(state.jobs.length ? "job-view" : "empty-view");
     if (state.jobs.length) await openJob(state.jobs[0].id);
   } catch (error) {
@@ -433,14 +832,26 @@ async function submitAuth(event, mode) {
 
 async function demoLoginAndRun() {
   const button = byId("open-sample-button");
+  const expected = readDurableAuthRecord();
+  if (blocksExplicitLogin(expected) || state.logoutRequest) {
+    showToast("Finish signing out everywhere before opening the sample");
+    return;
+  }
   resetPrivateState();
   const epoch = state.authEpoch;
   button.disabled = true;
   try {
-    await api("/api/auth/demo", { method: "POST", authEpoch: epoch });
-    await refreshAccount();
-    publishAuthChange("authenticated");
+    await api("/api/auth/demo", { method: "POST", authEpoch: epoch, authRecord: expected });
+    const account = await fetchAccount({ authEpoch: epoch, authRecord: expected });
+    const committed = await publishAuthChange("authenticated", {
+      explicitLogin: true,
+      expected,
+      principalMarker: account.principal_marker,
+    });
+    if (!committed) throw staleAuthError("A sign-out barrier superseded this login");
+    applyAccount(account);
     await loadJobs();
+    if (await recoverDurableJobSubmission()) return;
     const completed = state.jobs.find((job) =>
       job.source_name === "budget-quarter-sample.webp" && ["review", "approved"].includes(job.status)
     );
@@ -454,15 +865,96 @@ async function demoLoginAndRun() {
 }
 
 async function logout() {
-  const csrf = csrfToken();
-  const request = fetch("/api/auth/logout", {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
-  });
-  state.suppressPrincipalReconcileUntil = Number.POSITIVE_INFINITY;
-  showPublic();
-  publishAuthChange("logout");
-  try { await request; } catch (_) { /* local privacy reset is already complete */ }
+  if (state.logoutRequest) return state.logoutRequest;
+  state.logoutCsrf = state.logoutCsrf || csrfToken();
+  const expected = readDurableAuthRecord();
+  quarantineAuth("logout-pending", { clearCsrf: false });
+  const operation = (async () => {
+    let pending = await publishAuthChange("logout", { expected });
+    if (!pending) {
+      pending = syncAuthRecordFromStorage({ wipe: true });
+      if (pending?.phase !== "logout-pending" && pending?.phase !== "logout-failed") {
+        throw new Error("Another account transition superseded this sign-out request");
+      }
+      if (pending.phase === "logout-failed") {
+        pending = await publishAuthChange("logout", { expected: pending });
+      }
+    }
+    let failure = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { "X-CSRF-Token": state.logoutCsrf, Accept: "application/json" },
+          keepalive: true,
+        });
+        if (response.ok) {
+          const signedOut = await writeAuthRecord("signed-out", { expected: pending });
+          if (!signedOut) throw new Error("The sign-out result was superseded");
+          persistLegacyAuthBarrier("logout");
+          emitLegacyAuthWake("logout");
+          state.logoutStatus = "confirmed";
+          state.logoutCsrf = "";
+          document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
+          showPublic({ clearCsrf: true });
+          updateLogoutGate();
+          return true;
+        }
+        failure = new Error(`Account-wide sign-out failed (${response.status})`);
+      } catch (error) {
+        failure = error;
+      }
+    }
+    try {
+      const localSession = await fetch("/api/me", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (localSession.status === 401) {
+        const unconfirmed = await writeAuthRecord("signed-out-unconfirmed", {
+          expected: pending,
+        });
+        if (unconfirmed) {
+          persistLegacyAuthBarrier("logout");
+          emitLegacyAuthWake("logout");
+          applyAuthRecord(unconfirmed, { wipe: true });
+        }
+        state.logoutStatus = "unconfirmed";
+        state.logoutCsrf = "";
+        document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
+        updateLogoutGate();
+        return false;
+      }
+    } catch (_) {
+      // Network ambiguity remains a failed global sign-out, never a success claim.
+    }
+    const failed = await writeAuthRecord("logout-failed", { expected: pending });
+    if (failed) {
+      // Re-wake live v1 tabs, but keep storage untouched because the old
+      // session may still be valid after an ambiguous/non-2xx response.
+      emitLegacyAuthWake("logout");
+      applyAuthRecord(failed, { wipe: true });
+    }
+    state.logoutStatus = "failed";
+    byId("logout-status").textContent = failure?.message
+      || "Account-wide sign-out could not be confirmed";
+    updateLogoutGate();
+    return false;
+  })();
+  state.logoutRequest = operation;
+  try {
+    return await operation;
+  } catch (error) {
+    state.logoutStatus = "failed";
+    byId("logout-status").textContent = error?.message
+      || "Account-wide sign-out could not be confirmed";
+    updateLogoutGate();
+    return false;
+  } finally {
+    if (state.logoutRequest === operation) state.logoutRequest = null;
+    updateLogoutGate();
+  }
 }
 
 async function loadJobs() {
@@ -538,7 +1030,6 @@ async function prepareFile(file) {
     });
     if (view.epoch !== state.viewEpoch) throw staleAuthError();
     state.upload = upload;
-    state.jobSubmission = null;
     state.uploadPage = 0;
     clearCrop();
     setHidden("page-review", false);
@@ -658,34 +1149,73 @@ function finishCrop(event) {
 }
 
 async function queueCurrentUpload() {
-  if (!state.upload) return;
+  if (!state.upload || state.jobSubmissionPending) return;
   const epoch = state.authEpoch;
+  const principal = state.principalMarker;
   const button = byId("queue-job-button");
   button.disabled = true;
   clearError("upload-error");
-  const fingerprint = JSON.stringify({
-    principal: state.principalMarker,
-    uploadId: state.upload.id,
-    pageIndex: state.uploadPage,
+  const body = {
+    upload_id: state.upload.id,
+    page_index: state.uploadPage,
     crop: state.crop,
+  };
+  const fingerprint = JSON.stringify({
+    principal,
+    uploadId: body.upload_id,
+    pageIndex: body.page_index,
+    crop: body.crop,
   });
-  if (state.jobSubmission?.fingerprint !== fingerprint) {
-    state.jobSubmission = { fingerprint, key: crypto.randomUUID() };
-  }
-  const submission = state.jobSubmission;
+  let submission = state.jobSubmission || readDurableJobSubmission();
   try {
-    const job = await api("/api/jobs", {
-      method: "POST",
-      headers: { "Idempotency-Key": submission.key },
-      body: { upload_id: state.upload.id, page_index: state.uploadPage, crop: state.crop },
-    });
-    if (state.jobSubmission === submission) state.jobSubmission = null;
+    if (submission && (submission.principalMarker !== principal
+      || submission.fingerprint !== fingerprint)) {
+      throw new Error(
+        "Finish recovering the previous extraction request before starting a different one"
+      );
+    }
+    if (!submission) {
+      const key = `ui:${await sha256Hex(fingerprint)}`;
+      submission = persistJobSubmission({
+        version: 1,
+        principalMarker: principal,
+        fingerprint,
+        body,
+        key,
+        phase: "prepared",
+        jobId: null,
+        createdAt: Date.now(),
+      });
+    }
+    state.jobSubmissionPending = true;
+    let job;
+    if (submission.phase === "accepted") {
+      job = { id: submission.jobId };
+    } else {
+      job = await api("/api/jobs", {
+        method: "POST",
+        headers: { "Idempotency-Key": submission.key },
+        body: submission.body,
+      });
+      submission = persistJobSubmission({
+        ...submission,
+        phase: "accepted",
+        jobId: job.id,
+      });
+    }
+    if (epoch !== state.authEpoch || state.principalMarker !== principal) throw staleAuthError();
     await refreshAccount();
     await loadJobs();
-    await openJob(job.id);
+    if (!state.jobs.some((item) => item.id === job.id)) {
+      throw new Error("The extraction was accepted but has not converged into the workspace yet");
+    }
+    await openJob(job.id, { throwOnError: true });
+    if (state.currentJob?.id !== job.id) throw staleAuthError();
+    clearDurableJobSubmission(submission);
   } catch (error) {
     showError("upload-error", error);
   } finally {
+    state.jobSubmissionPending = false;
     if (epoch === state.authEpoch) button.disabled = false;
   }
 }
@@ -706,7 +1236,7 @@ async function runSample() {
   }
 }
 
-async function openJob(jobId) {
+async function openJob(jobId, { throwOnError = false } = {}) {
   stopPolling();
   const view = beginViewSelection();
   try {
@@ -727,14 +1257,17 @@ async function openJob(jobId) {
       state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
       state.pollDelay = Math.min(4000, state.pollDelay + 500);
     }
+    return job;
   } catch (error) {
     if (error.status === 429 && state.currentJob?.id === jobId
       && ["queued", "running"].includes(state.currentJob.status)) {
       state.pollDelay = 5000;
       state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
     } else {
+      if (throwOnError) throw error;
       showToast(error);
     }
+    return null;
   }
 }
 
@@ -789,9 +1322,10 @@ function renderJobActions() {
   }
   if (["review", "approved"].includes(job.status)) {
     for (const format of ["CSV", "JSON", "XLSX"]) {
-      actions.append(actionButton(`Export ${format}`, "button-secondary", () => {
-        window.location.assign(`/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format.toLowerCase())}`);
-      }));
+      const button = actionButton(`Export ${format}`, "button-secondary", () => {
+        void downloadExport(job, format.toLowerCase(), button);
+      });
+      actions.append(button);
     }
     actions.append(actionButton("Reprocess", "button-quiet", () => jobMutation("reprocess")));
   }
@@ -800,6 +1334,62 @@ function renderJobActions() {
   }
   if (!["queued", "running"].includes(job.status)) {
     actions.append(actionButton("Delete", "button-danger", deleteCurrentJob));
+  }
+}
+
+async function downloadExport(job, format, button) {
+  const authEpoch = state.authEpoch;
+  const authRecord = readDurableAuthRecord();
+  const principal = state.principalMarker;
+  const viewEpoch = state.viewEpoch;
+  const signal = state.viewController.signal;
+  button.disabled = true;
+  let objectUrl = null;
+  try {
+    const response = await fetch(
+      `/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format)}`,
+      { headers: { Accept: "application/octet-stream" }, signal }
+    );
+    if (!authContextMatches(authEpoch, authRecord)
+      || state.principalMarker !== principal
+      || state.viewEpoch !== viewEpoch
+      || state.currentJob !== job
+      || signal.aborted) throw staleAuthError();
+    if (!response.ok) {
+      if (response.status === 401) {
+        quarantineAuth("signed-out", { clearCsrf: true });
+        void publishAuthChange("session-ended");
+        throw staleAuthError("The authenticated session ended");
+      }
+      throw new Error(`Export failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    if (!authContextMatches(authEpoch, authRecord)
+      || state.principalMarker !== principal
+      || state.viewEpoch !== viewEpoch
+      || state.currentJob !== job
+      || signal.aborted) throw staleAuthError();
+    objectUrl = URL.createObjectURL(blob);
+    state.objectUrls.add(objectUrl);
+    if (!authContextMatches(authEpoch, authRecord)
+      || state.principalMarker !== principal
+      || state.viewEpoch !== viewEpoch
+      || state.currentJob !== job) throw staleAuthError();
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `unrender-${job.id}.${format}`;
+    document.body?.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } catch (error) {
+    if (!isStaleRequest(error)) showToast(error);
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      state.objectUrls.delete(objectUrl);
+    }
+    if (authEpoch === state.authEpoch && state.viewEpoch === viewEpoch
+      && state.currentJob === job) button.disabled = false;
   }
 }
 
@@ -966,9 +1556,8 @@ function renderResultTable() {
     body.append(tr);
   });
   table.append(head, body);
-  const mountedCells = heading.cells.length
-    + (body.rows.length * heading.cells.length)
-    + state.editorSeries.length
+  const mountedCells = table.querySelectorAll("*").length
+    + byId("series-editor-list").querySelectorAll("*").length
     + 5;
   if (mountedCells > EDITOR_MOUNTED_CELL_LIMIT) {
     throw new Error("Editor mounted-cell safety limit exceeded");
@@ -1202,27 +1791,36 @@ async function toggleVersions() {
 }
 
 async function openKeyDialog() {
-  clearApiKeySecret();
+  invalidateApiKeyDialog();
+  const dialogEpoch = state.keyDialogEpoch;
   byId("generate-key-button").hidden = false;
+  byId("generate-key-button").disabled = false;
   byId("api-key-dialog").showModal();
   byId("api-key-name").focus();
-  await loadApiKeys();
+  await loadApiKeys({ dialogEpoch });
 }
 
-async function loadApiKeys() {
+async function loadApiKeys({ dialogEpoch = state.keyDialogEpoch } = {}) {
   const list = byId("api-key-list");
   const authEpoch = state.authEpoch;
+  const principal = state.principalMarker;
+  const listEpoch = ++state.keyListEpoch;
+  const signal = state.keyController.signal;
   try {
     const keys = [];
     let cursor = null;
     do {
       const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-      const payload = await api(`/api/keys${query}`, { authEpoch });
-      if (authEpoch !== state.authEpoch) throw staleAuthError();
+      const payload = await api(`/api/keys${query}`, { authEpoch, signal });
+      if (authEpoch !== state.authEpoch || principal !== state.principalMarker
+        || dialogEpoch !== state.keyDialogEpoch || listEpoch !== state.keyListEpoch
+        || signal.aborted) throw staleAuthError();
       keys.push(...payload.items);
       cursor = payload.next_cursor;
     } while (cursor);
-    if (authEpoch !== state.authEpoch) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || principal !== state.principalMarker
+      || dialogEpoch !== state.keyDialogEpoch || listEpoch !== state.keyListEpoch
+      || signal.aborted || !byId("api-key-dialog").open) throw staleAuthError();
     list.replaceChildren();
     if (!keys.length) {
       const empty = document.createElement("li");
@@ -1281,19 +1879,47 @@ async function revokeApiKey(keyId) {
 
 async function createKey(event) {
   event.preventDefault();
+  if (state.keyCreatePending || !byId("api-key-dialog").open) return;
+  const authEpoch = state.authEpoch;
+  const principal = state.principalMarker;
+  const dialogEpoch = state.keyDialogEpoch;
+  const signal = state.keyController.signal;
+  const button = byId("generate-key-button");
+  state.keyCreatePending = true;
+  button.disabled = true;
+  window.clearTimeout(state.keySecretTimer);
+  state.keySecretTimer = window.setTimeout(() => {
+    if (dialogEpoch !== state.keyDialogEpoch) return;
+    invalidateApiKeyDialog();
+    byId("generate-key-button").hidden = false;
+    byId("generate-key-button").disabled = false;
+  }, 30000);
   try {
     const payload = await api("/api/keys", {
-      method: "POST", body: { name: byId("api-key-name").value },
+      method: "POST",
+      body: { name: byId("api-key-name").value },
+      authEpoch,
+      signal,
     });
+    if (authEpoch !== state.authEpoch || principal !== state.principalMarker
+      || dialogEpoch !== state.keyDialogEpoch || signal.aborted
+      || !byId("api-key-dialog").open) {
+      payload.key = "";
+      throw staleAuthError();
+    }
     byId("api-key-output").textContent = payload.key;
     byId("api-key-output").hidden = false;
     byId("copy-key-button").hidden = false;
     byId("dismiss-key-button").hidden = false;
     byId("generate-key-button").hidden = true;
-    state.keySecretTimer = window.setTimeout(clearApiKeySecret, 30000);
-    await loadApiKeys();
+    await loadApiKeys({ dialogEpoch });
   } catch (error) {
     showToast(error);
+  } finally {
+    if (dialogEpoch === state.keyDialogEpoch) {
+      state.keyCreatePending = false;
+      button.disabled = false;
+    }
   }
 }
 
@@ -1306,7 +1932,7 @@ async function copyApiKeySecret() {
   } catch (_) {
     showToast("Clipboard access failed; the on-screen key was still cleared");
   } finally {
-    clearApiKeySecret();
+    invalidateApiKeyDialog();
   }
 }
 
@@ -1327,6 +1953,11 @@ async function buyCredits() {
   }
 }
 
+function closeKeyDialog() {
+  invalidateApiKeyDialog();
+  if (byId("api-key-dialog").open) byId("api-key-dialog").close();
+}
+
 function bindEvents() {
   byId("login-tab").addEventListener("click", () => switchAuth("login"));
   byId("register-tab").addEventListener("click", () => switchAuth("register"));
@@ -1338,6 +1969,7 @@ function bindEvents() {
   byId("register-form").addEventListener("submit", (event) => submitAuth(event, "register"));
   byId("open-sample-button").addEventListener("click", demoLoginAndRun);
   byId("logout-button").addEventListener("click", logout);
+  byId("retry-logout-button").addEventListener("click", logout);
   byId("home-button").addEventListener("click", () => {
     if (state.account) showMainView(state.jobs.length ? "job-view" : "empty-view");
     else showPublic();
@@ -1364,17 +1996,21 @@ function bindEvents() {
   byId("toggle-versions-button").addEventListener("click", toggleVersions);
   byId("toggle-audit-button").addEventListener("click", toggleAudit);
   byId("create-key-button").addEventListener("click", openKeyDialog);
-  byId("close-key-dialog").addEventListener("click", () => {
-    clearApiKeySecret();
-    byId("api-key-dialog").close();
-  });
+  byId("close-key-dialog").addEventListener("click", closeKeyDialog);
   byId("copy-key-button").addEventListener("click", copyApiKeySecret);
-  byId("dismiss-key-button").addEventListener("click", clearApiKeySecret);
-  byId("api-key-dialog").addEventListener("cancel", clearApiKeySecret);
-  byId("api-key-dialog").addEventListener("close", clearApiKeySecret);
+  byId("dismiss-key-button").addEventListener("click", invalidateApiKeyDialog);
+  byId("api-key-dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeKeyDialog();
+  });
+  byId("api-key-dialog").addEventListener("close", invalidateApiKeyDialog);
   byId("revoke-all-keys-button").addEventListener("click", revokeAllApiKeys);
   byId("api-key-form").addEventListener("submit", createKey);
   byId("buy-credits-button").addEventListener("click", buyCredits);
+  window.addEventListener("pagehide", closeKeyDialog);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") closeKeyDialog();
+  });
 }
 
 bindEvents();

@@ -284,6 +284,36 @@ operations Low issues. The complete one-to-one test map is recorded in
   output is schema/product-validated before success logging; invalid output becomes
   `model_output_invalid`.
 
+## Fifth exact-tree remediation pass
+
+The exact review of commit `ab13830` found one remaining cross-tab High, five
+transaction/browser Medium findings, and one actionable Low. This tree implements the
+one-to-one map in `docs/REMEDIATION_EVIDENCE.md`; the security consequences are:
+
+- **Durable logout quarantine and private response fencing (High/Medium/Low):** browser
+  coordination treats notifications only as wakeups and rereads the canonical record at
+  every lifecycle boundary. Unknown events never clear quarantine. Legacy logout records
+  migrate fail-closed even beside authenticated v2 tabs or unavailable persistence, while
+  v2 transitions wake live deployed-v1 tabs by channel only after the v2 barrier is durable.
+  Legacy storage is never mutated while an old cookie may still authorize: a terminal logout
+  or authoritative `401` persists that barrier for suspended/reloaded v1 tabs, and explicit
+  login retires it only after the new cookie exists. Thus even a dropped-detail storage task
+  delivered after every channel task can reconcile only to `401`. Failed or ambiguous global
+  sign-out stays visibly retryable, emits no unsafe storage wake, and is never labelled
+  successful. Export and one-time
+  API-key responses are principal, auth-record, selection/version, dialog, and abort
+  fenced before any DOM/blob side effect.
+- **Atomic no-spend/capacity and file-publication invariants (Medium):** free reprocess
+  admits every future row before changing durable state. Storage reservations have
+  renewable opaque owner tokens; final publication atomically consumes the exact live
+  lease, while deletion holds the cross-process operational fence through reference
+  check and file removal. Deterministic peer, expiry, token-loss, and exact-pressure tests
+  exclude row-without-file, orphan, overcommit, provider-spend, and stranded-terminal
+  outcomes.
+- **Browser charge convergence (Medium):** the browser's deterministic logical-operation
+  idempotency record survives ambiguous POST and post-success account/list/view failures,
+  and is removed only after the same principal observes and selects the accepted job.
+
 ## Open deployment findings
 
 ### 20. Hostile document scanning and edge timeouts are deployment controls

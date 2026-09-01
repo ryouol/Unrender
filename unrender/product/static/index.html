@@ -61,6 +61,10 @@
             <label>Password <span class="label-hint">12 characters minimum</span><input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
             <button class="button button-primary" type="submit">Create workspace</button>
           </form>
+          <div id="logout-retry-panel" class="form-error" role="alert" hidden>
+            <p id="logout-status">Account-wide sign-out could not be confirmed.</p>
+            <button class="button button-secondary" id="retry-logout-button" type="button">Retry sign out everywhere</button>
+          </div>
           <p class="form-error" id="auth-error" role="alert" hidden></p>
         </section>
       </section>

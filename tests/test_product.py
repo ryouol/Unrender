@@ -43,7 +43,13 @@ from unrender.product.extractors import (
     ReplayExtractor,
 )
 from unrender.product.security import hash_password, password_needs_rehash, verify_password
-from unrender.product.service import ProductError, ProductService, timestamp, utcnow
+from unrender.product.service import (
+    ProductError,
+    ProductService,
+    StorageReservation,
+    timestamp,
+    utcnow,
+)
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.web import (
     CSRF_COOKIE,
@@ -2229,6 +2235,58 @@ def test_v6_to_v7_capacity_and_session_migration_is_atomic(
         assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
 
 
+@pytest.mark.parametrize("crash_after", range(1, 4))
+def test_v7_to_v8_storage_owner_tokens_are_atomic_and_opaque(
+    tmp_path: Path, crash_after: int
+) -> None:
+    database = Database(tmp_path / f"migration-v8-{crash_after}" / "unrender.sqlite3")
+    database.initialize()
+    with database.connect() as conn:
+        conn.execute(
+            "INSERT INTO users(id,email,password_hash,credit_balance,created_at) "
+            "VALUES ('v8-user','v8@example.com','hash',0,'2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO storage_reservations("
+            "id,owner_token,user_id,kind,byte_count,storage_path,created_at,expires_at"
+            ") VALUES ('legacy-reservation','old-token','v8-user','staging',9,"
+            "'/legacy/staging.tmp','2026-01-01T00:00:00Z','2099-01-01T00:00:00Z')"
+        )
+        conn.execute("ALTER TABLE storage_reservations DROP COLUMN owner_token")
+        conn.execute("UPDATE schema_meta SET version=7")
+    statements = 0
+
+    def fault() -> None:
+        nonlocal statements
+        statements += 1
+        if statements == crash_after:
+            raise RuntimeError("injected v8 statement crash")
+
+    database._migration_fault_hook = fault
+    with pytest.raises(RuntimeError, match="v8 statement crash"):
+        database.initialize()
+    with database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 7
+        assert "owner_token" not in Database._columns(conn, "storage_reservations")
+        assert (
+            conn.execute(
+                "SELECT byte_count FROM storage_reservations WHERE id='legacy-reservation'"
+            ).fetchone()[0]
+            == 9
+        )
+    database._migration_fault_hook = None
+    database.initialize()
+    database.initialize()
+    with database.connect() as conn:
+        migrated = conn.execute(
+            "SELECT owner_token,byte_count FROM storage_reservations WHERE id='legacy-reservation'"
+        ).fetchone()
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
+        assert migrated["byte_count"] == 9
+        assert re.fullmatch(r"[0-9a-f]{48}", migrated["owner_token"])
+        assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
+
+
 def test_v4_partial_rename_shape_is_resumed_without_losing_idempotency_rows(
     tmp_path: Path,
 ) -> None:
@@ -3051,6 +3109,216 @@ def test_crash_durable_publication_reservations_reconcile_staging_and_namespaces
     assert peer.upload_preview(user_id=user_id, upload_id=upload["id"], page_index=0)
 
 
+def test_storage_reservation_tokens_renew_and_expired_publication_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "reservation-owner@example.com")
+    reservation_path = service.storage.root / "staging" / "owned.tmp"
+    reservation = service._reserve_storage_bytes(
+        user_id=user_id,
+        byte_count=1,
+        kind="staging",
+        storage_path=reservation_path,
+    )
+    with service.database.transaction(immediate=True) as conn:
+        short_expiry = timestamp(utcnow() + timedelta(seconds=1))
+        conn.execute(
+            "UPDATE storage_reservations SET expires_at=? WHERE id=?",
+            (short_expiry, reservation.reservation_id),
+        )
+
+    stale = StorageReservation(reservation.reservation_id, "stale-owner-token")
+    with pytest.raises(ProductError) as stale_resize:
+        service._resize_storage_reservation(
+            user_id=user_id,
+            reservation=stale,
+            byte_count=2,
+            kind="staging",
+            storage_path=reservation_path,
+        )
+    assert stale_resize.value.code == "storage_reservation_lost"
+    service._release_storage_reservation(user_id=user_id, reservation=stale)
+    service._resize_storage_reservation(
+        user_id=user_id,
+        reservation=reservation,
+        byte_count=2,
+        kind="staging",
+        storage_path=reservation_path,
+    )
+    with service.database.connect() as conn:
+        renewed = conn.execute(
+            "SELECT owner_token,byte_count,expires_at FROM storage_reservations WHERE id=?",
+            (reservation.reservation_id,),
+        ).fetchone()
+    assert renewed["owner_token"] == reservation.owner_token
+    assert renewed["byte_count"] == 2
+    assert renewed["expires_at"] > short_expiry
+    service._release_storage_reservation(user_id=user_id, reservation=reservation)
+
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+    original_resize = service._resize_storage_reservation
+
+    def expire_before_publication(**kwargs: Any) -> None:
+        original_resize(**kwargs)
+        if kwargs["kind"] != "upload":
+            return
+        live = kwargs["reservation"]
+        with peer.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE storage_reservations SET expires_at=? WHERE id=? AND owner_token=?",
+                (
+                    timestamp(utcnow() - timedelta(seconds=1)),
+                    live.reservation_id,
+                    live.owner_token,
+                ),
+            )
+        assert peer.cleanup_storage_reservations() == 1
+
+    monkeypatch.setattr(service, "_resize_storage_reservation", expire_before_publication)
+    with pytest.raises(ProductError) as expired:
+        service.prepare_upload(
+            user_id=user_id,
+            filename="expired-publication.png",
+            content=png_bytes(color="red"),
+        )
+    assert expired.value.code == "storage_reservation_lost"
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM pending_deletions").fetchone()[0] == 0
+    assert service.storage.object_paths() == []
+
+
+def test_staging_token_loss_removes_written_file_before_returning_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "staging-token-loss@example.com")
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+    original_stage = service.storage.stage_upload
+    written: list[Path] = []
+
+    def lose_reservation_after_write(source: Any, **kwargs: Any):
+        staged = original_stage(source, **kwargs)
+        written.append(staged.path)
+        with peer.database.transaction(immediate=True) as conn:
+            assert (
+                conn.execute(
+                    "DELETE FROM storage_reservations WHERE storage_path=?",
+                    (str(staged.path),),
+                ).rowcount
+                == 1
+            )
+        return staged
+
+    monkeypatch.setattr(service.storage, "stage_upload", lose_reservation_after_write)
+    with pytest.raises(ProductError) as lost:
+        service.prepare_upload(
+            user_id=user_id,
+            filename="lost-token.png",
+            content=png_bytes(color="orange"),
+        )
+    assert lost.value.code == "storage_reservation_lost"
+    assert written and all(not path.exists() for path in written)
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM pending_deletions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0] == 0
+
+
+def test_publication_and_deletion_reference_check_share_one_cross_process_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "publication-delete-race@example.com")
+    peer = ProductService(
+        settings=service.settings,
+        database=Database(service.settings.database_path),
+        storage=Storage(service.settings),
+        extractor=ReplayExtractor(STATIC_DIR),
+        static_dir=STATIC_DIR,
+    )
+    peer.initialize()
+
+    expected_path: list[Path] = []
+    original_resize = service._resize_storage_reservation
+
+    def queue_stale_deletion(**kwargs: Any) -> None:
+        original_resize(**kwargs)
+        if kwargs["kind"] != "upload":
+            return
+        path = Path(kwargs["storage_path"])
+        expected_path.append(path)
+        with peer.database.transaction(immediate=True) as conn:
+            peer._queue_deletion(
+                conn,
+                path,
+                "deterministic_publication_race",
+                user_id=user_id,
+                byte_size=int(kwargs["byte_count"]),
+            )
+
+    monkeypatch.setattr(service, "_resize_storage_reservation", queue_stale_deletion)
+    exclusive_attempted = threading.Event()
+    original_lock = peer.database.operational_lock
+
+    def tracked_lock(*, exclusive: bool = False, timeout_seconds: float = 10.0):
+        if exclusive:
+            exclusive_attempted.set()
+        return original_lock(exclusive=exclusive, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(peer.database, "operational_lock", tracked_lock)
+    drain_results: list[int] = []
+    drain_threads: list[threading.Thread] = []
+
+    def publication_hook(stage: str) -> None:
+        if stage != "upload_published":
+            return
+        thread = threading.Thread(
+            target=lambda: drain_results.append(
+                peer.drain_deletion_queue(paths=[str(expected_path[0])])
+            )
+        )
+        drain_threads.append(thread)
+        thread.start()
+        assert exclusive_attempted.wait(timeout=5)
+        time.sleep(0.05)
+        assert thread.is_alive(), "exclusive deletion must wait for publication's shared fence"
+
+    service.storage._publication_fault_hook = publication_hook
+    uploaded = service.prepare_upload(
+        user_id=user_id,
+        filename="committed-race.png",
+        content=png_bytes(color="green"),
+    )
+    service.storage._publication_fault_hook = None
+    for thread in drain_threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert drain_results == [0]
+    row = service.upload(user_id=user_id, upload_id=str(uploaded["id"]))
+    assert Path(row["storage_path"]) == expected_path[0]
+    assert expected_path[0].is_file()
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM pending_deletions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM storage_reservations").fetchone()[0] == 0
+
+
 def test_startup_never_invents_missing_result_capacity_before_provider_dispatch(
     tmp_path: Path,
 ) -> None:
@@ -3224,6 +3492,74 @@ def test_database_row_admission_is_central_and_preserves_terminal_capacity(
         assert conn.execute("SELECT COUNT(*) FROM result_versions").fetchone()[0] == 1
 
 
+def test_free_reprocess_admission_is_atomic_and_preserves_existing_terminal_capacity(
+    tmp_path: Path,
+) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "free-reprocess-pressure@example.com")
+    fixture_upload = service.prepare_demo_upload(user_id)
+    free_job = service.create_job(
+        user_id=user_id,
+        upload_id=str(fixture_upload["id"]),
+        page_index=0,
+        crop=None,
+    )
+    _install_successful_extractor(service)
+    assert service.process_one("free-fixture-worker")
+    queued = _paid_job(service, user_id, color="navy")
+
+    with service.database.connect() as conn:
+        current = service._database_row_count(conn, user_id)
+        future = service._future_terminal_rows(conn, user_id)
+        before_job = dict(
+            conn.execute("SELECT * FROM jobs WHERE id=?", (free_job["id"],)).fetchone()
+        )
+        before_counts = {
+            table: conn.execute(
+                f'SELECT COUNT(*) FROM "{table}" WHERE user_id=?',  # noqa: S608
+                (user_id,),
+            ).fetchone()[0]
+            for table in (
+                "audit_events",
+                "credit_ledger",
+                "provider_attempts",
+                "result_versions",
+                "storage_reservations",
+            )
+        }
+    assert future > 0
+    service.settings = Settings(
+        **{
+            **service.settings.__dict__,
+            "max_database_rows_per_user": current + future + 1,
+            "mandatory_database_rows_per_user": 1,
+        }
+    )
+
+    with pytest.raises(ProductError) as rejected:
+        service.reprocess(user_id=user_id, job_id=str(free_job["id"]))
+    assert rejected.value.code == "database_quota_reached"
+    with service.database.connect() as conn:
+        after_job = dict(
+            conn.execute("SELECT * FROM jobs WHERE id=?", (free_job["id"],)).fetchone()
+        )
+        assert after_job == before_job
+        after_counts = {
+            table: conn.execute(
+                f'SELECT COUNT(*) FROM "{table}" WHERE user_id=?',  # noqa: S608
+                (user_id,),
+            ).fetchone()[0]
+            for table in before_counts
+        }
+    assert after_counts == before_counts
+    assert service.account(user_id)["credits"] == 0
+
+    # The previously admitted queued job still has every row it needs to reach a
+    # durable terminal result under the same pressure ceiling.
+    assert service.process_one("existing-capacity-worker")
+    assert service.get_job(user_id=user_id, job_id=str(queued["id"]))["status"] == "review"
+
+
 def test_invalid_provider_output_never_logs_success_and_uses_specific_error(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3287,7 +3623,7 @@ def test_backup_and_restore_fsync_files_manifests_and_publication_directories(
 
     monkeypatch.setattr(backup_module, "_fsync_directory", tracked_directory)
     monkeypatch.setattr(backup_module, "_fsync_file", tracked_file)
-    reservation_id = service._reserve_storage_bytes(
+    reservation = service._reserve_storage_bytes(
         user_id=user_id,
         byte_count=1,
         kind="staging",
@@ -3297,7 +3633,7 @@ def test_backup_and_restore_fsync_files_manifests_and_publication_directories(
     with pytest.raises(BackupError, match="publication is in flight"):
         create_backup(service.settings, blocked_destination)
     assert not blocked_destination.exists()
-    service._release_storage_reservation(user_id=user_id, reservation_id=reservation_id)
+    service._release_storage_reservation(user_id=user_id, reservation=reservation)
     destination = tmp_path / "fsync-backup"
     create_backup(service.settings, destination)
     assert directories.count(destination.parent.resolve()) >= 2

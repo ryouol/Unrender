@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy draft — Unrender</title><link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <header class="site-header"><a class="wordmark" href="/">Unrender</a><nav class="public-nav"><a href="/terms">Terms</a></nav></header>
+    <main class="legal-page">
+      <p class="eyebrow">Launch draft</p><h1>Privacy policy</h1>
+      <p class="legal-draft"><strong>Owner action required:</strong> add the legal operator name, jurisdiction, effective date, and a monitored privacy contact before public launch.</p>
+      <p>Unrender stores the account email, uploaded source, selected page and crop, extraction output, corrections, approval state, export events, model version, and operational records needed to provide and protect the service. Provider lifecycle logs use an opaque job identifier, timing, and safe error code; they are designed not to contain chart values, filenames, raw model output, cookies, API keys, or account identity.</p>
+      <h2>How files are used</h2>
+      <p>Files are used to run the requested chart extraction, display the source during review, generate exports, prevent abuse, and diagnose failures. In a Modal-backed deployment, the selected chart image is sent to the configured Modal inference worker. Each saved-replay visitor receives an isolated temporary sample workspace, and that fixture is not sent to an external model provider.</p>
+      <h2>Retention and deletion</h2>
+      <p>Prepared uploads expire after 24 hours. Completed extraction records and their source files are retained for 30 days by default, unless the operator changes the documented deployment setting. Deleting an extraction hides and removes its database result immediately, then durably queues its source for deletion; a temporary storage failure is retried and must be monitored by the operator. Minimal operational logs may retain the deletion event without retaining the chart contents.</p>
+      <h2>Payments</h2>
+      <p>The current build permits Stripe test-mode checkout only. Stripe processes test payment details. Unrender stores the billing event identifier and resulting credit ledger entry, not full card details. Any live payment design requires a separate legal and operational launch review.</p>
+      <h2>Security and rights</h2>
+      <p>Sessions use secure cookies in production. Tenant checks are enforced on every source, job, audit, and export request. Users may delete individual extractions in the product. Requests for account access or deletion require the privacy contact that the operator must supply before launch.</p>
+      <h2>Claims we do not make</h2>
+      <p>Unrender does not claim that extracted values are exact or independently verified. Approval records the user’s review decision; it is not a certification by the software operator.</p>
+    </main>
+  </body>
+</html>

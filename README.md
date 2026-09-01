@@ -1,306 +1,138 @@
 # Unrender
 
-**Recover the exact underlying data from a chart image.** Unrender is a
-specialized vision-language model (Qwen-VL + LoRA) fine-tuned to *un-render*
-charts — turning a bar/line/pie image back into the structured JSON and CSV it
-was drawn from.
+Unrender is a review-first workspace for turning chart images and PDF pages into structured data. It keeps the source beside an editable table, records every correction, and exports JSON, CSV, or XLSX. The XLSX audit sheet carries source, model, status, and approval metadata; JSON and CSV are data-only exports.
 
-**The bet:** frontier VLMs (GPT, Claude, Gemini) are surprisingly weak at
-reading *exact* values off charts — especially when the numbers aren't printed
-and must be measured against the axis scale. A small model trained on unlimited,
-perfectly-labeled synthetic charts can beat them at this one narrow task, at a
-fraction of the cost per chart. The win is a *narrow model + brutal eval + clean
-product*, not a bigger model.
+The product is designed for research and consulting teams that need chart data they can inspect and defend. It does **not** promise automatic accuracy: extraction results remain unverified until a person reviews and approves them.
 
-## Status
+## What is usable now
 
-- [x] **Phase 1 — Synthetic data engine** (built, runs on a MacBook)
-- [x] **Phase 2 — Eval harness + frontier baselines** (scorer + provider runners + comparison report)
-- [x] **Phase 3 — LoRA fine-tune + integrity audit** — the 4B LoRA (fair val/best-checkpoint protocol) scores **38.9% `cell@5_exact`** on the 300-chart hard held-out set vs **13.5%** for the pinned base — **+25.5pp, 95% CI [+22.7, +28.6]** — and **67% vs 31%** on real OWID charts. Pinned base control, leak-free split, and paired bootstrap all done. Receipts: [`RESULTS.md`](RESULTS.md).
-- [~] **Phase 4 — Deploy** — one-command inference works (`modal run modal_train.py::infer`); public Hugging Face weights + demo still to publish.
-- [ ] Phase 5 — Launch with reproducible receipts (weights, dataset, eval, demo)
+- Account-generation, cross-tab session revocation, CSRF, tenant, API-key, and rate-limit boundaries
+- Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
+- Persistent `queued → running → review → approved` jobs with fenced worker leases, bounded restart recovery, pre-dispatch refunds, capacity reservations, reference-aware source deletion, and a retryable deletion outbox
+- Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
+- Side-by-side source review, a bounded paged editor for maximum-size results, version history, and an audit trail
+- JSON, CSV, and XLSX exports; XLSX includes an audit sheet
+- A tenant-idempotent programmatic upload/status API with credit, bandwidth, outstanding-upload, and storage quotas
+- An isolated, ephemeral saved-sample workspace that runs without a GPU or external call
+- An existing Modal inference adapter for the evaluated Qwen3-VL LoRA
+- Optional Stripe **test-mode only** credit checkout with signed, idempotent webhooks
 
-> **Where the bet stands** (full numbers + caveats in [`RESULTS.md`](RESULTS.md)): fine-tuning
-> decisively beats the base model and transfers to real charts. Against frontier it is **at
-> parity with GPT-5.5** and **behind Claude and Gemini** on the hard synthetic set — so "narrow
-> model beats frontier" is **partly demonstrated** (vs GPT-5.5, and on real charts modulo a
-> contamination caveat), not yet a clean sweep. `synthetic_v2` (values to 1e9, real axis formats)
-> is built and staged for the next retrain but **not yet trained** — today's numbers are the
-> v0+v1 model.
+This repository is a production candidate, not a hosted production service. Launch blockers and owner actions are explicit in [`docs/LAUNCH_READINESS.md`](docs/LAUNCH_READINESS.md).
 
-## Results
+## Run the zero-cost demo
 
-Hard held-out set **common300** (`cell@5_exact` = ground-truth points recovered within 5%):
-
-| System | cell@5_exact |
-|---|---:|
-| pinned base Qwen3-VL-4B | 13.5% |
-| **table-LoRA (this project)** | **38.9%** |
-
-Fine-tuning beats the base by **+25.5pp** (95% CI [+22.7, +28.6], paired bootstrap, PASS), and
-drops invalid JSON from 9% to 0%. Paired against each frontier model on the charts both answered:
-**parity with GPT-5.5** (+1.2pp, N=63), behind **Claude-fable-5** (−5.8pp, N=86) and
-**Gemini-3.1-Pro** (−28.3pp, N=64).
-
-Real-world transfer (**real_v0**, 8 OWID line charts, all label-free, ground truth from the
-official CSVs): **table-LoRA 67% vs base 31%.** Gemini scores 100% here, but that is
-**memorization of famous public series, not chart-reading** — so the real-chart head-to-head is
-not valid until a contamination-resistant set exists. Every number is regenerated from saved
-predictions by `python analysis/scoreboard.py` → [`RESULTS.md`](RESULTS.md).
-
-## Use the model
-
-The fine-tuned weights live on a Modal Volume (`unrender-vol`), so inference runs serverless —
-**no local GPU needed.** Extract the data from one chart image in a single command:
+Python 3.11 is required.
 
 ```bash
-pip install modal && modal setup                         # once (Modal account + CLI)
-modal run modal_train.py::infer --image path/to/chart.png
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pip install --require-hashes -r requirements-build.lock
+python -m pip install --no-deps --no-build-isolation -e .
+cp .env.example .env
+unrender-serve
 ```
 
-It prints the strict-JSON `ChartData` and the CSV. Under the hood it loads the merged model on a
-GPU worker, runs the same greedy decode + JSON repair as the eval harness, and returns:
+Open `http://127.0.0.1:8000`, then choose **Open the reviewed sample**. Each sample visitor receives an isolated ephemeral tenant that can run only the bundled verification fixture and cannot create API keys, use billing, or upload arbitrary files. Replay performs no paid inference.
 
-```
-=== JSON ===
-{"chart_type": "line", "title": "Life expectancy",
- "x_axis": {"label": "Year", "unit": null},
- "y_axis": {"label": "Years", "unit": null},
- "series": [{"name": "USA", "points": [{"x": "2000", "y": 76.8}, {"x": "2001", "y": 76.9}, ...]}]}
-=== CSV ===
-Year,Years
-2000,76.8
-2001,76.9
-...
+The same demo runs in a container:
+
+```bash
+docker compose up --build
 ```
 
-- Defaults to the best model (`runs/qwen3vl4b-table-fair/merged`); pass `--model` to try another,
-  or `--model unsloth/Qwen3-VL-4B-Instruct --revision <sha>` for the base.
-- Pull the weights to run them yourself: `modal volume get unrender-vol runs/qwen3vl4b-table-fair`,
-  then load `.../merged` with `transformers` (`AutoModelForImageTextToText` — see
-  `unrender/eval/providers.py::hf_vlm_provider`).
-- **Publishing (optional, not done):** `modal_train.py::publish` pushes the merged model to the
-  Hugging Face Hub from the Volume (needs an `HF_TOKEN` Modal secret) so anyone can
-  `from_pretrained` it. Left unrun — the weights are private until you publish.
+## Configure real extraction
 
-## Pipeline
+The current production adapter calls the existing `modal_train.py::infer_one` deployment boundary. Set these values through your deployment secret manager:
 
-```
-PDF / chart image
-   │  (render PDF page → image; later: crop chart region)
-   ▼
-Fine-tuned Qwen-VL + LoRA      image → strict JSON
-   │
-   ▼
-JSON validator + 1 repair      pure Python, never an LLM (keeps the claim honest)
-   │
-   ▼
-CSV export  (+ optional redraw of the chart for a visual sanity check)
+```dotenv
+UNRENDER_ENV=production
+UNRENDER_BASE_URL=https://unrender.example.com
+UNRENDER_DATA_DIR=/data
+UNRENDER_EXTRACTOR=modal
+UNRENDER_WORKER_ENABLED=true
+UNRENDER_SEED_DEMO=false
+UNRENDER_ALLOW_REGISTRATION=false
+UNRENDER_MODAL_APP=unrender
+UNRENDER_MODAL_FUNCTION=infer_one
+UNRENDER_MODAL_MODEL=owner/approved-unrender-model
+UNRENDER_MODAL_REVISION=<full 40-character model commit>
+UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
+UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Everything except the model is plain Python that runs anywhere. Only the model
-needs a GPU, and only for training.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, resolves only the named Hub commit, copies it through descriptor-verified paths into a private read-only content address, verifies the complete snapshot digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
-## What's here now: the synthetic data engine
+## Product workflow
 
-The moat isn't the model — it's that we can generate **unlimited (image, exact
-JSON) pairs**. Each chart is rendered with matplotlib from a known spec, so the
-ground-truth label is exact by construction (the numbers printed on the chart
-are formatted *from* the label).
+1. Upload a chart image or PDF and choose the page/crop.
+2. Unrender reserves one chart credit and records a durable job.
+3. The worker renders the selected source and calls the configured extractor.
+4. The result enters review; it is never presented as verified automatically.
+5. Corrections create immutable result versions.
+6. Approval and exports are appended to the audit trail.
+7. A cancellation/failure before provider dispatch returns its reserved credit exactly once. Once provider dispatch is durably recorded, the attempt consumes the credit even if the provider fails or cancellation arrives later; this prevents unbounded free paid inference.
 
-| Module | Role |
+The saved fixture costs zero credits because it makes no provider call.
+
+## API
+
+Create an API key in the workspace, then submit a chart:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/extractions?page_index=0" \
+  -H "Authorization: Bearer $UNRENDER_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -F "file=@chart.png"
+```
+
+Every submission requires a tenant-scoped idempotency key. An exact retry inside the configured 720-hour default replay window returns the stored response without creating another job or reserving another credit; changed or expired keys return `409`. The expired response is compacted to a tombstone for another 365 days by default, after which the record may be removed, so clients must never recycle keys. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive schemas are intentionally disabled; the stable response, retention horizon, and error contracts are maintained in [`docs/API.md`](docs/API.md).
+
+## Verify a change
+
+```bash
+ruff check unrender/product unrender/schema/chart_schema.py tests/test_product.py
+mypy unrender/product
+pytest -q
+node --check unrender/product/static/app.js
+python scripts/check_release_licenses.py
+docker build -t unrender:local .
+```
+
+The product suite covers the complete saved-sample workflow, review/edit/approve/export behavior, visible/restorable result versions, tenant isolation, streamed-body and upload safety, tenant quotas, submission/refund idempotency, bounded restart recovery, API keys, and Stripe test events. The research/evaluation suite remains part of the default test run.
+
+## Model evidence, stated narrowly
+
+On the frozen 300-chart `common300` synthetic set, the current table LoRA scores 38.9% `cell@5_exact`, versus 13.5% for the pinned base model. It is at parity with the saved GPT-5.5 comparison on a small overlap and behind the saved Claude and Gemini comparisons. On eight public OWID charts it scores 67% versus 31% for the base, but that set has a contamination caveat and is too small for a launch claim.
+
+Those values are research evidence, not a product accuracy guarantee. Receipts and caveats live in [`RESULTS.md`](RESULTS.md), [`RESULT_TO_CLAIM.md`](RESULT_TO_CLAIM.md), and [`MODEL_STATUS_REVIEW.md`](MODEL_STATUS_REVIEW.md).
+
+The base Qwen/Unsloth model artifacts used by the research pipeline are published as Apache-2.0. The fine-tuned weights currently live on the owner's private Modal volume; publishing and independent license/provenance review remain owner gates.
+
+## Repository map
+
+| Path | Purpose |
 |---|---|
-| `unrender/prompts.py` | The one canonical extraction prompt (train = eval = inference) |
-| `unrender/schema/` | Pydantic `ChartData` schema, JSON validation + repair (fences, truncation, `"1.2B"`/`"1,200"`/`"12%"` number coercion), CSV export |
-| `unrender/data_gen/chart_specs.py` | Random-but-coherent chart specs (the ground truth) |
-| `unrender/data_gen/render.py` | matplotlib rendering for all 7 chart types |
-| `unrender/data_gen/augment.py` | Degradations (blur, JPEG, rescale, rotate, noise) for the synthetic→real gap |
-| `unrender/data_gen/generate.py` | Parallel dataset generation CLI |
-| `unrender/data_gen/split_dataset.py` | Train/val/test split in chat-SFT JSONL |
-| `unrender/eval/metrics.py` | The scorer: cell accuracy, exact-chart rate, label F1, … |
-| `unrender/eval/providers.py` | Model providers (OpenAI / Anthropic / Gemini / local HF + mock) |
-| `unrender/eval/run_baselines.py` | Run a model over the eval set → predictions (resumable, saves raw) |
-| `unrender/eval/score.py` · `report.py` | Score predictions → report; aggregate → comparison table |
-| `unrender/eval/paired_bootstrap.py` | Paired chart-level bootstrap (base-vs-LoRA gate: gap + 95% CI) |
-| `unrender/eval/ensemble.py` | Self-consistency vote over k sampled runs (no-retrain inference lever) |
+| `unrender/product/` | Product web app, service layer, persistence, storage, worker, and extractor boundary |
+| `unrender/schema/` | Strict chart data contract and exports |
+| `unrender/data_gen/` | Deterministic synthetic chart generation |
+| `unrender/eval/` | Providers, metrics, scoring, reports, and comparisons |
+| `unrender/train/` | LoRA training workflow |
+| `modal_train.py` | Modal generation, training, evaluation, and single-image inference functions |
+| `tests/test_product.py` | Product workflow, security-boundary, durability, and billing regression tests |
+| `docs/` | Product decision, architecture, operations, launch, legal, and security handoff |
 
-Chart types: `bar`, `horizontal_bar`, `grouped_bar`, `stacked_bar`, `line`,
-`multi_line`, `pie`.
+## Documentation
 
-**The key knob:** ~half the charts are rendered *without* value labels. When
-values aren't printed, the model must measure bar height / line position / pie
-angle against the axis scale — exactly the skill frontier models lack.
-
-## Quickstart
-
-```bash
-brew install python@3.11
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-pytest -q                                              # round-trip sanity checks
-
-# Generate data (start small to prove the loop, then scale to 50k+).
-python -m unrender.data_gen.generate --n 1000 --out data/synthetic
-python -m unrender.data_gen.split_dataset --out data/synthetic --val-size 100 --test-size 200
-```
-
-Output:
-
-```
-data/synthetic/
-  images/0000000.png ...        # the chart images
-  labels/0000000.json ...       # exact ground-truth ChartData JSON
-  manifest.jsonl                # {id, image, label, chart_type} per sample
-  train.jsonl / val.jsonl / test.jsonl   # chat-format SFT rows
-```
-
-Generation runs across all CPU cores (~hundreds of charts/sec on Apple Silicon)
-and is fully reproducible: sample `i` is always derived from `seed + i`, so you
-can grow the set with `--start-index` without regenerating earlier samples.
-
-## Output schema
-
-```jsonc
-{
-  "chart_type": "bar | horizontal_bar | grouped_bar | stacked_bar | line | multi_line | pie",
-  "title": "string or null",
-  "x_axis": {"label": "string or null", "unit": "string or null"},
-  "y_axis": {"label": "string or null", "unit": "string or null"},
-  "series": [
-    {"name": "string or null", "points": [{"x": "string or number", "y": 0.0}]}
-  ]
-}
-```
-
-## Eval harness (Phase 2)
-
-Get the "before" numbers **before** training. Inference and scoring are
-decoupled: each model run saves every raw response to a `predictions.jsonl`, and
-the scorer reads those files — so you re-score for free when you tweak a metric,
-and never re-pay an API. Runs are resumable (failed samples are retried, not
-frozen in).
-
-Frozen eval sets are committed (test/val splits + a byte-exact regen recipe per
-`data/*/README.md`), pre-registered so results can't be tuned after the fact: `data/synthetic_v0/`
-(tag `eval-v0`, easy) and `data/synthetic_v1/` (hard) — the headline runs on **common300**, a
-frozen, table-level-deduped, leak-free 300-chart subset of the v1 test set
-(`unrender/eval/subsets/common300.json`). `data/synthetic_v2/` (values to 1e9 + real-world axis
-formats/themes) is staged for the next retrain. A real-world set (`data/real_v0/`, OWID charts
-with official-CSV ground truth) closes the synthetic-only gap.
-
-```bash
-pip install -e ".[eval]"          # adds rapidfuzz + openai/anthropic/google-genai
-cp .env.example .env              # put your API keys here
-
-# 1. Sanity-check the whole pipeline with mock providers — no API, no cost:
-python -m unrender.eval.run_baselines --provider perfect --data data/synthetic_v0/test.jsonl
-python -m unrender.eval.score --predictions outputs/eval_reports/perfect__oracle/predictions.jsonl
-#   perfect -> 100% everything; try --provider noisy to see the metrics degrade.
-
-# 2. Frontier baselines — each lab's flagship at temp 0 (~$25 for all three, resumable).
-#    Pass --model to override when newer models ship.
-python -m unrender.eval.run_baselines --provider anthropic --model claude-fable-5  --data data/synthetic_v0/test.jsonl --limit 300
-python -m unrender.eval.run_baselines --provider openai    --model gpt-5.5         --data data/synthetic_v0/test.jsonl --limit 300
-python -m unrender.eval.run_baselines --provider gemini    --model gemini-3.1-pro  --data data/synthetic_v0/test.jsonl --limit 300
-
-# 3. Score each, build the sliced comparison, and dump the worst charts to stare at:
-python -m unrender.eval.score   --predictions outputs/eval_reports/anthropic__claude-fable-5/predictions.jsonl
-python -m unrender.eval.report  --reports outputs/eval_reports --out outputs/eval_reports/COMPARISON.md
-python -m unrender.eval.failures --predictions outputs/eval_reports/anthropic__claude-fable-5/predictions.jsonl --n 15
-```
-
-**Headline metric:** `cell_accuracy` — fraction of ground-truth data points
-recovered within 5% relative error. But the aggregate is nearly useless on its
-own; the **slice is the deliverable**. `report.py` splits cell accuracy
-**labeled vs label-free** (with the gap) and breaks label-free accuracy down
-**per chart type**. When values aren't printed on the chart, the model must read
-geometry against the axis scale — that label-free column is the wedge. The
-scorer aligns series by fuzzy name and points by fuzzy x-label (robust to
-ordering/label noise), and uses global best-match assignment so similar names
-can't steal each other's match.
-
-**The decision rule:** if label-free cell accuracy sits 15+ points below labeled
-(expected, especially on grouped/stacked/multi-line), the wedge is confirmed →
-proceed to a 2k-sample smoke train. If frontier models are strong even
-label-free, do **not** train yet — escalate the generator (truncated y-axes,
-dense multi-series, harder degradations) and re-baseline until the eval contains
-a gap worth attacking.
-
-The `hf` provider runs the base open model or your fine-tune on the GPU box; its
-predictions drop into the same scorer. The **real-world** test set (`data/real_v0/`: Our World in
-Data charts whose CSVs are downloadable, ground truth read from the official CSV — never
-pixel-estimated) is built, so the claim isn't "only on my own synthetic data."
-
-## Fine-tune (Phase 3)
-
-Iteration base is **Qwen3-VL-4B**, launch base **Qwen3-VL-8B** (same Unsloth
-path; the 2.5 family is skipped). LoRA fine-tune lives in
-`unrender/train/sft_lora.py` — it feeds the chat-format split rows straight to
-the trainer, so the prompt and JSON target match the eval harness exactly (no
-re-specifying the task). The vision tower is fine-tuned too, since reading
-label-free geometry is a visual skill, not just text generation.
-
-**On Modal (what we use):** `modal_train.py` wraps the whole pipeline — data gen
-onto a persistent Volume (exact pinned rendering stack, so the frozen recipes
-reproduce byte-for-byte), Unsloth LoRA training, and eval through the same
-harness as the frontier baselines. Per-second billing, nothing to terminate.
-
-```bash
-pip install modal && modal setup                  # once
-modal run modal_train.py::gen                      # v0+v1 data -> Volume (CPU, ~$0.3)
-modal run modal_train.py::check                    # preflight: data integrity + token budget + $ estimate
-modal run modal_train.py::smoke                    # 30-step train + tiny eval, exercises val/best-ckpt (~$0.5)
-# the fair-protocol LoRA that produced today's model (val + best-checkpoint on eval_loss):
-modal run --detach modal_train.py::train --train-files v1,v0 --val-files v1,v0 --out-name qwen3vl4b-table-fair
-modal run --detach modal_train.py::evaluate --model runs/qwen3vl4b-table-fair/merged --subset common300
-modal volume get unrender-vol outputs ./outputs/modal   # pull predictions/reports
-```
-
-The staged next run adds `synthetic_v2` and chains eval into one shot (crash-safe — re-running the
-same command resumes from the latest checkpoint):
-
-```bash
-modal run modal_train.py::gen_v2                   # synthetic_v2 -> Volume (or build locally + upload)
-UNRENDER_GPU=A100 modal run --detach modal_train.py::train \
-    --train-files v2,v1,v0 --val-files v2,v1,v0 --epochs 1.0 --out-name qwen3vl4b-v2 \
-    --eval-after real_v0,common300 --type-weights multi_line:2,stacked_bar:2,horizontal_bar:2
-```
-
-**Or on any rented GPU box** (RunPod/Vast, ~$5–25/run), from the repo root:
-
-```bash
-pip install -e ".[train]"             # CUDA-only deps (Unsloth/TRL/bitsandbytes)
-
-# images aren't committed — regenerate them byte-for-byte, then re-split:
-python -m unrender.data_gen.generate      --n 5000 --out data/synthetic_v1 --seed 5678 --hard
-python -m unrender.data_gen.split_dataset --out data/synthetic_v1
-
-# LoRA fine-tune (v0+v1 mixed; label-free oversampled 1.5x; best checkpoint on a val set):
-python -m unrender.train.sft_lora \
-    --train data/synthetic_v1/train.jsonl data/synthetic_v0/train.jsonl \
-    --val   data/synthetic_v1/val.jsonl   data/synthetic_v0/val.jsonl \
-    --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-table-fair
-#   --max-steps 30 first for a cheap smoke run; --base Qwen/Qwen3-VL-8B-Instruct for launch.
-
-# eval the merged model through the SAME scorer as the frontier baselines:
-python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-table-fair/merged \
-    --data data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
-python -m unrender.eval.score --predictions outputs/eval_v1/unrender-lora/predictions.jsonl
-```
-
-Then read `FAILURES.md`, generate charts targeting those failures, and repeat.
-The biggest remaining credibility gap is still external: add a real-world test
-set (see above) so "beats frontier" isn't only true on our own synthetic data.
-Then deploy (Phase 4).
-
-## Hardware
-
-A MacBook does ~80% of the work (data generation, eval scripts, the demo app,
-frontier-API benchmarking). GPUs are **rented** only for training runs
-(RTX 4090 ~$0.40/hr, A100 80GB ~$0.7–1.2/hr; a full run is $5–25). Total project
-budget is roughly $150–350 including failed runs and API eval costs.
+- [`docs/PRODUCT_DECISION.md`](docs/PRODUCT_DECISION.md) — buyer, problem, positioning, pricing assumptions, and kill criteria
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — trust boundaries and job lifecycle
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deploy, backup, restore, alerts, and incident steps
+- [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — controls, threats, and accepted limits
+- [`docs/LAUNCH_READINESS.md`](docs/LAUNCH_READINESS.md) — evidence-backed gate checklist and owner blockers
+- [`docs/REMEDIATION_EVIDENCE.md`](docs/REMEDIATION_EVIDENCE.md) — exact-review fixes, local gate results, and external release gates
+- [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md) — license/provenance inventory and counsel questions
+- [`docs/LAUNCH_PLAN.md`](docs/LAUNCH_PLAN.md) — 30-day distribution and measurement plan
 
 ## License
 
-Apache-2.0.
+The repository's own code is Apache-2.0; see [`LICENSE`](LICENSE). That does not determine the obligations of the combined product. The former PyMuPDF AGPL/commercial-license dependency has been removed from product code and locks; PDF handling now uses locked pypdfium2/PDFium, whose upstream permissive terms and shipped dependency notices are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The checked-in CycloneDX inventory and machine policy validate that replacement. This engineering gate is not legal approval: public/commercial release remains blocked until the owner and qualified counsel approve the entity, privacy/terms, retention, subprocessors, support/refund terms, and intended distribution model in [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md).

@@ -1,0 +1,342 @@
+# Security review
+
+Review date: 2026-09-01
+Scope: the FastAPI product surface in `unrender/product/`, its browser client, SQLite/storage boundary, packaging, container, and CI. Research/evaluation scripts were scanned for high-risk process, network, deserialization, and secret patterns but are not exposed by the product server.
+
+## Outcome
+
+No open Critical or High repository finding is known after remediation. The first independent review of immutable pre-remediation HEAD `007db52` found three High, multiple Medium, and two Low/documentation issues. A second exact-tree review of immutable HEAD `8733a00` found one High, three Medium, and two Low defense-in-depth issues. The review of `13375b5` found the concurrency/resource boundaries documented below. The latest exact-tree review of `f038311` found 2 High, 8 Medium, and 5 actionable Low issues; the current working tree maps and remediates every repository-controlled item below. A fresh independent review of the final committed tree remains required before merge. Two Low/Medium deployment risks remain explicit controlled-beta gates because they require the chosen edge, storage platform, or an external test environment.
+
+Evidence run locally:
+
+- `ruff check --select S unrender/product` — passed;
+- `pip-audit` over the runtime, development, and build locks with pip-audit 2.10.1 — no known vulnerabilities;
+- hash-locked runtime, development, and build toolchains; the plain wheel includes every dependency needed by its product CLIs;
+- current-tree and full-Git-history secret-pattern scans — zero matches for common live Stripe, GitHub, AWS, and private-key formats;
+- systematic searches for DOM HTML sinks, string-to-code execution, unsafe message/storage use, SQL construction, unsafe deserialization, shell execution, unrestricted CORS, and debug/docs exposure;
+- product lint, typing, JavaScript syntax, HTTP security regression tests, and the full repository test suite.
+
+The dependency result is a point-in-time advisory check, not proof that dependencies are vulnerability-free. The CI workflow repeats it on every pull request.
+
+## Fixed findings
+
+### 1. Unvalidated host and production API schema exposure
+
+- Rule ID: FASTAPI-CONFIG-001 / FASTAPI-DOCS-001
+- Severity: Medium
+- Location: `unrender/product/web.py:127-166`, `create_app`; `unrender/product/config.py:71-103`, `Settings.validate`
+- Evidence: the earlier app accepted any `Host` value and disabled Swagger UI in production while leaving the OpenAPI JSON endpoint enabled.
+- Impact: poisoned absolute URL generation or cache behavior at a permissive proxy, plus unnecessary production endpoint enumeration.
+- Fix: validate `UNRENDER_BASE_URL` as one origin, enforce `TrustedHostMiddleware`, and disable documentation/OpenAPI routes in every environment because the checked-in API contract is the supported source. Added hostile-host and unexpected-field HTTP tests.
+- Mitigation: the deployment edge must also preserve the intended host and TLS configuration.
+- False positive notes: a correctly configured edge could already reject hostile hosts, but that control was not visible in the repository.
+
+### 2. Checkout navigation trusted a provider-returned URL
+
+- Rule ID: JS-URL-001
+- Severity: Medium
+- Location: `unrender/product/web.py:109-124` and `:463-493`; `unrender/product/static/app.js:761-775`, `buyCredits`
+- Evidence: the earlier browser code assigned `session.url` directly to `window.location`.
+- Impact: an unexpected or compromised provider response could navigate a signed-in user to a phishing destination.
+- Fix: require HTTPS and the exact `checkout.stripe.com` hostname on the server and again before browser navigation. A regression test rejects an attacker origin.
+- Mitigation: Stripe remains test-mode-only and CSP remains strict.
+- False positive notes: the value is returned by Stripe rather than an end user, so exploitation requires a provider/integration failure; the redirect is still a security-sensitive sink.
+
+### 3. API keys had no product revocation path
+
+- Rule ID: FASTAPI-AUTHZ-001
+- Severity: Medium
+- Location: `unrender/product/service.py:818-869`; `unrender/product/web.py:451-461`; `unrender/product/static/app.js:689-759`
+- Evidence: keys were hashed and `revoked_at` existed in schema, but the product exposed creation only.
+- Impact: a leaked integration key could not be invalidated by its owner without direct database access.
+- Fix: add tenant-scoped list and idempotent revoke operations, audit revocations, reveal neither key hash nor secret, and test that a revoked key immediately receives HTTP 401.
+- Mitigation: full keys are still shown once and the UI directs users to a secret manager.
+- False positive notes: an operator could previously revoke a row manually, but that is not a reliable customer workflow.
+
+### 4. Spreadsheet exports accepted formula-bearing cells
+
+- Rule ID: EXPORT-FORMULA-001
+- Severity: High
+- Location: `unrender/product/service.py:744-802`, `ProductService.export`, `_safe_csv`, and `_xlsx`
+- Evidence: chart labels/categories and source names were written directly to CSV/XLSX cells. A chart supplied by another party could begin a cell with `=`, `+`, `-`, or `@` and be interpreted as a formula by spreadsheet software.
+- Impact: opening an exported workbook could execute spreadsheet formulas, potentially causing external requests, data disclosure, or unsafe command behavior in vulnerable spreadsheet configurations.
+- Fix: neutralize formula-bearing text in CSV and XLSX while preserving valid signed numeric cells; keep JSON exact. Regression tests load the workbook and assert the cells are strings rather than formulas.
+- Mitigation: users still review extracted rows before approval, and exports retain the original source for comparison.
+- False positive notes: numeric values such as `-9.2` remain numeric text; only non-numeric active prefixes are neutralized.
+
+### 5. Missing-user login returned before password KDF work
+
+- Rule ID: FASTAPI-AUTHN-001
+- Severity: Low
+- Location: `unrender/product/service.py:228-239`, `ProductService.authenticate`
+- Evidence: an unknown email skipped scrypt verification while a known email performed it.
+- Impact: repeated timing measurements could assist account enumeration.
+- Fix: verify against a process-local salted dummy hash when no user exists; error text remains identical.
+- Mitigation: login requests also pass through the application rate limiter; production needs edge abuse controls.
+- False positive notes: network variance makes the signal noisy, but eliminating the branch is inexpensive defense in depth.
+
+### 6. Middleware rejection responses missed the normal security headers
+
+- Rule ID: FASTAPI-HEADERS-001
+- Severity: Low
+- Location: `unrender/product/web.py:169-253`, `secure_response` and `request_guard`
+- Evidence: size, rate, and origin rejection paths returned before the response-header block.
+- Impact: error pages had a weaker browser policy than successful responses.
+- Fix: one response hardening function now covers both early rejection and normal responses. HSTS remains production-only and no longer asserts control of all subdomains.
+- Mitigation: the selected edge should set equivalent headers as defense in depth.
+- False positive notes: JSON error bodies do not render active HTML, which lowers practical impact.
+
+### 7. Dynamic same-origin paths were not component-encoded
+
+- Rule ID: JS-URL-002
+- Severity: Low
+- Location: `unrender/product/static/app.js:24`, `routeSegment`; route uses at `:273`, `:379`, `:408`, `:442`, `:459`, `:476`, `:652`, `:671`, and `:738`
+- Evidence: server-issued job/upload identifiers were interpolated directly into URL paths.
+- Impact: current IDs are generated UUIDs, so no exploit was present; future changes to identifier provenance could make path interpretation surprising.
+- Fix: encode each dynamic identifier before assigning a URL-bearing property.
+- Mitigation: server routing and tenant checks remain authoritative.
+- False positive notes: this was preventive hardening because current identifiers are trusted UUIDs.
+
+### 8. Production accepted public registration and a mutable model target
+
+- Rule ID: FASTAPI-CONFIG-002 / AI-SUPPLY-CHAIN-001
+- Severity: Medium
+- Location: `unrender/product/config.py:87-103`, `Settings.validate`; `unrender/product/admin.py:16-50`
+- Evidence: the earlier production checks required Modal and a non-empty revision, but still allowed open account registration, a local model path, and an arbitrary revision label.
+- Impact: a public deployment could create unapproved inference spend, while a mutable or local-only model target made the production artifact neither reproducible nor reliably deployable.
+- Fix: production now rejects public registration, accepts only an approved `owner/model` repository, and requires a full 40-character commit. A local operator command provisions invited accounts without placing passwords in process arguments and without starting a worker or recovering jobs.
+- Mitigation: real provider credentials, model/data rights, canary output, and spend approval remain external launch gates.
+- False positive notes: an operator could previously choose safe environment values manually, but repository configuration did not enforce those claims.
+
+### 9. Anonymous visitors shared one mutable demo tenant
+
+- Rule ID: FASTAPI-AUTHZ-002
+- Severity: High
+- Evidence: independent sessions resolved to the same seeded user, so one visitor could list another visitor's jobs/uploads and use normal key, billing, mutation, and deletion paths.
+- Impact: immediate cross-visitor disclosure and destructive access on a public demo.
+- Fix: create a distinct ephemeral `demo` user for every sample session; enforce the role server-side; permit only the exact hash-matched fixture; deny customer uploads, keys, and billing; remove the tenant and queue its files after its last session ends. Isolation and logout cleanup are regression-tested.
+
+### 10. Container readiness used a Host forbidden by production
+
+- Rule ID: CONTAINER-HEALTH-001
+- Severity: High
+- Evidence: production TrustedHost accepted only the public hostname while the old Docker probe sent `Host: 127.0.0.1`, guaranteeing an unhealthy container.
+- Impact: a correctly configured production instance could be restarted or removed from service continuously.
+- Fix: ship `unrender-healthcheck`, which probes loopback while sending the configured public Host, and make CI boot an actual production-configured non-root container until it reports healthy.
+
+### 11. Zero-credit API callers could persist unbounded files
+
+- Rule ID: FASTAPI-DOS-002
+- Severity: High
+- Evidence: the old v1 route stored an upload before credit reservation; a `402` removed only the job copy and left upload rows/files. The reviewer reproduced three surviving files from three zero-credit calls.
+- Impact: one invited or compromised account could fill the shared volume without spending a credit.
+- Fix: reject customer persistence when balance is zero; enforce tenant stored-byte, unattached-upload, and upload-bandwidth quotas; count job copies; and atomically persist upload, job, credit reservation, and API response. Regression tests prove a rejected zero-credit request leaves no row, idempotency record, or file.
+
+### 12. File deletion lost its retry record on storage failure
+
+- Rule ID: STORAGE-DELETE-001
+- Severity: Medium
+- Evidence: job/retention rows were committed away before `Storage.delete`; a simulated volume failure left an unowned source with no durable retry handle.
+- Impact: customer data could outlive deletion/retention promises indefinitely.
+- Fix: commit every removal to `pending_deletions`, retry failures with attempt/error state, reconcile product-owned orphan files at startup/hourly cleanup, and return `202 deletion_queued` when immediate removal fails. File-outage, retention, and crash-orphan tests cover the paths.
+
+### 13. Worker races, readiness, and crash replay violated credit/liveness invariants
+
+- Rule ID: JOB-LIFECYCLE-001
+- Severity: Medium
+- Evidence: delete could race reprocess after a stale status read; production could start without a worker; interrupted provider work could be replayed indefinitely.
+- Impact: a reserved credit could disappear with its job, readiness could lie, and repeated restarts could cause uncontrolled provider spend.
+- Fix: re-read/delete inside `BEGIN IMMEDIATE`; require the embedded worker in production and include thread plus writable-volume state in readiness; store `recovery_count`, bound restart recovery, and dead-letter/refund on exhaustion while preserving a prior reviewed result.
+
+### 14. Secrets and password hashes used weak host defaults
+
+- Rule ID: STORAGE-PERM-001 / PASSWORD-KDF-001
+- Severity: Medium
+- Evidence: SQLite/WAL/SHM could be created `0644`; source directories inherited `0755`; legacy password hashes used the lowest prior scrypt work factor.
+- Impact: other local users could read hashed credentials/customer data, and offline password guessing was cheaper than current guidance.
+- Fix: set umask `077`, directories `0700`, database/WAL/SHM/source files `0600`; encode scrypt parameters, use an OWASP-listed `N=2^14,r=8,p=5` profile, and transparently upgrade legacy hashes after a successful login. Modes and rehashing are tested.
+
+### 15. Public submissions were not idempotent
+
+- Rule ID: API-IDEMPOTENCY-001
+- Severity: Medium
+- Evidence: retrying the same multipart request after a response loss produced two job IDs and reserved two credits.
+- Impact: normal client retries could double-charge and double-spend provider capacity.
+- Fix: require a tenant-scoped `Idempotency-Key`, bind it to a canonical filename/page/content hash, persist the initial response in the same transaction as upload/job/credit reservation, replay exact retries, reject different input with `409`, expire old keys, and test rows/files/balance.
+
+### 16. Build, wheel, and provider artifacts were mutable or incomplete
+
+- Rule ID: PYTHON-SUPPLY-CHAIN-001 / AI-SUPPLY-CHAIN-002
+- Severity: Medium
+- Evidence: build isolation fetched mutable tooling; dev dependencies were unhashed; the plain wheel exposed CLIs without their runtime imports; the Modal app/function could drift despite a pinned model commit.
+- Impact: a clean build could differ or fail, and an unapproved provider deployment could serve production requests.
+- Fix: exact build requirements plus hashed runtime/dev/build locks, no-isolation builds, core product dependencies for plain-wheel CLIs, production container smoke, and a required 64-character provider-release handshake derived from the provider contract/dependency runtime. A real canary and external image provenance remain owner gates.
+
+### 17. Export and editor behavior could corrupt reviewed evidence
+
+- Rule ID: EXPORT-INTEGRITY-001 / JS-DATA-INTEGRITY-001
+- Severity: Medium
+- Evidence: XLSX numeric cells were strings; UI grouping collapsed duplicate/mixed-type x-values, converted numeric-looking strings, and turned null series names into labels; product copy implied JSON/CSV contained metadata they did not.
+- Impact: a saved or exported table could differ silently from the reviewed result.
+- Fix: write typed workbook numbers, use a multi-series long-form export that preserves duplicates, retain x types/null names/point order through the editor, test mixed/duplicate cases, and narrow copy: JSON/CSV are data-only while XLSX carries the audit sheet. Visible/restorable result history now makes versions inspectable.
+
+### 18. Public configuration, polling, and crop controls did not match production use
+
+- Rule ID: PRODUCT-STATE-001 / ACCESSIBILITY-INPUT-001
+- Severity: Medium
+- Evidence: production advertised registration that it always rejected; rapid polling shared an IP bucket and stopped on `429`; asynchronous refunds left displayed credits stale; cropping was pointer-only.
+- Impact: invited users hit a dead conversion path, active jobs appeared stuck, balances appeared wrong, and keyboard users could not complete multi-chart pages.
+- Fix: expose non-secret public registration/sample flags, hide disabled CTAs, give polling a dedicated allowance, refresh account state on transitions, reset delay on job switches, and provide validated keyboard percentage crop fields. The later exact review replaced raw-credential buckets with stable client-address and database-user buckets, as recorded below.
+
+### 19. Provider failures emitted no actionable telemetry
+
+- Rule ID: OBSERVABILITY-001
+- Severity: Medium
+- Evidence: normalized provider failures changed job state but emitted no `unrender.*` lifecycle record, so the documented provider alert could not be built.
+- Impact: an operator could miss a provider outage until customers reported it.
+- Fix: emit privacy-safe structured start/success/failure records with opaque job ID, provider/error code, and elapsed milliseconds; exclude source names, chart values, raw output, tenant identity, and credentials. Regression tests assert both required fields and absent private details.
+
+## Second exact-tree review remediations
+
+- **Attacker-selected rate principals (High):** the old limiter hashed a raw session cookie or bearer value before authentication, so an attacker could rotate arbitrary bytes and force repeated password KDF work plus unbounded buckets. Every non-liveness request now consumes an ASGI-client-address bucket; authenticated dependencies also consume a durable database-user bucket. Forwarded headers and raw credentials never select application buckets. Regression tests rotate Authorization, Cookie, and `X-Forwarded-For` values and still hit one pre-auth bucket.
+- **Unbounded result history (Medium):** retained versions now have a configured per-job count and per-tenant UTF-8 byte ceiling enforced in the same write transaction. Reprocessing checks available history capacity before reserving a credit/provider call. The list route returns at most 50 metadata rows with a cursor, and the browser fetches one chosen version body explicitly. Tests cover pagination, count/byte rejection, refund behavior, and no full bodies in list responses.
+- **Silent idempotency expiry (Medium):** API request records carry an explicit replay expiry. After expiry, the response is erased and the key returns `idempotency_key_expired` throughout a separately configured compact-tombstone horizon; old tombstones are then bounded by retention and a per-tenant record ceiling. The public contract states that clients must never recycle keys after that horizon. Regression tests prove no second job/charge during tombstone retention and eventual compaction.
+- **Mutable production model/release identity (Medium):** production accepts only an owner/model Hub repository, full commit, and digest of every resolved snapshot filename/size/byte. The production function is separated from the mutable research path, uses exact direct dependency pins, and returns a release digest over reviewed inference/schema source, prompt, measured runtime packages, and model identity. Startup and the adapter reject missing/mismatched values. A real Modal canary and immutable platform deployment record remain external gates.
+- **Outer rejection hardening and readiness abuse (Low):** security headers now wrap TrustedHost, body, and application rejection paths; hostile-Host tests confirm the body is not consumed. Readiness performs a disk probe but now consumes the stable client-address admission bucket and must remain private to the platform health network; liveness remains cheap and unmetered.
+
+## Third exact-tree remediation pass
+
+The exact review of commit `13375b5` found another set of release-blocking concurrency,
+resource, browser-isolation, and operating-contract issues. The following changes are
+implemented in this branch; the final committed SHA still requires the independent
+read-only review listed in `docs/LAUNCH_READINESS.md`.
+
+- **Worker ownership and restart safety (High):** claims now carry a unique owner,
+  unpredictable token, monotonic generation, heartbeat, and expiry. Every progress,
+  result-version, provider-dispatch/outcome, terminal, audit, and refund mutation checks
+  that identity and its live lease in the same transaction. Startup and periodic reapers
+  use expiry-only compare-and-swap recovery, serialize startup reconciliation, and
+  age/recheck orphan files. Adversarial tests cover fresh peer leases, two reapers, stale
+  terminal/refund paths, one new-owner terminal result, multi-instance startup, and a
+  provider call that outlives shutdown grace while its lease continues to heartbeat.
+- **Migration and snapshot atomicity (Medium):** migrations run under a dedicated
+  cross-process lock and one explicit exclusive transaction, resume the legacy partial
+  v4 rename shape, and are tested from full v1-v4 shapes plus a crash after every
+  mutating v4-to-v5 statement. Modal resolves the exact `infer_one` contract, normalizes
+  release digests case-insensitively, and offers a non-spending resolution check. Model
+  bytes are descriptor-opened without following directory or file links, verified before
+  and after reads, copied to a private content address, made read-only, and loaded only
+  from that immutable materialization.
+- **Browser and request resource isolation (Medium):** logout/account changes abort the
+  prior controller, increment an auth epoch, blank every private image/table/form/key
+  surface, revoke object URLs, and make delayed bodies, 401 handlers, dialog loaders,
+  control-finalizers, and an old logout unable to mutate a new account. ASGI body limits
+  count streamed chunks without retaining another body, uploads spool to bounded private
+  files, and upload/render, expensive-route, and password-KDF concurrency are separately
+  capped.
+- **Bounded tenant state and complete inventories (Medium):** sessions, keys, jobs,
+  uploads, audit detail/rollups, credit entries, idempotency records, and billing events
+  have retention/count/byte budgets with restart cleanup. Jobs, keys, and audit expose
+  stable cursor pages; active keys have a small cap and a revoke-all operation. Tests
+  exercise state pressure, cleanup, restart, and the formerly hidden 101st-key case.
+- **Spend, backups, and release controls (Medium/Low):** provider dispatch is durable;
+  pre-dispatch cancellation/failure refunds once, while post-dispatch ambiguity is
+  neither free nor automatically redriven. Per-user/global failure circuits stop later
+  spend. Backup holds the operational mutation lock across database and committed-file
+  capture; restore validates roots, hashes, active paths, integrity, and foreign keys.
+  PyMuPDF was removed and replaced with hash-locked pypdfium2/PDFium plus SBOM/policy
+  drift checks. Swagger/OpenAPI is not advertised, finite numbers fail closed, outer 500s
+  retain CSP/nosniff, imports are lazy, health is cheap, and live-mode test webhooks fail.
+
+## Fourth exact-tree remediation pass
+
+The exact review of commit `f038311` found two cross-principal/data-lifecycle High
+issues, eight resource/durability Medium issues, and five actionable browser/provider/
+operations Low issues. The complete one-to-one test map is recorded in
+`docs/REMEDIATION_EVIDENCE.md`; the security consequences are summarized here.
+
+- **Cross-tab principal isolation and global revocation (High/Low):** sessions now carry
+  an account generation and `/api/me` returns a one-way principal marker. Browser tabs
+  coordinate through BroadcastChannel, storage, focus, visibility, and pageshow; any
+  logout/account change synchronously aborts controllers and clears private blobs,
+  sources, results, audit, versions, credentials, forms, and timers. Auth and selection
+  epochs fence every delayed write, and a persisted logout barrier blocks a race that
+  could otherwise restore the old principal before server revocation commits. Sign out
+  invalidates all account sessions. Per-device inventory/notification remains outside
+  the controlled pilot rather than being implied as shipped.
+- **Reference-aware deletion and durable publication (High/Medium):** deleting a job
+  immediately denies its preview and, when it owns the last upload reference, removes
+  that upload row and queues both sources in the same transaction. Shared sources stay
+  live; storage failure leaves retryable outbox records. New source bytes, backup trees,
+  restore trees, manifests, and their namespaces are fsynced before database/publication
+  success, with crash checkpoints and restart reconciliation.
+- **Pre-spend capacity invariants (Medium):** paid browser submissions require durable
+  account/upload/page/crop idempotency. Initial/API/reprocess attempts reserve fenced
+  worst-case result bytes before credit/provider use. Cross-process storage admission
+  counts staging, copies, pending deletion, result expansion, database headroom, and
+  minimum free space. Central row admission preserves one ledger append per outstanding
+  refundable obligation plus every mandatory terminal, audit, and refund row, so normal
+  capacity pressure cannot strand money or lifecycle truth.
+- **Bounded transport/render/provider surfaces (Medium/Low):** correction transport
+  accepts the maximum valid result plus envelope and rejects the next byte. A paged
+  editor holds the 10,000-row contract with at most 500 mounted cells. One-time API-key
+  secrets clear on every exit path, each selection aborts stale async writes, and model
+  output is schema/product-validated before success logging; invalid output becomes
+  `model_output_invalid`.
+
+## Fifth exact-tree remediation pass
+
+The exact review of commit `ab13830` found one remaining cross-tab High, five
+transaction/browser Medium findings, and one actionable Low. This tree implements the
+one-to-one map in `docs/REMEDIATION_EVIDENCE.md`; the security consequences are:
+
+- **Durable logout quarantine and private response fencing (High/Medium/Low):** browser
+  coordination treats notifications only as wakeups and rereads the canonical record at
+  every lifecycle boundary. Unknown events never clear quarantine. Legacy logout records
+  migrate fail-closed even beside authenticated v2 tabs or unavailable persistence, while
+  v2 transitions wake live deployed-v1 tabs by channel only after the v2 barrier is durable.
+  Legacy storage is never mutated while an old cookie may still authorize: a terminal logout
+  or authoritative `401` persists that barrier for suspended/reloaded v1 tabs, and explicit
+  login retires it only after the new cookie exists. Thus even a dropped-detail storage task
+  delivered after every channel task can reconcile only to `401`. Failed or ambiguous global
+  sign-out stays visibly retryable, emits no unsafe storage wake, and is never labelled
+  successful. Export and one-time
+  API-key responses are principal, auth-record, selection/version, dialog, and abort
+  fenced before any DOM/blob side effect.
+- **Atomic no-spend/capacity and file-publication invariants (Medium):** free reprocess
+  admits every future row before changing durable state. Storage reservations have
+  renewable opaque owner tokens; final publication atomically consumes the exact live
+  lease, while deletion holds the cross-process operational fence through reference
+  check and file removal. Deterministic peer, expiry, token-loss, and exact-pressure tests
+  exclude row-without-file, orphan, overcommit, provider-spend, and stranded-terminal
+  outcomes.
+- **Browser charge convergence (Medium):** the browser's deterministic logical-operation
+  idempotency record survives ambiguous POST and post-success account/list/view failures,
+  and is removed only after the same principal observes and selects the accepted job.
+
+## Open deployment findings
+
+### 20. Hostile document scanning and edge timeouts are deployment controls
+
+- Rule ID: FASTAPI-DOS-001
+- Severity: Medium
+- Evidence: decoded pixels, PDF pages/passwords, supported magic, streamed/chunked body bytes, tenant storage, and upload bandwidth are bounded in the app. PDFs are parsed but not malware-scanned/content-disarmed, and socket/CPU timeouts depend on the chosen edge/runtime.
+- Impact: an invited attacker could submit a parser-hostile document or hold expensive connections within platform limits.
+- Fix: before external customer data, record edge body/timeouts, isolate parsing, fuzz hostile images/PDFs, and add malware/CDR scanning or explicitly reject PDFs for the first beta.
+- Mitigation: registration is closed in production; credits and per-tenant quotas constrain persistence; pypdfium2/PDFium and Pillow are hash-locked, PDFium native calls are serialized, and pixel/page/file limits fail closed.
+- False positive notes: some deployment platforms impose safe limits automatically; verify and record the exact runtime behavior.
+
+### 21. Application rate limiting remains single-node
+
+- Rule ID: FASTAPI-ABUSE-001
+- Severity: Low
+- Location: `unrender/product/web.py:189-224`; `unrender/product/service.py:1101-1119`, `rate_limit`
+- Evidence: all non-liveness traffic consumes a digest of the ASGI client address and authenticated routes additionally consume a digest of durable database user ID, but SQLite counters are not shared across replicas.
+- Impact: horizontal replicas would enforce inconsistent abuse limits; pre-auth IP attribution still depends on the trusted edge.
+- Fix: select a deployment platform, enforce per-IP/account limits at its trusted edge, and move shared limits to a managed store before horizontal scaling.
+- Mitigation: the documented controlled beta is one node; upload bytes and stored volume have separate tenant bounds.
+- False positive notes: direct deployments preserve client IP; trusted-proxy behavior is platform-specific and intentionally not guessed in app code.
+
+## External gates
+
+Container scanning, hostile-file fuzzing, penetration testing, platform TLS/proxy validation, encrypted-volume verification, backup restoration, and real Modal canarying cannot be proven from this repository alone. They remain blocked in `docs/LAUNCH_READINESS.md`; the product must not be represented as generally available until those gates and the legal/privacy gates are closed.

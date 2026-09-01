@@ -1,0 +1,18 @@
+services:
+  unrender:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      UNRENDER_ENV: development
+      UNRENDER_BASE_URL: http://127.0.0.1:8000
+      UNRENDER_EXTRACTOR: replay
+      UNRENDER_SEED_DEMO: "true"
+      UNRENDER_ALLOW_REGISTRATION: "true"
+      UNRENDER_WORKER_ENABLED: "true"
+    volumes:
+      - unrender-data:/data
+    restart: unless-stopped
+
+volumes:
+  unrender-data:

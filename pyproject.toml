@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools==83.0.0", "wheel==0.46.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "unrender"
-version = "0.1.0"
-description = "Un-render charts back into structured data. A specialized VLM for exact chart-to-JSON/CSV extraction."
+version = "0.2.0"
+description = "Review-first chart digitization with auditable JSON, CSV, and XLSX exports."
 readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "ryouol" }]
 
 # Core deps — everything needed to generate synthetic data, validate schemas,
@@ -19,7 +20,18 @@ dependencies = [
     "pillow>=10.0",
     "pydantic>=2.5",
     "tqdm>=4.66",
+    "fastapi>=0.116,<1",
+    "uvicorn[standard]>=0.35,<1",
+    "python-multipart>=0.0.20,<1",
+    "pypdfium2>=5.13,<6",
+    "openpyxl>=3.1,<4",
+    "stripe>=12,<14",
+    "modal>=1.5,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/ryouol/Unrender"
+Issues = "https://github.com/ryouol/Unrender/issues"
 
 [project.optional-dependencies]
 # Frontier-model benchmarking + fuzzy label matching for the scorer.
@@ -41,15 +53,24 @@ train = [
     "accelerate>=0.34",
     "datasets>=2.20",
 ]
-# Demo + API. pdf2image needs `brew install poppler`.
-app = [
-    "gradio>=4.0",
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
-    "pymupdf>=1.24",
-    "pdf2image>=1.17",
+# Compatibility extra retained for existing `unrender[app]` install commands;
+# product runtime dependencies are core because the wheel always ships its CLIs.
+app = []
+dev = [
+    "beautifulsoup4>=4.13,<5",
+    "pytest>=8.0,<10",
+    "pytest-timeout>=2.4,<3",
+    "httpx>=0.28,<1",
+    "rapidfuzz>=3.6,<4",
+    "ruff>=0.12,<1",
+    "mypy>=1.17,<2",
+    "pip-audit==2.10.1",
 ]
-dev = ["pytest>=8.0"]
+
+[project.scripts]
+unrender-serve = "unrender.product.cli:main"
+unrender-admin = "unrender.product.admin:main"
+unrender-healthcheck = "unrender.product.healthcheck:main"
 
 [tool.setuptools.packages.find]
 include = ["unrender*"]
@@ -61,6 +82,13 @@ include = ["unrender*"]
 # from an installed wheel too.
 [tool.setuptools.package-data]
 "unrender.eval" = ["subsets/*.json"]
+"unrender.product" = [
+    "static/*.html",
+    "static/*.css",
+    "static/*.js",
+    "static/demo/*",
+    "static/fonts/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -68,3 +96,20 @@ testpaths = ["tests"]
 # is a script, not part of the installed `unrender` package) import under a bare
 # `pytest` invocation, not only `python -m pytest` (which adds CWD implicitly).
 pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*", "openpyxl"]
+ignore_missing_imports = true

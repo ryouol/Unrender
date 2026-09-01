@@ -8,6 +8,7 @@ dist/
 .venv/
 venv/
 .env
+.unrender-data/
 
 # Generated data & model artifacts (large/regenerable). The small held-out eval
 # splits (test.jsonl, val.jsonl) + dataset README are committed deliberately to

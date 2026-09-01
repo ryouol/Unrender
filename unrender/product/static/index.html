@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Review chart extraction against its source, correct the table, and export an auditable result.">
+    <title>Unrender — reviewed chart data</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="site-header">
+      <button class="wordmark" id="home-button" type="button" aria-label="Unrender home">Unrender</button>
+      <div class="header-actions" id="account-bar" hidden>
+        <span class="credits" id="credit-count"></span>
+        <button class="button button-quiet" id="buy-credits-button" type="button" hidden>Buy credits</button>
+        <span class="account-email" id="account-email"></span>
+        <button class="button button-quiet" id="logout-button" type="button">Sign out everywhere</button>
+      </div>
+      <nav class="public-nav" id="public-nav" aria-label="Legal">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="marketing" id="marketing-view">
+        <div class="hero-copy">
+          <p class="eyebrow">Chart digitization with a review gate</p>
+          <h1>Turn a chart into a table you can defend.</h1>
+          <p class="lede">Upload an image or PDF. Check every extracted value beside the source. Correct it, approve it, and export the record.</p>
+          <div class="hero-actions">
+            <button class="button button-primary" id="open-sample-button" type="button" hidden>Open the reviewed sample</button>
+            <button class="button button-secondary" id="show-register-button" type="button">Sign in to a workspace</button>
+          </div>
+          <p class="evidence-note">The sample is a saved verification fixture. It exercises the real review and export workflow without using paid GPU inference.</p>
+        </div>
+        <figure class="source-example">
+          <img src="/static/demo/budget-quarter.webp" alt="Horizontal bar chart titled Budget by Quarter">
+          <figcaption>
+            <span>Source stays visible</span>
+            <span>Edits are versioned</span>
+            <span>XLSX includes model and approval metadata</span>
+          </figcaption>
+        </figure>
+        <section class="auth-panel" aria-labelledby="auth-title">
+          <div class="auth-tabs" role="tablist" aria-label="Account action">
+            <button id="login-tab" role="tab" aria-selected="true" aria-controls="login-form" type="button">Sign in</button>
+            <button id="register-tab" role="tab" aria-selected="false" aria-controls="register-form" type="button" hidden>Create account</button>
+          </div>
+          <h2 id="auth-title">Continue to your workspace</h2>
+          <form id="login-form">
+            <label>Email<input name="email" type="email" autocomplete="email" required></label>
+            <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+            <button class="button button-primary" type="submit">Sign in</button>
+          </form>
+          <form id="register-form" hidden>
+            <label>Email<input name="email" type="email" autocomplete="email" required></label>
+            <label>Password <span class="label-hint">12 characters minimum</span><input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+            <button class="button button-primary" type="submit">Create workspace</button>
+          </form>
+          <div id="logout-retry-panel" class="form-error" role="alert" hidden>
+            <p id="logout-status">Account-wide sign-out could not be confirmed.</p>
+            <button class="button button-secondary" id="retry-logout-button" type="button">Retry sign out everywhere</button>
+          </div>
+          <p class="form-error" id="auth-error" role="alert" hidden></p>
+        </section>
+      </section>
+
+      <section class="workspace" id="workspace-view" hidden>
+        <aside class="job-sidebar" aria-label="Extractions">
+          <div class="sidebar-heading">
+            <div>
+              <p class="eyebrow">Workspace</p>
+              <h2>Extractions</h2>
+            </div>
+            <button class="button button-primary" id="new-upload-button" type="button">Upload chart</button>
+          </div>
+          <div class="job-list" id="job-list"></div>
+          <div class="sidebar-footer">
+            <button class="text-button" id="create-key-button" type="button">Create API key</button>
+          </div>
+        </aside>
+
+        <section class="workspace-main" id="workspace-main">
+          <section class="empty-state" id="empty-view">
+            <p class="eyebrow">Start with one chart</p>
+            <h2>Keep the source and the table together.</h2>
+            <p>Choose an image or PDF page. Crop to one chart when needed. Extraction runs as a durable job and waits for your approval.</p>
+            <div class="empty-actions">
+              <button class="button button-primary" id="empty-upload-button" type="button">Upload a chart</button>
+              <button class="button button-secondary" id="run-sample-button" type="button">Run saved sample</button>
+            </div>
+          </section>
+
+          <section class="upload-flow" id="upload-view" hidden aria-labelledby="upload-title">
+            <div class="view-heading">
+              <div>
+                <p class="eyebrow">New extraction</p>
+                <h2 id="upload-title">Select the chart to extract</h2>
+              </div>
+              <button class="button button-quiet" id="cancel-upload-button" type="button">Close</button>
+            </div>
+            <label class="dropzone" id="dropzone">
+              <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
+              <strong>Choose an image or PDF</strong>
+              <span>PNG, JPEG, WebP, or PDF up to 20 MB</span>
+            </label>
+            <div class="upload-error" id="upload-error" role="alert" hidden></div>
+            <div class="page-review" id="page-review" hidden>
+              <div class="page-toolbar">
+                <div>
+                  <button class="button button-secondary" id="previous-page-button" type="button">Previous page</button>
+                  <span id="page-counter"></span>
+                  <button class="button button-secondary" id="next-page-button" type="button">Next page</button>
+                </div>
+                <button class="text-button" id="clear-crop-button" type="button">Use whole page</button>
+              </div>
+              <p class="crop-instruction">If the page contains several charts, drag over the one you want. The original file is still retained.</p>
+              <fieldset class="crop-fields">
+                <legend>Keyboard crop (percent of source)</legend>
+                <label>Left<input id="crop-left-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Top<input id="crop-top-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Width<input id="crop-width-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <label>Height<input id="crop-height-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <button class="button button-secondary" id="apply-crop-button" type="button">Apply crop</button>
+              </fieldset>
+              <div class="crop-stage" id="crop-stage">
+                <img id="upload-preview" alt="Selected upload page">
+                <div class="crop-selection" id="crop-selection" hidden></div>
+              </div>
+              <div class="flow-footer">
+                <p>One credit is reserved. It is returned only if the attempt stops before provider dispatch; a dispatched attempt consumes the credit.</p>
+                <button class="button button-primary" id="queue-job-button" type="button">Extract selected chart</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="job-view" id="job-view" hidden aria-labelledby="job-title">
+            <div class="job-commandbar">
+              <div>
+                <p class="eyebrow" id="job-status"></p>
+                <h2 id="job-title"></h2>
+                <p class="job-meta" id="job-meta"></p>
+              </div>
+              <div class="command-actions" id="job-actions"></div>
+            </div>
+            <div class="job-error" id="job-error" role="alert" hidden></div>
+            <div class="review-notice" id="review-notice" hidden>
+              This is extracted data, not verified data. Compare every row with the source before approval.
+            </div>
+            <div class="review-layout">
+              <section class="source-pane" aria-labelledby="source-heading">
+                <div class="pane-heading"><h3 id="source-heading">Source</h3><span id="source-page-label"></span></div>
+                <div class="source-canvas"><img id="job-source-image" alt="Source chart selected for extraction"></div>
+              </section>
+              <section class="result-pane" aria-labelledby="result-heading">
+                <div class="pane-heading"><h3 id="result-heading">Editable table</h3><span id="edit-state"></span></div>
+                <div class="result-loading" id="result-loading">Waiting for the extraction worker.</div>
+                <form id="result-form" hidden>
+                  <div class="metadata-grid">
+                    <label>Chart type<select id="chart-type-input"></select></label>
+                    <label>Title<input id="chart-title-input" type="text"></label>
+                    <label>Category axis<input id="x-label-input" type="text"></label>
+                    <label>Value axis<input id="y-label-input" type="text"></label>
+                    <label>Unit<input id="y-unit-input" type="text"></label>
+                  </div>
+                  <fieldset class="series-editor">
+                    <legend>Series names</legend>
+                    <div class="series-editor-list" id="series-editor-list"></div>
+                  </fieldset>
+                  <div class="table-scroll"><table class="data-table" id="result-table"></table></div>
+                  <div class="editor-pagination" aria-label="Result value pages">
+                    <button class="text-button" id="editor-previous-page" type="button">Previous values</button>
+                    <span id="editor-page-summary"></span>
+                    <button class="text-button" id="editor-next-page" type="button">Next values</button>
+                  </div>
+                  <div class="editor-actions">
+                    <button class="button button-secondary" id="add-row-button" type="button">Add row</button>
+                    <button class="button button-primary" type="submit">Save corrections</button>
+                  </div>
+                </form>
+              </section>
+            </div>
+            <section class="audit-panel" aria-labelledby="audit-heading">
+              <div class="pane-heading"><h3 id="audit-heading">History &amp; audit</h3><div class="history-actions"><button class="text-button" id="toggle-versions-button" type="button">Show versions</button><button class="text-button" id="toggle-audit-button" type="button">Show activity</button></div></div>
+              <ol id="version-list" hidden></ol>
+              <ol id="audit-list" hidden></ol>
+            </section>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="api-key-dialog" aria-labelledby="api-key-title">
+      <form method="dialog" class="dialog-content" id="api-key-form">
+        <div class="view-heading"><h2 id="api-key-title">Create API key</h2><button class="button button-quiet" id="close-key-dialog" type="button">Close</button></div>
+        <label>Name<input id="api-key-name" value="Production integration" maxlength="80" required></label>
+        <p class="dialog-note">The full key is shown once. Store it in a secret manager.</p>
+        <pre id="api-key-output" hidden></pre>
+        <div class="key-secret-actions">
+          <button class="button button-secondary" id="copy-key-button" type="button" hidden>Copy once</button>
+          <button class="button button-quiet" id="dismiss-key-button" type="button" hidden>Dismiss secret</button>
+        </div>
+        <button class="button button-primary" id="generate-key-button" type="submit">Generate key</button>
+        <div class="key-management">
+          <h3>Existing keys</h3>
+          <button class="text-button danger-text" id="revoke-all-keys-button" type="button">Revoke all active keys</button>
+          <ul class="key-list" id="api-key-list" aria-label="Existing API keys"></ul>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

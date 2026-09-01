@@ -5,8 +5,8 @@
 1. Build and scan the pinned container image.
 2. Provide a persistent, encrypted `/data` volume owned by UID/GID `10001`.
 3. Terminate TLS at the load balancer and set the exact public `UNRENDER_BASE_URL`.
-4. Set `UNRENDER_ENV=production`, `UNRENDER_EXTRACTOR=modal`, `UNRENDER_SEED_DEMO=false`, and normally `UNRENDER_ALLOW_REGISTRATION=false`.
-5. Mount Modal credentials and an immutable `UNRENDER_MODAL_REVISION` through the platform secret manager.
+4. Set `UNRENDER_ENV=production`, `UNRENDER_EXTRACTOR=modal`, `UNRENDER_SEED_DEMO=false`, and `UNRENDER_ALLOW_REGISTRATION=false`; production validation fails closed otherwise.
+5. Configure an approved model repository and its full 40-character commit as `UNRENDER_MODAL_MODEL` / `UNRENDER_MODAL_REVISION`; production rejects local/mutable paths. Mount provider credentials through the platform secret manager when the approved repository requires them.
 6. Leave Stripe variables empty unless running an approved test-mode checkout. Live secret keys are rejected by configuration.
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
@@ -14,6 +14,14 @@
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
 `/health/live` proves the process responds. `/health/ready` verifies the database schema and storage path. Neither calls the external inference provider.
+
+Provision controlled-beta accounts from a trusted one-off operator shell attached to the same encrypted `/data` volume. The password is prompted without echo and is never accepted as a command-line argument; the command does not start a worker or recover running jobs:
+
+```bash
+unrender-admin create-user analyst@example.com --credits 25
+```
+
+Do not expose this command through the web service or run it in a shared shell transcript.
 
 ## Logs and alerts
 

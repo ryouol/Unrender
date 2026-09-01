@@ -76,6 +76,7 @@ dev = [
 
 [project.scripts]
 unrender-serve = "unrender.product.cli:main"
+unrender-admin = "unrender.product.admin:main"
 
 [tool.setuptools.packages.find]
 include = ["unrender*"]

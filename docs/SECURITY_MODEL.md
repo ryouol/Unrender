@@ -22,6 +22,7 @@ Customer chart sources, extracted values, corrections, exports, identities, sess
 - CSV/XLSX formula neutralization while the JSON export preserves exact values;
 - SHA-locked Python dependencies, commit-pinned CI actions, and an immutable Python base-image digest;
 - no paid call in default replay/demo mode.
+- production startup fails closed when public registration, demo seeding/replay, HTTP origins, or an unpinned model is configured.
 
 ## Abuse cases considered
 

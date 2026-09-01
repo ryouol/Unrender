@@ -16,11 +16,11 @@ Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** need
 | Model benchmark claims | PASS WITH CAVEATS | Saved research receipts are linked; product copy does not convert them into an accuracy guarantee |
 | Dependency lock and package install | PASS | Fresh Python 3.11 environment installed `requirements-app.lock`, built/installed wheel `unrender-0.2.0`, and imported the app |
 | Container build | BLOCKED | Non-root Dockerfile, health check, and CI build are present; local verification was unavailable because the Docker daemon was stopped |
-| Automated regression suite | PASS | 81 tests passed, 1 optional Modal artifact test skipped locally; CI repeats suite |
+| Automated regression suite | PASS | 83 tests passed, 1 optional Modal artifact test skipped locally; CI repeats suite |
 | Visual QA | PASS | In-app browser exercised sample, correction, approval, dialog, desktop 1440×900 and mobile 390×844; evidence in `docs/screenshots/` |
 | Accessibility baseline | PASS WITH LIMITS | Semantic snapshot, labels, unique IDs, responsive overflow, focus styling, and AA color pairs checked; external keyboard/screen-reader audit remains an owner gate |
 | Repository security review | PASS WITH LIMITS | `docs/SECURITY_REVIEW.md`; no open critical/high finding and runtime lock has no known advisory; external penetration/container testing remains blocked |
-| Independent code review | IN PROGRESS | Required after implementation and before PR approval |
+| Independent code review | IN PROGRESS | Required after implementation and before PR approval; findings will be recorded on this branch |
 | Real inference canary | BLOCKED | Owner must provide/deploy Modal credentials, verify `infer-one`, pin immutable model revision, and approve provider spend |
 | Fine-tuned weight distribution rights | BLOCKED | Owner/counsel must review weights, training-data provenance, and publication terms |
 | Customer privacy/terms | BLOCKED | Drafts exist; owner identity, contact, processor list, jurisdiction, retention, and deletion SLA require counsel approval |

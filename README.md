@@ -51,11 +51,11 @@ UNRENDER_SEED_DEMO=false
 UNRENDER_ALLOW_REGISTRATION=false
 UNRENDER_MODAL_APP=unrender
 UNRENDER_MODAL_FUNCTION=infer-one
-UNRENDER_MODAL_MODEL=runs/qwen3vl4b-table-fair/merged
-UNRENDER_MODAL_REVISION=<immutable model revision>
+UNRENDER_MODAL_MODEL=owner/approved-unrender-model
+UNRENDER_MODAL_REVISION=<full 40-character model commit>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, and seeded demo accounts. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, local/mutable model paths, and non-commit revisions. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 

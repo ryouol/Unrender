@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from PIL import Image
 
+from unrender.product import admin
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import ReplayExtractor
@@ -87,6 +88,28 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             base_url="https://example.com",
             extractor_backend="modal",
             seed_demo_account=False,
+            allow_registration=False,
+            modal_model_path="approved/unrender-model",
+        ).validate()
+    with pytest.raises(ValueError, match="ALLOW_REGISTRATION"):
+        settings_for(
+            tmp_path,
+            environment="production",
+            base_url="https://example.com",
+            extractor_backend="modal",
+            seed_demo_account=False,
+            modal_model_path="approved/unrender-model",
+            modal_model_revision="0123456789abcdef0123456789abcdef01234567",
+        ).validate()
+    with pytest.raises(ValueError, match="MODEL must be"):
+        settings_for(
+            tmp_path,
+            environment="production",
+            base_url="https://example.com",
+            extractor_backend="modal",
+            seed_demo_account=False,
+            allow_registration=False,
+            modal_model_revision="0123456789abcdef0123456789abcdef01234567",
         ).validate()
     settings_for(
         tmp_path,
@@ -94,7 +117,9 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
         base_url="https://example.com",
         extractor_backend="modal",
         seed_demo_account=False,
-        modal_model_revision="0123456789abcdef",
+        allow_registration=False,
+        modal_model_path="approved/unrender-model",
+        modal_model_revision="0123456789abcdef0123456789abcdef01234567",
     ).validate()
     with pytest.raises(ValueError, match="test-mode"):
         settings_for(
@@ -115,6 +140,48 @@ def test_passwords_are_salted_and_verified() -> None:
     assert first != second
     assert verify_password("correct horse battery staple", first)
     assert not verify_password("wrong password", first)
+
+
+def test_operator_can_provision_when_public_registration_is_closed(tmp_path: Path) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+    with pytest.raises(ProductError, match="closed"):
+        service.register("blocked@example.com", "a sufficiently long password")
+    user_id = service.provision_user(
+        "invited@example.com", "an operator supplied password", credits=7
+    )
+    assert service.account(user_id)["credits"] == 7
+    with service.database.connect() as conn:
+        ledger = conn.execute(
+            "SELECT reason FROM credit_ledger WHERE user_id=?", (user_id,)
+        ).fetchone()
+    assert ledger["reason"] == "operator_grant"
+    session = service.authenticate("invited@example.com", "an operator supplied password")
+    assert service.session_user(session["session"])["id"] == user_id
+
+
+def test_admin_cli_prompts_for_password_and_creates_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "operator-data"
+    monkeypatch.setenv("UNRENDER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("UNRENDER_ENV", "test")
+    monkeypatch.setenv("UNRENDER_BASE_URL", "http://testserver")
+    monkeypatch.setenv("UNRENDER_SEED_DEMO", "false")
+    monkeypatch.setenv("UNRENDER_ALLOW_REGISTRATION", "false")
+    monkeypatch.setattr(
+        "sys.argv", ["unrender-admin", "create-user", "operator@example.com", "--credits", "4"]
+    )
+    passwords = iter(["an operator supplied password", "an operator supplied password"])
+    monkeypatch.setattr(admin.getpass, "getpass", lambda _: next(passwords))
+
+    admin.main()
+
+    assert capsys.readouterr().out.startswith("Created account ")
+    with Database(data_dir / "unrender.sqlite3").connect() as conn:
+        row = conn.execute(
+            "SELECT email, credit_balance FROM users WHERE email=?", ("operator@example.com",)
+        ).fetchone()
+    assert dict(row) == {"email": "operator@example.com", "credit_balance": 4}
 
 
 def test_storage_validates_magic_pdf_limits_and_crop(tmp_path: Path) -> None:

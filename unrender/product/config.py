@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
+
+_MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -87,8 +91,16 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
-            if not self.modal_model_revision:
-                raise ValueError("UNRENDER_MODAL_REVISION must pin the production model")
+            if self.allow_registration:
+                raise ValueError("UNRENDER_ALLOW_REGISTRATION must be false in production")
+            if not _MODEL_REPOSITORY.fullmatch(self.modal_model_path):
+                raise ValueError(
+                    "UNRENDER_MODAL_MODEL must be an immutable model repository in production"
+                )
+            if not _MODEL_COMMIT.fullmatch(self.modal_model_revision.casefold()):
+                raise ValueError(
+                    "UNRENDER_MODAL_REVISION must be a full 40-character commit in production"
+                )
         if self.max_upload_bytes <= 0 or self.max_pdf_pages <= 0:
             raise ValueError("Upload limits must be positive")
         if self.max_image_pixels <= 0 or self.rate_limit_per_minute <= 0:

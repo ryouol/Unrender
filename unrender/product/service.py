@@ -98,12 +98,13 @@ class ProductService:
         self.static_dir = static_dir
         self._dummy_password_hash = hash_password("unrender timing defense password")
 
-    def initialize(self) -> None:
+    def initialize(self, *, recover_jobs: bool = True) -> None:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.database.initialize()
         if self.settings.seed_demo_account:
             self._ensure_demo_user()
-        self.recover_interrupted_jobs()
+        if recover_jobs:
+            self.recover_interrupted_jobs()
 
     def _id(self) -> str:
         return str(uuid.uuid4())
@@ -161,7 +162,14 @@ class ProductService:
         )
         return balance
 
-    def _create_user(self, email: str, password: str, *, initial_credits: int) -> str:
+    def _create_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        initial_credits: int,
+        credit_reason: str = "welcome_allowance",
+    ) -> str:
         user_id = self._id()
         now = timestamp()
         try:
@@ -181,7 +189,7 @@ class ProductService:
                         conn,
                         user_id=user_id,
                         delta=initial_credits,
-                        reason="welcome_allowance",
+                        reason=credit_reason,
                         idempotency_key=f"welcome:{user_id}",
                     )
                 self._audit(conn, user_id=user_id, event_type="account_created")
@@ -194,6 +202,17 @@ class ProductService:
             raise ProductError("registration_closed", "Account registration is closed", 403)
         user_id = self._create_user(email, password, initial_credits=self.settings.initial_credits)
         return self.create_session(user_id)
+
+    def provision_user(self, email: str, password: str, *, credits: int = 0) -> str:
+        """Create a controlled-beta account from trusted operator tooling."""
+        if not 0 <= credits <= 1_000_000:
+            raise ProductError("invalid_credits", "Credits must be between 0 and 1,000,000", 422)
+        return self._create_user(
+            email,
+            password,
+            initial_credits=credits,
+            credit_reason="operator_grant",
+        )
 
     def _ensure_demo_user(self) -> str:
         with self.database.connect() as conn:

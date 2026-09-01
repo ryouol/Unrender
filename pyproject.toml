@@ -46,7 +46,7 @@ train = [
     "accelerate>=0.34",
     "datasets>=2.20",
 ]
-# Demo + API. pdf2image needs `brew install poppler`.
+# Product web app, PDF rendering, exports, test billing, and Modal inference client.
 app = [
     "fastapi>=0.116,<1",
     "uvicorn[standard]>=0.35,<1",

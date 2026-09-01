@@ -12,7 +12,7 @@ The research pipeline references Qwen3-VL model artifacts distributed through Qw
 
 ## Runtime libraries
 
-The application depends on Python, FastAPI/Starlette, Uvicorn, Pydantic, Pillow, PyMuPDF, OpenPyXL, Stripe's Python SDK, NumPy, Matplotlib, and related transitive packages. Exact resolved versions and hashes are in `requirements-app.lock`. Generate and archive an SBOM plus all required license texts for a public binary/container release.
+The application depends on Python, FastAPI/Starlette, Uvicorn, Pydantic, Pillow, PyMuPDF, OpenPyXL, the Modal and Stripe Python clients, NumPy, Matplotlib, and related transitive packages. Exact resolved versions and hashes are in `requirements-app.lock`. Generate and archive an SBOM plus all required license texts for a public binary/container release.
 
 ## External services
 

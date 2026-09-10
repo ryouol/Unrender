@@ -223,7 +223,7 @@ def test_production_modal_deployment_exports_exact_infer_one_contract():
         isinstance(decorator, ast.Call)
         and isinstance(decorator.func, ast.Attribute)
         and isinstance(decorator.func.value, ast.Name)
-        and decorator.func.value.id == "app"
+        and decorator.func.value.id == "production_app"
         and decorator.func.attr == "function"
         for decorator in function.decorator_list
     )
@@ -332,3 +332,60 @@ def test_load_records_type_weights(tmp_path):
         type_weights={"multi_line": 3.0},
     )
     assert len(recs) == 4  # multi_line x3 + bar x1
+
+
+def test_private_modal_release_is_content_verified(tmp_path, monkeypatch):
+    import modal_train
+
+    monkeypatch.setattr(modal_train, "INFER_V", str(tmp_path))
+    temporary = tmp_path / "releases" / "temporary"
+    temporary.mkdir(parents=True)
+    model = temporary / "config.json"
+    model.write_text('{"model_type":"qwen3_vl"}')
+    digest = modal_train._snapshot_digest(temporary)
+    model.chmod(0o400)
+    temporary.chmod(0o500)
+    target = temporary.rename(temporary.parent / digest)
+    try:
+        assert modal_train._production_model_snapshot(
+            "modal-volume/unrender-inference-cache", digest, digest
+        ) == str(target)
+        with pytest.raises(ValueError, match="matching digest"):
+            modal_train._production_model_snapshot(
+                "modal-volume/unrender-inference-cache", "a" * 64, digest
+            )
+        model = target / "config.json"
+        model.chmod(0o600)
+        model.write_text("tampered")
+        model.chmod(0o400)
+        with pytest.raises(ValueError, match="drifted"):
+            modal_train._production_model_snapshot(
+                "modal-volume/unrender-inference-cache", digest, digest
+            )
+    finally:
+        target.chmod(0o700)
+        (target / "config.json").chmod(0o600)
+
+
+def test_production_settings_require_exact_modal_release_digest(tmp_path):
+    from dataclasses import replace
+
+    from unrender.product.config import Settings
+
+    digest = "a" * 64
+    settings = Settings(
+        data_dir=tmp_path,
+        environment="production",
+        base_url="https://example.com",
+        extractor_backend="modal",
+        allow_registration=False,
+        seed_demo_account=False,
+        modal_model_path="modal-volume/unrender-inference-cache",
+        modal_model_revision=digest,
+        modal_model_digest=digest,
+        modal_provider_release="b" * 64,
+    )
+    settings.validate()
+    for revision in ["latest", "a" * 40, "c" * 64, "../escape"]:
+        with pytest.raises(ValueError, match="matching SHA-256"):
+            replace(settings, modal_model_revision=revision).validate()

@@ -53,6 +53,7 @@ from pathlib import Path
 import modal
 
 app = modal.App("unrender")
+production_app = modal.App("unrender-production")
 
 # Production inference is deliberately separate from the mutable research image.
 # This contract changes automatically when any reviewed provider/schema source
@@ -359,6 +360,12 @@ def _verify_materialization(snapshot: Path, expected_digest: str) -> None:
 def _production_model_snapshot(model_path: str, revision: str, expected_digest: str) -> str:
     """Materialize one verified Hub commit into a private read-only content address."""
 
+    if model_path == "modal-volume/unrender-inference-cache":
+        if not _DIGEST.fullmatch(expected_digest.casefold()) or revision != expected_digest:
+            raise ValueError("Modal releases require an exact SHA-256 revision and matching digest")
+        snapshot = Path(INFER_V) / "releases" / expected_digest
+        _verify_materialization(snapshot, expected_digest)
+        return str(snapshot)
     if not _MODEL_REPOSITORY.fullmatch(model_path):
         raise ValueError("Production inference requires an owner/model Hub repository")
     if not _MODEL_COMMIT.fullmatch(revision.casefold()):
@@ -756,14 +763,21 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     VOL.commit()
 
 
-@app.function(
+@production_app.function(
     image=infer_image,
     volumes={INFER_V: INFER_VOL},
-    secrets=[modal.Secret.from_name("hf-token")],
+    secrets=(
+        [modal.Secret.from_name(os.environ["UNRENDER_HF_SECRET"])]
+        if os.environ.get("UNRENDER_HF_SECRET")
+        else []
+    ),
     gpu=GPU,
     cpu=4.0,
     memory=32768,
-    timeout=1200,
+    timeout=240,
+    max_containers=1,
+    scaledown_window=2,
+    retries=0,
 )
 def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: str):
     """Production boundary: exact Hub commit + verified weights + source release."""

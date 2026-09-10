@@ -132,3 +132,30 @@ Local validation of this budget change: 14 focused storage/sample/account/public
 tests passed; JavaScript syntax, Ruff and diff whitespace checks passed. The
 production configuration validates with synthetic model/email placeholders.
 The focused tests do not establish live email or model inference.
+
+
+## Private Modal model release
+
+The trained `unrender-vol/runs/qwen3vl4b-table-fair/merged` source was fingerprinted
+in CPU-only run `ap-kr4LgnpeEtmGU22BM2zU6I`: 8,891,676,902 bytes, Qwen3VLForConditionalGeneration,
+manifest SHA-256 `3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
+This identifies bytes, not model quality or customer accuracy.
+
+Publish a private read-only copy with:
+`modal run scripts/publish_modal_release.py --digest <inspected-sha256>`.
+The copier rejects changed source bytes and commits the inference volume. Set
+`UNRENDER_MODAL_MODEL=modal-volume/unrender-inference-cache` and set both revision
+and model digest to the full inspected SHA-256. Every inference rechecks the
+read-only release contents before loading them. No Hub credential is required.
+
+Deploy exactly `modal deploy modal_train.py::production_app`; bare deployment
+selects the research app and is not the production deployment. Set
+`UNRENDER_MODAL_APP=unrender-production`. The production app exports only inference,
+limits GPU containers to one, disables retries, and scales idle compute down after
+two seconds. The 240-second function timeout bounds an individual invocation;
+these controls are not a dollar cap. Measure cold/warm behavior before launch.
+If using the alternative private Hub release, explicitly set `UNRENDER_HF_SECRET`
+to the name of an existing Modal secret containing the Hub credential at deploy time.
+
+The user's current budget is a $20 target with modest overages accepted. Keep
+one backend instance and bounded inference; leave shared-workspace caps untouched.

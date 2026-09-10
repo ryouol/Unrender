@@ -47,7 +47,7 @@ services:
       - key: UNRENDER_PROVIDER_TIMEOUT_SECONDS
         value: "240"
       - key: UNRENDER_MODAL_APP
-        value: unrender
+        value: unrender-production
       - key: UNRENDER_MODAL_FUNCTION
         value: infer_one
       - key: UNRENDER_MODAL_MODEL

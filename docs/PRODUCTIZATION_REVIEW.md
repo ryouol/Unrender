@@ -138,3 +138,23 @@ Follow-up validation: 188 passed / 1 skipped before the cancellation change;
 all 15 account tests including cancellation passed afterward. Formatting and
 lint match CI. The previous commit's CI failure was formatting-only and is fixed
 in this follow-up. These are local evidence, not live SMTP/provider verification.
+
+## Private Modal release review
+
+19. **Fixed P2 — publisher retry persistence** (`scripts/publish_modal_release.py:67`).
+    The volume commit now runs for both a new release and an already verified
+    target, so retrying after an ambiguous commit attempts persistence again.
+20. **Fixed P2 — default app identity mismatch** (`unrender/product/config.py:91`).
+    Defaults, environment example, README, and Render configuration now select
+    `unrender-production`. Deploy explicitly with
+    `modal deploy modal_train.py::production_app`; research remains separate.
+    Private Hub users must explicitly name their existing secret with
+    `UNRENDER_HF_SECRET` when deploying.
+
+The reviewer found no concrete bypass in the descriptor-checked copy, inspected
+SHA-256 comparison, read-only verification, and rename sequence. Focused tests
+reject mismatched revision/digest and tampered release contents.
+CPU-only publication completed successfully in Modal run
+`ap-RkfwH2s4N8OiiiNA2eezXZ`, returning `private_release_verified` for digest
+`3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
+This establishes a committed private artifact, not inference quality or latency.

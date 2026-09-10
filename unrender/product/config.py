@@ -88,7 +88,7 @@ class Settings:
     provider_failure_limit_global_hour: int = 50
     reconciliation_grace_seconds: int = 300
     provider_timeout_seconds: int = 240
-    modal_app_name: str = "unrender"
+    modal_app_name: str = "unrender-production"
     modal_function_name: str = "infer_one"
     modal_model_path: str = "runs/qwen3vl4b-table-fair/merged"
     modal_model_revision: str = ""
@@ -173,7 +173,15 @@ class Settings:
                 raise ValueError(
                     "UNRENDER_MODAL_MODEL must be an immutable model repository in production"
                 )
-            if not _MODEL_COMMIT.fullmatch(self.modal_model_revision.casefold()):
+            if self.modal_model_path == "modal-volume/unrender-inference-cache":
+                if (
+                    not _PROVIDER_RELEASE.fullmatch(self.modal_model_revision)
+                    or self.modal_model_revision != self.modal_model_digest
+                ):
+                    raise ValueError(
+                        "Modal volume releases require a matching SHA-256 revision and digest"
+                    )
+            elif not _MODEL_COMMIT.fullmatch(self.modal_model_revision.casefold()):
                 raise ValueError(
                     "UNRENDER_MODAL_REVISION must be a full 40-character commit in production"
                 )
@@ -372,7 +380,7 @@ class Settings:
             ),
             reconciliation_grace_seconds=_int("UNRENDER_RECONCILIATION_GRACE_SECONDS", 300),
             provider_timeout_seconds=_int("UNRENDER_PROVIDER_TIMEOUT_SECONDS", 240),
-            modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender"),
+            modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender-production"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer_one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),
             modal_model_revision=os.getenv("UNRENDER_MODAL_REVISION", "").casefold(),

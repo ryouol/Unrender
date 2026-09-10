@@ -2722,7 +2722,7 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
     )
     extractor = ModalExtractor(settings)
     assert extractor.canary_contract()
-    assert resolved == [("unrender", "infer_one")]
+    assert resolved == [("unrender-production", "infer_one")]
     assert hydrated == [True]
 
     response = {

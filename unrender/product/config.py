@@ -307,7 +307,11 @@ class Settings:
         settings = cls(
             data_dir=Path(raw_dir).expanduser().resolve(),
             environment=os.getenv("UNRENDER_ENV", "development").strip().lower(),
-            base_url=os.getenv("UNRENDER_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
+            base_url=(
+                os.getenv("UNRENDER_BASE_URL")
+                or os.getenv("RENDER_EXTERNAL_URL")
+                or "http://127.0.0.1:8000"
+            ).rstrip("/"),
             extractor_backend=os.getenv("UNRENDER_EXTRACTOR", "replay").strip().lower(),
             worker_enabled=_bool("UNRENDER_WORKER_ENABLED", True),
             max_recovery_attempts=_int("UNRENDER_MAX_RECOVERY_ATTEMPTS", 1),

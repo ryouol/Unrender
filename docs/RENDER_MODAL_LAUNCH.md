@@ -40,7 +40,7 @@ base URL must be the actual HTTPS origin; never use a guessed domain. Credential
 belong in Render/Modal secret management, never a commit, report, or Roy-OS note.
 Required values:
 
-- `UNRENDER_BASE_URL` (the real Render/custom origin)
+- Render supplies `RENDER_EXTERNAL_URL` automatically. Set `UNRENDER_BASE_URL` only to override it with a verified custom HTTPS origin.
 - `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
 - `UNRENDER_MODAL_MODEL`, revision, full snapshot digest, approved provider release
 

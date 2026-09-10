@@ -15,8 +15,7 @@ services:
     envVars:
       - key: UNRENDER_ENV
         value: production
-      - key: UNRENDER_BASE_URL
-        sync: false
+      # Uses Render-provided RENDER_EXTERNAL_URL; set UNRENDER_BASE_URL for a custom domain.
       - key: UNRENDER_DATA_DIR
         value: /data
       # Leave disk room for SQLite, temporary copies and free-space reserves.

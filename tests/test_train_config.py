@@ -389,3 +389,13 @@ def test_production_settings_require_exact_modal_release_digest(tmp_path):
     for revision in ["latest", "a" * 40, "c" * 64, "../escape"]:
         with pytest.raises(ValueError, match="matching SHA-256"):
             replace(settings, modal_model_revision=revision).validate()
+
+
+def test_render_origin_uses_platform_url_with_explicit_override(monkeypatch):
+    from unrender.product.config import Settings
+
+    monkeypatch.delenv("UNRENDER_BASE_URL", raising=False)
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://assigned-service.onrender.com/")
+    assert Settings.from_env().base_url == "https://assigned-service.onrender.com"
+    monkeypatch.setenv("UNRENDER_BASE_URL", "https://custom.example/")
+    assert Settings.from_env().base_url == "https://custom.example"

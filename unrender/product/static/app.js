@@ -636,6 +636,10 @@ function showPublic({ clearCsrf = true, clearSubmission = true } = {}) {
 }
 
 function applyPublicConfig() {
+  const config = state.publicConfig;
+  if (config.max_upload_bytes && config.max_image_pixels && config.max_pdf_pages) {
+    byId("upload-limits").textContent = `PNG, JPEG, WebP, or PDF up to ${config.max_upload_bytes / (1024 * 1024)} MB · Images up to ${config.max_image_pixels / 1000000} MP · PDFs up to ${config.max_pdf_pages} pages`;
+  }
   const registrationOpen = state.publicConfig.registration_open;
   byId("account-help-links").hidden = !state.publicConfig.email_available;
   byId("register-tab").hidden = !registrationOpen;

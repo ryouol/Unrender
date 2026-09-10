@@ -24,7 +24,7 @@ mail transport, not by delivering messages to real people.
 
 ## Deployable shape
 
-`render.yaml` declares one Docker web service, 2 GB memory, a 20 GB persistent disk
+`render.yaml` declares one Docker web service, 512 MB memory, a 1 GB persistent disk
 at `/data`, public production registration with verified email, a Modal provider,
 and a 300-second shutdown grace period. Automatic deployments are disabled until
 final review, backup and canary gates pass. The template has not been applied to
@@ -50,11 +50,17 @@ application as root to work around a mount error.
 
 1. Render authentication and the GitHub repository connection are confirmed in
    the in-app browser (workspace "My Workspace"). The creation form is prepared
-   with 2 GB compute, 20 GB private storage and manual deployments. Base cost is
-   US$30/month; activation awaits the budget answer and complete configuration.
+   for manual deployments. The user approved US$7.25/month on September 10:
+   Starter compute ($7) plus a 1 GB private disk ($0.25). The browser form was
+   last verified on Free without a disk and still needs updating before creation.
+   Activation awaits complete configuration and capacity verification.
 2. Authenticate Modal, locate/publish the exact approved trained model, verify
    complete snapshot and provider digests, deploy the real function and run owned
-   chart canaries. No configured Modal profile was available in this local run.
+   chart canaries. The `royluo05` CLI profile is authenticated; the workspace app list has no
+   UNRENDER deployment as of September 10. Read-only volume inspection found
+   `unrender-vol/runs/qwen3vl4b-table-fair/merged`, including two safetensors
+   shards (about 8.2 GiB total), tokenizer and processor files. File presence is
+   not a verified immutable release or a quality result.
 3. Verify email delivery and sender authentication with an authorized test inbox.
 4. Resolve trusted-proxy client-IP attribution. Docker does not get Render's
    Python-runtime environment defaults. Do not blindly trust arbitrary forwarded
@@ -89,5 +95,27 @@ restarts does not mean indefinite retention.
 Current preparation branch: `codex/render-modal-productization`, published in
 [draft PR #2](https://github.com/ryouol/Unrender/pull/2). No Render service has
 been activated. Use the isolated in-app Render tab: native Dia window targeting
-was unreliable. Modal CLI remains unauthenticated; email/domain choices and
+was unreliable. Modal CLI authentication is verified for `royluo05`; email/domain choices and
 production secrets remain outstanding.
+
+## Small-instance capacity gate
+
+The September 10 budget configuration limits each upload to 10 MiB, images to
+4 megapixels, global accounted storage to 500 MiB and per-user storage to 50 MiB, and both
+authentication and expensive-request concurrency to one each. The existing
+256 MiB minimum-free-space and 128 MiB database-headroom settings remain in force.
+The upload screen reads its limits from the server configuration.
+
+These limits are a starting configuration, not proof of 512 MB suitability.
+A Docker check with 512 MB RAM, no swap and half a CPU was started, but its
+process handle disappeared after a tooling reconnect and Docker became
+unavailable. No passing result was recovered. Repeat the constrained run with
+signup/signin, allowed-size images/PDFs, correction, exports and overlapping
+authentication, expensive HTTP requests and worker activity; verify peak memory and OOM status before activating this plan.
+Modal spending is authorized only within the available free credit. The earlier
+US$30/month proposal is superseded; do not activate it.
+
+Local validation of this budget change: 14 focused storage/sample/account/public-page
+tests passed; JavaScript syntax, Ruff and diff whitespace checks passed. The
+production configuration validates with synthetic model/email placeholders.
+These checks do not establish live email, model inference or memory capacity.

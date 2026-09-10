@@ -3,7 +3,7 @@ services:
   - type: web
     name: unrender
     runtime: docker
-    plan: 1c-2g
+    plan: starter
     numInstances: 1
     autoDeployTrigger: off
     healthCheckPath: /health/ready
@@ -11,7 +11,7 @@ services:
     disk:
       name: unrender-data
       mountPath: /data
-      sizeGB: 20
+      sizeGB: 1
     envVars:
       - key: UNRENDER_ENV
         value: production
@@ -19,6 +19,19 @@ services:
         sync: false
       - key: UNRENDER_DATA_DIR
         value: /data
+      # Leave disk room for SQLite, temporary copies and free-space reserves.
+      - key: UNRENDER_MAX_STORAGE_BYTES_GLOBAL
+        value: "524288000"
+      - key: UNRENDER_MAX_USER_STORAGE_BYTES
+        value: "52428800"
+      - key: UNRENDER_MAX_UPLOAD_BYTES
+        value: "10485760"
+      - key: UNRENDER_MAX_IMAGE_PIXELS
+        value: "4000000"
+      - key: UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS
+        value: "1"
+      - key: UNRENDER_MAX_CONCURRENT_EXPENSIVE_REQUESTS
+        value: "1"
       - key: UNRENDER_EXTRACTOR
         value: modal
       - key: UNRENDER_WORKER_ENABLED

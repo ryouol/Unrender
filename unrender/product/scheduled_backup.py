@@ -150,7 +150,8 @@ class ScheduledBackup:
         volume = modal.Volume.from_name(self.settings.backup_volume_name)
         status = upload_backup(self.settings, volume)
         completed = status["last_success"]
-        assert isinstance(completed, int)
+        if not isinstance(completed, int):
+            raise RuntimeError("Backup completion timestamp is invalid")
         self._last_success = completed
         temporary = self.status_path.with_suffix(".tmp")
         try:

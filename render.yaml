@@ -37,9 +37,9 @@ services:
       - key: UNRENDER_WORKER_ENABLED
         value: "true"
       - key: UNRENDER_ALLOW_REGISTRATION
-        value: "true"
+        value: "false"
       - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
-        value: "true"
+        value: "false"
       - key: UNRENDER_INITIAL_CREDITS
         value: "0"
       - key: UNRENDER_SEED_DEMO
@@ -61,16 +61,6 @@ services:
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET
-        sync: false
-      - key: UNRENDER_SMTP_HOST
-        sync: false
-      - key: UNRENDER_SMTP_PORT
-        value: "587"
-      - key: UNRENDER_SMTP_USERNAME
-        sync: false
-      - key: UNRENDER_SMTP_PASSWORD
-        sync: false
-      - key: UNRENDER_EMAIL_FROM
         sync: false
       - key: STRIPE_SECRET_KEY
         value: ""

@@ -5,7 +5,12 @@ Documents/Codex working checkout; the Desktop copy remains separate.
 
 ## Product behavior
 
-Public production signup is enabled only with TLS email delivery and zero welcome
+The current launch is invite-only: public registration and email verification are
+disabled in the Blueprint, per the user’s decision to defer email. Provision
+accounts through `unrender-admin create-user`; grant credits deliberately. Self-service
+email recovery is unavailable until SMTP is configured.
+
+When public signup is enabled later, it requires TLS email delivery and zero welcome
 credits. A customer creates an account, verifies their email with their signup
 password, signs in, and receives their persistent private workspace. The operator
 can grant credits with `unrender-admin grant-credits email --credits 25 --reference
@@ -25,7 +30,7 @@ mail transport, not by delivering messages to real people.
 ## Deployable shape
 
 `render.yaml` declares one Docker web service, 512 MB memory, a 1 GB persistent disk
-at `/data`, public production registration with verified email, a Modal provider,
+at `/data`, operator-provisioned accounts with public registration closed, a Modal provider,
 and a 300-second shutdown grace period. Automatic deployments are disabled until
 final review, backup and canary gates pass. The template has not been applied to
 Render and no recurring spend has been created.
@@ -38,8 +43,8 @@ Required values:
 - `UNRENDER_BASE_URL` (the real Render/custom origin)
 - `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
 - `UNRENDER_MODAL_MODEL`, revision, full snapshot digest, approved provider release
-- `UNRENDER_SMTP_HOST`, username, password, and `UNRENDER_EMAIL_FROM`
-- SMTP port 587 (STARTTLS) or 465 (TLS), using a verified sender domain
+
+SMTP credentials are deferred and are not required for the invited-account launch.
 
 The image has a non-root shell/home/.ssh directory for Render operator access.
 The platform still must verify persistent-disk ownership for UID/GID 10001.

@@ -3,21 +3,23 @@
 ## Deployment preflight
 
 1. Build and scan the pinned container image.
-2. Provide a persistent, encrypted `/data` volume owned by UID/GID `10001`.
-3. Terminate TLS at the load balancer and set the exact public `UNRENDER_BASE_URL`.
+2. Provide a persistent, encrypted volume at `/data`. On Render, set `UNRENDER_DATA_DIR=/data/unrender`; the app creates and owns this private 0700 subdirectory as UID 10001. The mount root and supplemental group are platform-managed.
+3. Terminate TLS at the load balancer. Render supplies the exact HTTPS origin through `RENDER_EXTERNAL_URL`; use `UNRENDER_BASE_URL` only for a verified custom origin.
 4. Set `UNRENDER_ENV=production`, `UNRENDER_EXTRACTOR=modal`, `UNRENDER_WORKER_ENABLED=true`, `UNRENDER_SEED_DEMO=false`, and `UNRENDER_ALLOW_REGISTRATION=false`; production validation fails closed otherwise.
-5. Configure an approved model repository, its full 40-character commit, the SHA-256 manifest of the complete resolved snapshot, and the canaried provider-release digest as `UNRENDER_MODAL_MODEL`, `UNRENDER_MODAL_REVISION`, `UNRENDER_MODAL_MODEL_DIGEST`, and `UNRENDER_MODAL_PROVIDER_RELEASE`. The exact deployment function name is `infer_one`. Production resolves only that Hub commit into the dedicated `unrender-inference-cache` volume (not the mutable research volume), descriptor-opens every path without following swapped directories/files, copies verified bytes into a private read-only content address, and rejects inference from a different reviewed-source/runtime release. Run `unrender-admin check-provider-contract` as a non-spending deployment-resolution canary, then record the immutable Modal deployment/image identity beside the real approved canary. The application handshake is a drift detector, not a substitute for platform attestation. Mount provider credentials through the platform secret manager.
+5. Pin the approved model bytes and canaried provider-release digest. The deployed private Modal volume release uses `UNRENDER_MODAL_MODEL=modal-volume/unrender-inference-cache` and the identical full SHA-256 for revision and model digest. The alternative Hub path requires a full 40-character commit plus the complete snapshot SHA-256. Both paths verify immutable release contents. Current pins and the explicit `modal_train.py::production_app` deployment command are in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md). Run `unrender-admin check-provider-contract` as a non-spending resolution canary, then verify real inference. The application handshake detects drift; it does not replace platform attestation. Store provider credentials in platform secret management.
 6. Leave Stripe variables empty unless running an approved test-mode checkout. Live secret keys are rejected by configuration.
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
 
-Set the platform termination grace beyond the configured provider deadline plus terminal-commit time. The Modal adapter uses `UNRENDER_PROVIDER_TIMEOUT_SECONDS` (default 240, allowed 1–240) for async lookup, dispatch and result retrieval. A timeout becomes a terminal `provider_timeout` failure with dispatched credit retained; remote execution may still continue, so no automatic redispatch is attempted. Verify cancellation and shutdown on the deployed SDK/network path. On shutdown the worker stops claiming immediately and readiness turns false; if a dispatched provider call exceeds `UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS`, the process logs the missed warning threshold but keeps heartbeating and waits for the fenced terminal commit. The platform must not send an earlier hard kill.
+Where supported, set termination grace beyond the configured provider deadline plus terminal-commit time. Render rejects custom grace for services with disks, so this topology cannot promise graceful completion of every in-flight call. Before planned deploys, close ingress, wait for queued/running jobs to reach terminal states, then deploy. Read-only status checks must use the configured data directory. Reopen ingress after readiness and persistence checks pass.
+
+The adapter's `UNRENDER_PROVIDER_TIMEOUT_SECONDS` (default 240, allowed 1–240) covers lookup, dispatch and retrieval. Timeout is terminal and retains dispatched spend; remote execution may continue and must not be automatically redispatched. On shutdown the worker stops claiming, readiness becomes false, and it waits for the fenced terminal commit. If the platform kills it first, expired-lease recovery must retain dispatched spend and stop that attempt. Verify this separately from a clean restart; never interpret the local wait timeout as a platform guarantee.
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
 `/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. The readiness route is covered by the client-IP admission bucket and should also be private to the platform health network; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider.
 
-Provision controlled-beta accounts from a trusted one-off operator shell attached to the same encrypted `/data` volume. The password is prompted without echo and is never accepted as a command-line argument; the command does not start a worker or recover running jobs:
+Provision controlled-beta accounts from a trusted shell on the running service with the configured data directory (Render one-off jobs do not mount the service disk). The password is prompted without echo and is never accepted as a command-line argument; the command does not start a worker or recover running jobs:
 
 ```bash
 unrender-admin create-user analyst@example.com --credits 25
@@ -47,11 +49,11 @@ Provider success/failure and latency can be derived from the structured lifecycl
 Use the coordinated admin command; do not combine an SQLite `.backup` with a later live `rsync`. The command takes an exclusive mutation lock, snapshots SQLite through its backup API, copies only committed upload/job objects, and writes a SHA-256 inventory before atomically publishing the recovery directory:
 
 ```bash
-UNRENDER_DATA_DIR=/data unrender-admin backup \
+unrender-admin backup \
   --destination /backup/unrender-2026-09-01T020000Z
 ```
 
-The destination must not exist and must be outside `/data`. If any upload/job/database mutation is active—or any durable staging, upload-publication, or job-copy reservation remains—backup refuses immediately; drain writes or reconcile the interrupted publication and retry. Success is reported only after captured files, manifest, temporary tree, final tree, and their parent namespaces have been fsynced. Encrypt backups, restrict access, copy the completed directory as one unit, and alert on recovery-set age. A platform volume snapshot is acceptable only when the same mutation lock/drain contract is demonstrated.
+The command uses `UNRENDER_DATA_DIR` from the service environment (`/data/unrender` on Render). The destination must not exist and must be outside that data directory; copy the completed recovery set off-host. If any upload/job/database mutation is active—or any durable staging, upload-publication, or job-copy reservation remains—backup refuses immediately; drain writes or reconcile the interrupted publication and retry. Success is reported only after captured files, manifest, temporary tree, final tree, and their parent namespaces have been fsynced. Encrypt backups, restrict access, copy the completed directory as one unit, and alert on recovery-set age. A platform volume snapshot is acceptable only when the same mutation lock/drain contract is demonstrated.
 
 Restore into a new absent data directory:
 
@@ -61,7 +63,7 @@ unrender-admin restore \
   --target /recovery/unrender-data
 ```
 
-Restore rejects symbolic/special paths, extra/missing files, hash or size drift, an existing/nested target, SQLite integrity errors, and foreign-key violations. It rewrites stored absolute source paths from the captured root to the new root, fsyncs every restored file and namespace, and atomically publishes the target. Confirm the restored tree is owned by UID/GID `10001` with `0600` files and `0700` directories, start the required worker with ingress closed, wait for `/health/ready`, and sample job sources/exports. Never restore only the database or only the files, edit the manifest, or weaken production validation for a drill.
+Restore rejects symbolic/special paths, extra/missing files, hash or size drift, an existing/nested target, SQLite integrity errors, and foreign-key violations. It rewrites stored absolute source paths from the captured root to the new root, fsyncs every restored file and namespace, and atomically publishes the target. Confirm the restored tree is owned by the runtime UID `10001` with `0600` files and `0700` directories (Render may assign its supplemental disk group), start the required worker with ingress closed, wait for `/health/ready`, and sample job sources/exports. Never restore only the database or only the files, edit the manifest, or weaken production validation for a drill.
 
 Target assumptions for beta: RPO 24 hours and RTO 4 hours. These are internal objectives, not a customer SLA.
 

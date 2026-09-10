@@ -7,7 +7,6 @@ services:
     numInstances: 1
     autoDeployTrigger: off
     healthCheckPath: /health/ready
-    maxShutdownDelaySeconds: 300
     disk:
       name: unrender-data
       mountPath: /data
@@ -17,7 +16,7 @@ services:
         value: production
       # Uses Render-provided RENDER_EXTERNAL_URL; set UNRENDER_BASE_URL for a custom domain.
       - key: UNRENDER_DATA_DIR
-        value: /data
+        value: /data/unrender
       # Leave disk room for SQLite, temporary copies and free-space reserves.
       - key: UNRENDER_MAX_STORAGE_BYTES_GLOBAL
         value: "524288000"

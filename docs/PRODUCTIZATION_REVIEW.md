@@ -115,18 +115,15 @@ code review is not deployment approval.
 
 Created Render project `UNRENDER` with a `Production` environment:
 https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
-No service has been deployed there. Wayline remains separate. No shared billing
+The service was subsequently deployed there; current status is in RENDER_MODAL_LAUNCH.md. Wayline remains separate. No shared billing
 settings were changed. Modal's September workspace billing summary showed $0
 billed and $3.04849077 metered before adjustments; this is shared-workspace
 history, not a project cap or forecast.
 
-The user's $20 maximum has not been enforceably configured. Render bills
-workspace bandwidth overages with a card on file. Modal's workspace spend cap
-would affect other projects; environment compute budgets require Team/Enterprise
-and omit storage. A combined project hard cap cannot be claimed from these
-controls. The requested monthly-versus-total interpretation is still pending.
-Real pinned model release, SMTP delivery, deployed proxy attribution, backup
-restore, and live end-to-end inference remain release gates.
+The earlier absolute $20 ceiling was superseded by the user's clarification:
+a $20 target with modest overages is acceptable. No combined provider-enforced
+project cap is claimed. Email delivery is deferred; real model canaries have
+passed. Deployment gates and current evidence are tracked in RENDER_MODAL_LAUNCH.md.
 
 18. **Fixed P2 — cancellation released admission while work continued**
     (`unrender/product/web.py:190`). A shielded task now owns the acquired slot
@@ -188,3 +185,51 @@ Render TLS, proxy attribution, disk ownership, or externally reachable productio
 Latest completed CI at b164f77 passed both verification and container builds.
 Modal billing reported $0.07880970 of UNRENDER app compute for the day at the
 observation time, before credits and excluding storage and reporting delay.
+
+## Hosted deployment findings
+
+23. **Fixed P1 — Render disk-root ownership** (`render.yaml:17`). The mounted
+    root is platform-owned, so chmod correctly failed under UID 10001. Configure
+    `/data/unrender` inside the persistent disk. The app owns that directory and
+    retains mode 0700; no permission checks or non-root execution were weakened.
+24. **Removed invalid deployment assumption; interruption gate remains open**
+    (`render.yaml:8`). Render rejects custom shutdown grace on disk-backed
+    services. Removed `maxShutdownDelaySeconds: 300`. Drain jobs before planned
+    deploys; verify forced termination preserves dispatched spend without
+    redispatch. An idle persistence test does not establish in-flight recovery.
+
+Render's Blueprint validator accepted the updated configuration. Live HTTPS
+readiness reports the Modal extractor and running worker. Non-root SSH and
+provider contract resolution from Render passed. Current details and remaining
+public-launch limits are in RENDER_MODAL_LAUNCH.md.
+
+25. **Fixed P2 — stale backup path** (`docs/OPERATIONS.md:50` at review). The
+    backup example now inherits the actual configured data directory rather than
+    overriding it with the platform mount root. Updated mount ownership guidance.
+26. **Fixed P2 — incompatible shutdown runbook** (`docs/OPERATIONS.md:14` at review).
+    Replaced the unsupported grace requirement with the Render disk limitation,
+    planned-drain procedure, and explicit forced-termination recovery gate.
+27. **Fixed P3 — inaccurate displayed-quota claim**
+    (`docs/RENDER_MODAL_LAUNCH.md:112` at review). Storage quotas are described as
+    server-enforced; only upload/image/PDF limits are described as UI-visible.
+
+28. **Fixed locally P1 — lease expires after worker startup**
+    (`unrender/product/worker.py:60`). A real Render restart left a dispatched job
+    running after its lease expired because recovery ran only during startup.
+    The worker now revisits transactional, fenced recovery between jobs at the
+    heartbeat cadence. Active leases stay untouched; expired dispatched attempts
+    retain spent credits and cannot automatically redispatch. A regression expires
+    the lease after the first new-worker poll and verifies terminal state, no
+    second provider call, and one charged attempt. Hosted re-verification follows
+    deployment. This cadence is not a strict deadline while another job runs.
+
+Hosted initial canary passed in 82.89 seconds with secure HttpOnly session cookie,
+upload, correction, approval, CSV/JSON/XLSX and audit sheet. Coordinated backup
+and isolated restore both retained the approved job and source; SQLite integrity
+checks passed. A private recovery archive was copied to the operator machine.
+This is one manual backup, not a scheduled backup service or recovery SLA.
+
+Focused follow-up reuse/breaking, quality/testing, and efficiency/context/size
+reviews found no additional issue in the periodic recovery change. Full local
+validation passed: 194 tests, 1 skipped; Ruff, mypy (15 product files), and
+Blueprint validation passed. Starlette's TestClient/httpx deprecation remains.

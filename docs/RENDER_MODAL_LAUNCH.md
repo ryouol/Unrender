@@ -1,161 +1,128 @@
 # Render + Modal launch
 
-This is the productionization workstream, not a completed deployment. Use the
-Documents/Codex working checkout; the Desktop copy remains separate.
+## Current deployment — September 10, 2026
 
-## Product behavior
+UNRENDER is deployed at https://unrender.onrender.com using the Documents/Codex
+working checkout and `codex/render-modal-productization` branch. The separate
+Desktop checkout is not the launch source. Draft PR #2 remains open:
+https://github.com/ryouol/Unrender/pull/2.
 
-The current launch is invite-only: public registration and email verification are
-disabled in the Blueprint, per the user’s decision to defer email. Provision
-accounts through `unrender-admin create-user`; grant credits deliberately. Self-service
-email recovery is unavailable until SMTP is configured.
+Render project `UNRENDER`, Production environment:
+https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 
-When public signup is enabled later, it requires TLS email delivery and zero welcome
-credits. A customer creates an account, verifies their email with their signup
-password, signs in, and receives their persistent private workspace. The operator
-can grant credits with `unrender-admin grant-credits email --credits 25 --reference
-pilot-001`. Repeating the same reference does not grant twice. Billing remains off.
+- Service: `srv-dahid9uq1p3s73dmjt1g`, Docker, Ohio, one 512 MB / half-CPU instance.
+- Disk: `dsk-dahid9uq1p3s73dmjts0`, 1 GB mounted at `/data`.
+- Application data: `/data/unrender`, private mode 0700, owned by UID 10001.
+- Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
+- Automatic deploys and PR previews are off. Failure notifications inherit the
+  workspace's failure-only setting. No other project's configuration changed.
+- Initial live code: `c5fae0782f75a9089158192ce42223e439973ce7`.
 
-Account recovery emails use 30-minute, hashed, single-use links; up to five
-outstanding links per purpose are allowed so failed/reordered resends do not
-invalidate already-delivered links. Completion invalidates sibling links. Reset
-revokes sessions and API keys while preserving charts, corrections and exports.
-Credential issuance is fenced against concurrent password resets. Existing v8
-accounts retain access after the additive v9 migration.
+Render owns the disk mount root. The first startup correctly refused to chmod
+`/data`; using the app-owned subdirectory fixed startup without running as root
+or weakening permissions. Render injects a supplemental disk group; directory
+privacy is enforced by owner-only mode, not by assuming GID 10001 on the mount.
 
-Local signup can be tested using `scripts/run_local.sh` (development replay only).
-Production email verification is exercised by integration tests with captured
-mail transport, not by delivering messages to real people.
+Render rejects custom shutdown grace periods on services with disks. Do not add
+`maxShutdownDelaySeconds: 300` to this topology: the API rejected that setting.
+Drain active jobs before planned restarts/deployments. The app's 240-second
+provider deadline does not establish a matching platform termination grace.
+An interrupted dispatched attempt must remain spent and must not automatically
+redispatch; verify recovery separately from a clean idle restart.
 
-## Deployable shape
+## Budget and access
 
-`render.yaml` declares one Docker web service, 512 MB memory, a 1 GB persistent disk
-at `/data`, operator-provisioned accounts with public registration closed, a Modal provider,
-and a 300-second shutdown grace period. Automatic deployments are disabled until
-final review, backup and canary gates pass. The template has not been applied to
-Render and no recurring spend has been created.
+The user's current budget is approximately US$20/month, with modest overages
+accepted. Keep Render and Modal. The earlier absolute ceiling is superseded.
+The fixed Render baseline is US$7/month compute plus US$0.25/month for the disk;
+Modal compute/storage and any Render usage overages are additional. This is not
+a provider-enforced dollar cap.
 
-Use Render's secret/environment fields for all `sync: false` values. The public
-base URL must be the actual HTTPS origin; never use a guessed domain. Credentials
-belong in Render/Modal secret management, never a commit, report, or Roy-OS note.
-Required values:
+Only invited accounts are enabled. Public registration, welcome credits, customer
+billing, and email delivery are off. Provision users using `unrender-admin
+create-user email --credits N`; the password is prompted, never a command-line
+argument. Grant credits deliberately using a unique reference:
+`unrender-admin grant-credits email --credits N --reference pilot-001`.
+Repeating the reference does not grant twice. Self-service account recovery is
+unavailable while email setup is deferred.
 
-- Render supplies `RENDER_EXTERNAL_URL` automatically. Set `UNRENDER_BASE_URL` only to override it with a verified custom HTTPS origin.
-- `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
-- `UNRENDER_MODAL_MODEL`, revision, full snapshot digest, approved provider release
+Modal's dedicated `unrender-production` app allows one L4 container, zero automatic
+retries, a 240-second function timeout, and a two-second idle scale-down window.
+Account credits constrain authorized inference attempts. These controls reduce
+runaway usage but do not cap all shared-workspace billing. Leave shared caps
+untouched because other projects use the same accounts.
 
-SMTP credentials are deferred and are not required for the invited-account launch.
+## Model release and evidence
 
-The image has a non-root shell/home/.ssh directory for Render operator access.
-The platform still must verify persistent-disk ownership for UID/GID 10001.
-Provision disk ownership through supported platform tooling; do not run the
-application as root to work around a mount error.
+The actual post-trained source is
+`unrender-vol/runs/qwen3vl4b-table-fair/merged`, Qwen3VLForConditionalGeneration,
+8,891,676,902 bytes. CPU inspection and publication verified this SHA-256:
+`3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
 
-## Required external checks before release
+The private release is stored in `unrender-inference-cache/releases/<digest>`.
+`UNRENDER_MODAL_MODEL=modal-volume/unrender-inference-cache`; revision and model
+digest both equal the full SHA-256. Each invocation verifies the read-only
+snapshot contents. No Hugging Face credential or public model upload is needed.
 
-1. Render authentication and the GitHub repository connection are confirmed in
-   the in-app browser (workspace "My Workspace"). The creation form is prepared
-   for manual deployments. The user approved US$7.25/month on September 10:
-   Starter compute ($7) plus a 1 GB private disk ($0.25). The browser form was
-   last verified on Free without a disk and still needs updating before creation.
-   Activation awaits complete configuration and capacity verification.
-2. Authenticate Modal, locate/publish the exact approved trained model, verify
-   complete snapshot and provider digests, deploy the real function and run owned
-   chart canaries. The `royluo05` CLI profile is authenticated; the workspace app list has no
-   UNRENDER deployment as of September 10. Read-only volume inspection found
-   `unrender-vol/runs/qwen3vl4b-table-fair/merged`, including two safetensors
-   shards (about 8.2 GiB total), tokenizer and processor files. File presence is
-   not a verified immutable release or a quality result.
-3. Verify email delivery and sender authentication with an authorized test inbox.
-4. Resolve trusted-proxy client-IP attribution. Docker does not get Render's
-   Python-runtime environment defaults. Do not blindly trust arbitrary forwarded
-   headers: verify the Render edge's header rewriting and direct-ingress boundary,
-   then configure/test the trusted proxies so separate users do not share one
-   authentication bucket and spoofed headers cannot bypass limits.
-5. Verify provider shutdown on the deployed SDK/network path. The app now uses
-   a 240-second async deadline covering lookup, queueing and result retrieval,
-   inside Render’s 300-second shutdown grace. Local regressions cover timeout,
-   worker drain, retained spend and no redispatch. Cancellation of the local await
-   does not prove remote GPU cancellation: record real queued/running behavior
-   and confirm the terminal database commit before a deployment terminates it.
-6. Validate the Blueprint with Render; build/scan and deploy the reviewed image.
-   Verify health routes, private volume, signup/signin, reload/restart persistence,
-   reset revocation, real inference, review, approval and all exports.
-7. Schedule coordinated off-host backups and test restore from the selected
-   backup service. A Render disk snapshot alone is not the app's coordinated
-   database/file backup contract. Test alert delivery and outage/quota behavior.
-8. Supply reviewed operator/support/privacy/terms and model/data rights decisions.
-9. Run intended-input quality and correction-time evaluation before launch claims.
+Production app: https://modal.com/apps/royluo05/main/deployed/unrender-production
 
-Sources: https://render.com/docs/blueprint-spec,
-https://render.com/docs/environment-variables, https://render.com/docs/ssh.
+Deploy explicitly with `modal deploy modal_train.py::production_app`; the bare
+module selects the separate research app. Approved provider release:
+`9435fb6f0b24068f7006401fd44d49e3a925330267dfb2302156eb677104b08d`.
+All release pins are in `render.yaml`. The dedicated Modal API token is stored
+in Render's private environment. Never copy credentials into git, reports, or
+Roy-OS. Render supplies the HTTPS origin through `RENDER_EXTERNAL_URL`.
 
-## Scope still pending
+Direct real inference took 91.29 seconds on the first observed call and 51.84
+seconds on an immediate repeat. A local production-configured HTTP workflow with
+real Modal inference completed in 48.26 seconds and passed correction, approval,
+CSV/JSON/XLSX export, audit-sheet presence, and restart persistence. That local
+TestClient evidence does not prove Render behavior. Hosted extraction completed in 82.89 seconds and passed sign-in, secure session
+cookies, upload, correction, approval, all three exports, and re-login. Evidence
+is recorded separately under `outputs/local-verification/render-live/`.
 
-Real Render and Modal deployment, SMTP provisioning, published legal/operator
-content, provider evaluation, complete deployment regression, final review after
-remaining changes, remain work; draft PR #2 is open. Source magnification, zero-credit onboarding, and a retention notice are implemented locally; final responsive verification remains in this workstream. Existing default chart retention is 30 days; persistence across
-restarts does not mean indefinite retention.
+These are operational canaries on one low-resolution owned chart, not customer
+accuracy benchmarks. Numerical values require correction; for example the model
+returned 9.0 for Q1 2017 while the saved reference is 9.8. Preserve the review-first
+promise. The historical 34.8% hard-set cell accuracy is not a current customer
+benchmark. Tokenizer/truncation warnings remain recorded for model review;
+preprocessing was not silently changed during deployment.
 
-Current preparation branch: `codex/render-modal-productization`, published in
-[draft PR #2](https://github.com/ryouol/Unrender/pull/2). No Render service has
-been activated. Use the isolated in-app Render tab: native Dia window targeting
-was unreliable. Modal CLI authentication is verified for `royluo05`; Gmail was selected as the sender on September 10. The Google app password and
-production model secrets remain outstanding; do not put credentials in this file.
+## Verification and remaining launch work
 
-## Small-instance capacity gate
+- The pinned container built successfully on Render. Local constrained capacity
+  testing used 512 MB, no swap, and half a CPU; peak cgroup memory was 222.7 MiB.
+  That harness used replay and is not a hosted concurrency benchmark.
+- Read-only Modal contract resolution from Render and non-root SSH access passed.
+- The Render Blueprint validates after removing the unsupported shutdown setting
+  and using the app-owned data subdirectory.
+- Hosted authentication/inference/exports passed. Coordinated backup and isolated
+  restore retained the approved job and source, with SQLite integrity checks; a
+  private recovery archive was copied off-host to the operator machine. These
+  are manual checks, not scheduled recovery coverage.
+- The first in-flight restart test exposed a post-startup lease-recovery gap.
+  A worker fix and regression now recover leases expiring after startup without
+  refunding or redispatching a charged attempt; hosted retest is pending.
+- Trusted proxy client-IP attribution remains open: live access logs show Render
+  private proxy addresses. Do not blindly trust forwarded headers. Verify header
+  rewriting and the private/direct ingress boundary before public signup.
+- Configure scheduled coordinated off-host backups and alert delivery. A disk
+  snapshot alone does not meet the app's database/file consistency contract.
+- Complete the base-image advisory assessment's deployment assumptions, provider
+  interruption tests, and intended-input numerical/correction-time evaluation.
+- Public legal/operator/support details still need completion before a broad
+  customer launch. Email setup is explicitly deferred, not silently considered
+  tested. This is an invited pilot deployment, not a claim that all release gates
+  are complete.
 
-The September 10 budget configuration limits each upload to 10 MiB, images to
-4 megapixels, global accounted storage to 500 MiB and per-user storage to 50 MiB, and both
-authentication and expensive-request concurrency to one each. The existing
-256 MiB minimum-free-space and 128 MiB database-headroom settings remain in force.
-The upload screen reads its limits from the server configuration.
+The UI advertises 10 MiB uploads, 4 MP images, and the PDF page limit. The server
+also enforces 50 MiB per-user storage and 500 MiB accounted global storage. Authentication and expensive-request
+concurrency are each one. Default chart retention is 30 days; restart persistence
+does not mean indefinite retention. Local testing at http://127.0.0.1:8000 uses
+`scripts/run_local.sh` and the saved replay fixture, separately from production.
 
-A constrained Docker run completed on September 10 with 512 MiB RAM, no swap
-and half a CPU: three rounds of concurrent sign-in, 4 MP image/2200-edge PDF
-rendering and replay worker processing, followed by correction, three export
-formats and database reopen. It took 28.37 seconds, with 218.1 MiB peak process
-RSS and 233,549,824 bytes (222.7 MiB) peak cgroup memory. Exit code was zero and
-OOMKilled was false. The harness is retained locally at
-`outputs/local-verification/budget-capacity.py`.
-
-This used the existing runtime image with current source mounted read-only.
-It called service methods in threads; it did not run the HTTP listener, real
-Modal inference or Gmail delivery. The inherited container healthcheck timed
-out because the harness replaced the server command. This is a bounded capacity
-smoke check, not an HTTP load test or proof of production readiness. Verify the
-actual server and real provider under the same limit before launch.
-Modal spending is authorized only within the available free credit. The earlier
-US$30/month proposal is superseded; do not activate it.
-
-Local validation of this budget change: 14 focused storage/sample/account/public-page
-tests passed; JavaScript syntax, Ruff and diff whitespace checks passed. The
-production configuration validates with synthetic model/email placeholders.
-The focused tests do not establish live email or model inference.
-
-
-## Private Modal model release
-
-The trained `unrender-vol/runs/qwen3vl4b-table-fair/merged` source was fingerprinted
-in CPU-only run `ap-kr4LgnpeEtmGU22BM2zU6I`: 8,891,676,902 bytes, Qwen3VLForConditionalGeneration,
-manifest SHA-256 `3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
-This identifies bytes, not model quality or customer accuracy.
-
-Publish a private read-only copy with:
-`modal run scripts/publish_modal_release.py --digest <inspected-sha256>`.
-The copier rejects changed source bytes and commits the inference volume. Set
-`UNRENDER_MODAL_MODEL=modal-volume/unrender-inference-cache` and set both revision
-and model digest to the full inspected SHA-256. Every inference rechecks the
-read-only release contents before loading them. No Hub credential is required.
-
-Deploy exactly `modal deploy modal_train.py::production_app`; bare deployment
-selects the research app and is not the production deployment. Set
-`UNRENDER_MODAL_APP=unrender-production`. The production app exports only inference,
-limits GPU containers to one, disables retries, and scales idle compute down after
-two seconds. The 240-second function timeout bounds an individual invocation;
-these controls are not a dollar cap. Measure cold/warm behavior before launch.
-If using the alternative private Hub release, explicitly set `UNRENDER_HF_SECRET`
-to the name of an existing Modal secret containing the Hub credential at deploy time.
-
-The user's current budget is a $20 target with modest overages accepted. Keep
-one backend instance and bounded inference; leave shared-workspace caps untouched.
+Operations and recovery commands: [OPERATIONS.md](OPERATIONS.md).
+Review findings: [PRODUCTIZATION_REVIEW.md](PRODUCTIZATION_REVIEW.md).
+Container advisories: [CONTAINER_SCAN.md](CONTAINER_SCAN.md).
+Provider references: https://render.com/docs/disks,
+https://render.com/docs/blueprint-spec, https://render.com/docs/ssh.

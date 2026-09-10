@@ -3792,3 +3792,65 @@ def test_concurrent_logins_can_share_a_legacy_password_upgrade(tmp_path, monkeyp
         sessions = [future.result(timeout=10) for future in futures]
     assert len({session["session"] for session in sessions}) == 2
     assert all(service.session_user(session["session"]) for session in sessions)
+
+
+def test_worker_recovers_lease_that_expires_after_startup_without_redispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        worker_lease_seconds=10,
+        worker_heartbeat_seconds=1,
+    )
+    user_id = customer_id(service)
+    job = _paid_job(service, user_id, color="purple")
+    claim = service.claim_next_job("terminated-worker")
+    assert claim is not None and service._begin_provider_dispatch(claim)
+    service.initialize()
+    assert service.get_job(user_id=user_id, job_id=str(job["id"]))["status"] == "running"
+
+    polled = threading.Event()
+    original_process = service.process_one
+    provider_calls: list[bytes] = []
+
+    def observe_poll(*args: Any, **kwargs: Any) -> bool:
+        result = original_process(*args, **kwargs)
+        polled.set()
+        return result
+
+    def unexpected_provider(image: bytes) -> ExtractionOutput:
+        provider_calls.append(image)
+        raise AssertionError("Dispatched work must not be invoked again")
+
+    monkeypatch.setattr(service, "process_one", observe_poll)
+    service.extractor = SimpleNamespace(extract=unexpected_provider)
+    worker = JobWorker(service, poll_seconds=0.01)
+    worker.start()
+    try:
+        assert polled.wait(timeout=5)
+        with service.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+                (timestamp(utcnow() - timedelta(seconds=1)), job["id"]),
+            )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            current = service.get_job(user_id=user_id, job_id=str(job["id"]))
+            if current["status"] == "failed":
+                break
+            time.sleep(0.02)
+        assert current["status"] == "failed"
+        assert current["error"]["code"] == "worker_lease_expired_after_dispatch"
+        assert service.account(user_id)["credits"] == 0
+        assert provider_calls == []
+        with service.database.connect() as conn:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM provider_attempts WHERE job_id=?", (job["id"],)
+                ).fetchone()[0]
+                == 1
+            )
+    finally:
+        assert worker.stop(timeout=5)

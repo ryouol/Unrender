@@ -232,7 +232,11 @@ class ConcurrencyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         group = self._group(str(scope.get("path", "")), str(scope.get("method", "GET")))
-        semaphore = {"auth": self.auth, "email": self.email, "expensive": self.expensive}.get(group)
+        semaphore = (
+            {"auth": self.auth, "email": self.email, "expensive": self.expensive}[group]
+            if group
+            else None
+        )
         if semaphore is None:
             await self.app(scope, receive, send)
             return

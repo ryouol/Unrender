@@ -39,6 +39,12 @@ class Settings:
     worker_heartbeat_seconds: int = 10
     worker_shutdown_timeout_seconds: int = 30
     allow_registration: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    email_from: str = ""
+    require_email_verification: bool = False
     seed_demo_account: bool = True
     session_ttl_hours: int = 24 * 7
     upload_ttl_hours: int = 24
@@ -81,6 +87,7 @@ class Settings:
     provider_failure_limit_per_user_hour: int = 5
     provider_failure_limit_global_hour: int = 50
     reconciliation_grace_seconds: int = 300
+    provider_timeout_seconds: int = 240
     modal_app_name: str = "unrender"
     modal_function_name: str = "infer_one"
     modal_model_path: str = "runs/qwen3vl4b-table-fair/merged"
@@ -92,6 +99,12 @@ class Settings:
     stripe_price_id: str = ""
     credit_pack_size: int = 100
     initial_credits: int = 3
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(
+            self.smtp_host and self.smtp_username and self.smtp_password and self.email_from
+        )
 
     @property
     def database_path(self) -> Path:
@@ -144,8 +157,14 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
-            if self.allow_registration:
-                raise ValueError("UNRENDER_ALLOW_REGISTRATION must be false in production")
+            if self.allow_registration and (
+                not self.require_email_verification or not self.email_configured
+            ):
+                raise ValueError(
+                    "UNRENDER_ALLOW_REGISTRATION in production requires verified email delivery"
+                )
+            if self.allow_registration and self.initial_credits != 0:
+                raise ValueError("Public production registration must start with zero credits")
             if not self.worker_enabled:
                 raise ValueError("UNRENDER_WORKER_ENABLED must be true in production")
             if self.modal_function_name != "infer_one":
@@ -168,6 +187,14 @@ class Settings:
                     "UNRENDER_MODAL_PROVIDER_RELEASE must be a 64-character release digest "
                     "in production"
                 )
+        if not 1 <= self.provider_timeout_seconds <= 240:
+            raise ValueError("UNRENDER_PROVIDER_TIMEOUT_SECONDS must be between 1 and 240")
+        if self.require_email_verification and not self.email_configured:
+            raise ValueError("Email verification requires configured SMTP delivery")
+        if self.smtp_port not in {465, 587}:
+            raise ValueError("SMTP must use TLS on port 465 or STARTTLS on port 587")
+        if any("\r" in value or "\n" in value for value in (self.smtp_host, self.email_from)):
+            raise ValueError("Email configuration contains invalid characters")
         if self.max_upload_bytes <= 0 or self.max_pdf_pages <= 0:
             raise ValueError("Upload limits must be positive")
         if self.max_image_pixels <= 0 or self.rate_limit_per_minute <= 0:
@@ -280,6 +307,12 @@ class Settings:
             worker_heartbeat_seconds=_int("UNRENDER_WORKER_HEARTBEAT_SECONDS", 10),
             worker_shutdown_timeout_seconds=_int("UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 30),
             allow_registration=_bool("UNRENDER_ALLOW_REGISTRATION", True),
+            smtp_host=os.getenv("UNRENDER_SMTP_HOST", ""),
+            smtp_port=_int("UNRENDER_SMTP_PORT", 587),
+            smtp_username=os.getenv("UNRENDER_SMTP_USERNAME", ""),
+            smtp_password=os.getenv("UNRENDER_SMTP_PASSWORD", ""),
+            email_from=os.getenv("UNRENDER_EMAIL_FROM", ""),
+            require_email_verification=_bool("UNRENDER_REQUIRE_EMAIL_VERIFICATION", False),
             seed_demo_account=_bool("UNRENDER_SEED_DEMO", True),
             session_ttl_hours=_int("UNRENDER_SESSION_TTL_HOURS", 24 * 7),
             upload_ttl_hours=_int("UNRENDER_UPLOAD_TTL_HOURS", 24),
@@ -338,6 +371,7 @@ class Settings:
                 "UNRENDER_PROVIDER_FAILURE_LIMIT_GLOBAL_HOUR", 50
             ),
             reconciliation_grace_seconds=_int("UNRENDER_RECONCILIATION_GRACE_SECONDS", 300),
+            provider_timeout_seconds=_int("UNRENDER_PROVIDER_TIMEOUT_SECONDS", 240),
             modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer_one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),

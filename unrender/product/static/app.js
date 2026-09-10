@@ -583,6 +583,8 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   byId("chart-type-input").replaceChildren();
   byId("api-key-list").replaceChildren();
   byId("api-key-form").reset();
+  byId("source-zoom").value = "1";
+  byId("job-source-image").className = "";
   byId("login-form").reset();
   byId("register-form").reset();
   byId("generate-key-button").hidden = false;
@@ -635,6 +637,7 @@ function showPublic({ clearCsrf = true, clearSubmission = true } = {}) {
 
 function applyPublicConfig() {
   const registrationOpen = state.publicConfig.registration_open;
+  byId("account-help-links").hidden = !state.publicConfig.email_available;
   byId("register-tab").hidden = !registrationOpen;
   byId("open-sample-button").hidden = !state.publicConfig.sample_available;
   byId("show-register-button").textContent = registrationOpen
@@ -659,6 +662,10 @@ function showWorkspace() {
   byId("new-upload-button").hidden = isolatedDemo;
   byId("empty-upload-button").hidden = isolatedDemo;
   byId("create-key-button").hidden = isolatedDemo;
+  const accessNote = byId("workspace-access-note");
+  accessNote.hidden = isolatedDemo || state.account.credits > 0;
+  accessNote.textContent = "Your workspace is ready. Extraction credits are provided by the workspace operator during the beta. Existing charts remain available for review and export.";
+  byId("retention-note").textContent = isolatedDemo ? "" : `Charts are retained for ${state.account.retention_days} days after their last update. Download exports you need to keep.`;
 }
 
 function showMainView(name) {
@@ -797,6 +804,7 @@ async function submitAuth(event, mode) {
   event.preventDefault();
   clearError("auth-error");
   const form = event.currentTarget;
+  if (form.getAttribute("aria-busy") === "true") return;
   const data = new FormData(form);
   const expected = readDurableAuthRecord();
   if (blocksExplicitLogin(expected) || state.logoutRequest) {
@@ -805,14 +813,22 @@ async function submitAuth(event, mode) {
   }
   resetPrivateState();
   const epoch = state.authEpoch;
+  form.setAttribute("aria-busy", "true");
   try {
-    await api(`/api/auth/${mode}`, {
+    const outcome = await api(`/api/auth/${mode}`, {
       method: "POST",
-      body: { email: data.get("email"), password: data.get("password") },
+      body: { email: String(data.get("email") || "").trim(), password: data.get("password") },
       authEpoch: epoch,
       authRecord: expected,
     });
     form.reset();
+    if (outcome.verification_required) {
+      switchAuth("login");
+      byId("auth-notice").textContent = "Check your email to verify your account, then sign in. If it does not arrive, use Resend verification email.";
+      byId("auth-notice").hidden = false;
+      return;
+    }
+    byId("auth-notice").hidden = true;
     const account = await fetchAccount({ authEpoch: epoch, authRecord: expected });
     const committed = await publishAuthChange("authenticated", {
       explicitLogin: true,
@@ -825,8 +841,11 @@ async function submitAuth(event, mode) {
     if (await recoverDurableJobSubmission()) return;
     showMainView(state.jobs.length ? "job-view" : "empty-view");
     if (state.jobs.length) await openJob(state.jobs[0].id);
+    showToast(mode === "register" ? "Workspace created. Upload a chart to begin." : "Signed in. Your workspace is ready.");
   } catch (error) {
     showError("auth-error", error);
+  } finally {
+    form.removeAttribute("aria-busy");
   }
 }
 
@@ -1276,7 +1295,19 @@ function actionButton(label, kind, handler) {
   button.type = "button";
   button.className = `button ${kind || "button-secondary"}`;
   button.textContent = label;
-  button.addEventListener("click", handler);
+  button.addEventListener("click", async (event) => {
+    if (button.disabled) return;
+    button.disabled = true;
+    const authEpoch = state.authEpoch;
+    const viewEpoch = state.viewEpoch;
+    button.setAttribute("aria-busy", "true");
+    try {
+      await handler(event);
+    } finally {
+      if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  });
   return button;
 }
 
@@ -1322,9 +1353,7 @@ function renderJobActions() {
   }
   if (["review", "approved"].includes(job.status)) {
     for (const format of ["CSV", "JSON", "XLSX"]) {
-      const button = actionButton(`Export ${format}`, "button-secondary", () => {
-        void downloadExport(job, format.toLowerCase(), button);
-      });
+      const button = actionButton(`Export ${format}`, "button-secondary", () => downloadExport(job, format.toLowerCase()));
       actions.append(button);
     }
     actions.append(actionButton("Reprocess", "button-quiet", () => jobMutation("reprocess")));
@@ -1337,13 +1366,12 @@ function renderJobActions() {
   }
 }
 
-async function downloadExport(job, format, button) {
+async function downloadExport(job, format) {
   const authEpoch = state.authEpoch;
   const authRecord = readDurableAuthRecord();
   const principal = state.principalMarker;
   const viewEpoch = state.viewEpoch;
   const signal = state.viewController.signal;
-  button.disabled = true;
   let objectUrl = null;
   try {
     const response = await fetch(
@@ -1388,8 +1416,6 @@ async function downloadExport(job, format, button) {
       URL.revokeObjectURL(objectUrl);
       state.objectUrls.delete(objectUrl);
     }
-    if (authEpoch === state.authEpoch && state.viewEpoch === viewEpoch
-      && state.currentJob === job) button.disabled = false;
   }
 }
 
@@ -1638,9 +1664,12 @@ function buildEditedResult() {
 
 async function saveCorrections(event) {
   event.preventDefault();
+  const form = event.currentTarget;
+  if (form.getAttribute("aria-busy") === "true") return;
   const jobId = state.currentJob?.id;
   const viewEpoch = state.viewEpoch;
   if (!jobId) return;
+  form.setAttribute("aria-busy", "true");
   try {
     const result = buildEditedResult();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
@@ -1653,6 +1682,8 @@ async function saveCorrections(event) {
     showToast("Corrections saved to the audit trail");
   } catch (error) {
     showToast(error);
+  } finally {
+    form.removeAttribute("aria-busy");
   }
 }
 
@@ -1959,6 +1990,11 @@ function closeKeyDialog() {
 }
 
 function bindEvents() {
+  byId("source-zoom").addEventListener("change", (event) => {
+    const image = byId("job-source-image");
+    image.classList.toggle("source-zoom-2", event.target.value === "2");
+    image.classList.toggle("source-zoom-4", event.target.value === "4");
+  });
   byId("login-tab").addEventListener("click", () => switchAuth("login"));
   byId("register-tab").addEventListener("click", () => switchAuth("register"));
   byId("show-register-button").addEventListener("click", () => {

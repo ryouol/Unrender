@@ -22,17 +22,19 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
+from unrender.product.public_site import document, error_document, sitemap
 from unrender.product.service import ProductError, ProductService
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.worker import JobWorker
@@ -92,6 +94,11 @@ class SecurityHeadersMiddleware:
             if response_started:
                 raise
             logger.exception("unexpected_outer_asgi_error", exc_info=exc)
+            if not str(scope.get("path", "")).startswith("/api/") and b"text/html" in dict(
+                scope.get("headers", [])
+            ).get(b"accept", b""):
+                await error_document(500)(scope, receive, send_with_headers)
+                return
             response = JSONResponse(
                 {
                     "error": {
@@ -185,11 +192,7 @@ class ConcurrencyLimitMiddleware:
 
     @staticmethod
     def _group(path: str, method: str) -> str | None:
-        if method == "POST" and path in {
-            "/api/auth/login",
-            "/api/auth/register",
-            "/api/auth/demo",
-        }:
+        if method == "POST" and path.startswith("/api/auth/"):
             return "auth"
         if path in {"/api/uploads", "/api/v1/extractions"} or (
             method == "GET"
@@ -236,6 +239,15 @@ class StrictRequest(BaseModel):
 
 class Credentials(StrictRequest):
     email: str = Field(max_length=254)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class AccountEmailRequest(StrictRequest):
+    email: str = Field(max_length=254)
+
+
+class AccountEmailComplete(StrictRequest):
+    token: str = Field(min_length=32, max_length=128)
     password: str = Field(min_length=1, max_length=256)
 
 
@@ -385,11 +397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_job_status = (
             request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
         )
-        is_auth = request.method == "POST" and request.url.path in {
-            "/api/auth/login",
-            "/api/auth/register",
-            "/api/auth/demo",
-        }
+        is_auth = request.method == "POST" and request.url.path.startswith("/api/auth/")
         return "poll" if is_job_status else "auth" if is_auth else "request"
 
     def rate_limit_for(group: str) -> int:
@@ -493,6 +501,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, exc: Exception):
         logger.exception("unexpected_http_error", exc_info=exc)
+        if not request.url.path.startswith("/api/") and "text/html" in request.headers.get(
+            "accept", ""
+        ):
+            return secure_response(error_document(500), request)
         return secure_response(
             JSONResponse(
                 {
@@ -552,21 +564,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(static_dir / "index.html")
+        return document(static_dir, "/", settings.base_url)
 
     @app.get("/privacy")
     def privacy():
-        return FileResponse(static_dir / "privacy.html")
+        return document(static_dir, "/privacy", settings.base_url)
 
     @app.get("/terms")
     def terms():
-        return FileResponse(static_dir / "terms.html")
+        return document(static_dir, "/terms", settings.base_url)
+
+    @app.get("/account")
+    def account_help():
+        return document(static_dir, "/account", settings.base_url)
+
+    @app.get("/contact")
+    def contact():
+        return document(static_dir, "/contact", settings.base_url)
+
+    @app.get("/robots.txt")
+    def robots():
+        return Response(
+            "User-agent: *\nDisallow: /api/\nDisallow: /health/\n"
+            f"Sitemap: {settings.base_url}/sitemap.xml\n",
+            media_type="text/plain",
+        )
+
+    @app.get("/sitemap.xml")
+    def public_sitemap():
+        return Response(sitemap(settings.base_url), media_type="application/xml")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException):
+        if exc.status_code == 404 and not request.url.path.startswith("/api/"):
+            return error_document(404)
+        return JSONResponse(
+            {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
+        )
 
     @app.get("/api/public-config")
     def public_config():
         return {
             "registration_open": settings.allow_registration,
             "sample_available": settings.seed_demo_account,
+            "email_available": settings.email_configured,
+            "email_verification_required": settings.require_email_verification,
         }
 
     @app.get("/health/live")
@@ -587,6 +629,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/auth/register", status_code=201)
     def register(payload: Credentials, response: Response):
         values = service.register(payload.email, payload.password)
+        if values.get("verification_required"):
+            return {"ok": True, "verification_required": True}
         _cookies(response, values, settings)
         return {"ok": True}
 
@@ -594,6 +638,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def login(payload: Credentials, response: Response):
         values = service.authenticate(payload.email, payload.password)
         _cookies(response, values, settings)
+        return {"ok": True}
+
+    @app.post("/api/auth/request-verification")
+    def request_verification(payload: AccountEmailRequest):
+        service.request_account_email(payload.email, purpose="verify")
+        return {"ok": True}
+
+    @app.post("/api/auth/forgot-password")
+    def forgot_password(payload: AccountEmailRequest):
+        service.request_account_email(payload.email, purpose="reset")
+        return {"ok": True}
+
+    @app.post("/api/auth/verify-email")
+    def verify_email(payload: AccountEmailComplete):
+        service.complete_account_email(payload.token, purpose="verify", password=payload.password)
+        return {"ok": True}
+
+    @app.post("/api/auth/reset-password")
+    def reset_password(payload: AccountEmailComplete):
+        service.complete_account_email(payload.token, purpose="reset", password=payload.password)
         return {"ok": True}
 
     @app.post("/api/auth/demo")
@@ -749,7 +813,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/keys", status_code=201)
     def create_key(payload: ApiKeyCreate, user: Any = csrf_user_dependency):
-        return service.create_api_key(user_id=user["id"], name=payload.name)
+        return service.create_api_key(
+            user_id=user["id"],
+            name=payload.name,
+            expected_generation=int(user["session_generation"]),
+        )
 
     @app.get("/api/keys")
     def list_keys(

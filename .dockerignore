@@ -13,3 +13,9 @@ runs
 refine-logs
 work
 docs/screenshots
+.env
+.env.*
+!.env.example
+.agents
+.aris
+.claude

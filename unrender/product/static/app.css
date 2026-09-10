@@ -309,3 +309,32 @@ dialog::backdrop { background: rgb(23 32 28 / 0.52); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
+
+/* Keep legal and consent controls within the established editorial palette. */
+.site-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 24px 28px; border-top: 1px solid var(--line); }
+.site-footer nav { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.site-footer a, .public-nav a { display: inline-flex; align-items: center; min-height: 44px; }
+.cookie-notice { margin: 0 28px 24px; padding: 20px; border: 1px solid var(--line-strong); background: var(--surface); }
+.cookie-notice p { max-width: 75ch; }
+.cookie-notice button { margin: 4px 8px 4px 0; }
+form[aria-busy="true"] { opacity: .7; }
+@media (max-width: 640px) {
+  .button, .text-button, .wordmark, .auth-tabs button, input, select, .data-table input { min-height: 44px; }
+  input, select, .data-table input { font-size: 16px; }
+  .site-header { flex-wrap: wrap; height: auto; min-height: 62px; gap: 8px; padding-block: 8px; }
+  .header-actions { flex-wrap: wrap; gap: 8px; }
+  .site-footer { padding: 20px 18px; }
+  .cookie-notice { margin-inline: 18px; }
+  .legal-page { overflow-wrap: anywhere; }
+  .flow-footer { position: sticky; bottom: 0; background: var(--surface); z-index: 2; padding: 12px 0; }
+  .flow-footer .button-primary { width: 100%; }
+}
+
+.source-zoom-control { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.source-zoom-control select { width: auto; }
+.source-canvas { overflow: auto; max-height: 70vh; display: block; place-items: start; }
+.source-canvas img.source-zoom-2 { width: 200%; max-width: none; max-height: none; }
+.source-canvas img.source-zoom-4 { width: 400%; max-width: none; max-height: none; }
+@media (min-width: 800px) and (max-width: 980px) {
+  .review-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+}

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer">
+<title>Account help — Unrender</title><link rel="stylesheet" href="/static/app.css">
+<script src="/static/account.js" defer></script></head>
+<body><header class="site-header"><a class="wordmark" href="/">Unrender</a></header>
+<main class="legal-page"><h1 id="account-title">Recover your workspace</h1>
+<p id="account-description">Enter your email and we’ll send a link to reset your password.</p>
+<form id="account-form">
+<label id="email-field">Email<input type="email" name="email" autocomplete="email" maxlength="254" required></label>
+<label id="password-field" hidden>Password<input type="password" name="password" autocomplete="new-password" minlength="12" maxlength="256" disabled></label>
+<button class="button button-primary" type="submit" id="account-submit">Send reset link</button>
+</form><p id="account-status" role="status" hidden></p><p id="account-error" role="alert" hidden></p>
+<p><a href="/">Return to sign in</a> · <a href="/account">Request a password reset</a> · <a href="/account?mode=verify">Resend verification</a></p>
+</main></body></html>

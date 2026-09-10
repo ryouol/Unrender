@@ -1,0 +1,67 @@
+# One service owns the SQLite database, private files, and embedded worker.
+services:
+  - type: web
+    name: unrender
+    runtime: docker
+    plan: 1c-2g
+    numInstances: 1
+    autoDeployTrigger: off
+    healthCheckPath: /health/ready
+    maxShutdownDelaySeconds: 300
+    disk:
+      name: unrender-data
+      mountPath: /data
+      sizeGB: 20
+    envVars:
+      - key: UNRENDER_ENV
+        value: production
+      - key: UNRENDER_BASE_URL
+        sync: false
+      - key: UNRENDER_DATA_DIR
+        value: /data
+      - key: UNRENDER_EXTRACTOR
+        value: modal
+      - key: UNRENDER_WORKER_ENABLED
+        value: "true"
+      - key: UNRENDER_ALLOW_REGISTRATION
+        value: "true"
+      - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
+        value: "true"
+      - key: UNRENDER_INITIAL_CREDITS
+        value: "0"
+      - key: UNRENDER_SEED_DEMO
+        value: "false"
+      - key: UNRENDER_PROVIDER_TIMEOUT_SECONDS
+        value: "240"
+      - key: UNRENDER_MODAL_APP
+        value: unrender
+      - key: UNRENDER_MODAL_FUNCTION
+        value: infer_one
+      - key: UNRENDER_MODAL_MODEL
+        sync: false
+      - key: UNRENDER_MODAL_REVISION
+        sync: false
+      - key: UNRENDER_MODAL_MODEL_DIGEST
+        sync: false
+      - key: UNRENDER_MODAL_PROVIDER_RELEASE
+        sync: false
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
+      - key: UNRENDER_SMTP_HOST
+        sync: false
+      - key: UNRENDER_SMTP_PORT
+        value: "587"
+      - key: UNRENDER_SMTP_USERNAME
+        sync: false
+      - key: UNRENDER_SMTP_PASSWORD
+        sync: false
+      - key: UNRENDER_EMAIL_FROM
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        value: ""
+      - key: STRIPE_WEBHOOK_SECRET
+        value: ""
+      - key: STRIPE_PRICE_ID
+        value: ""

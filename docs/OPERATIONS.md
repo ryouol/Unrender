@@ -11,7 +11,7 @@
 7. Start one application replica and verify `/health/live` and `/health/ready`.
 8. Run one approved canary chart with non-sensitive data; confirm review, correction, approval, and all three exports.
 
-Set the platform termination grace beyond the maximum provider call duration. On shutdown the worker stops claiming immediately and readiness turns false; if a dispatched provider call exceeds `UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS`, the process logs the missed warning threshold but keeps heartbeating and waits for the fenced terminal commit. The platform must not send an earlier hard kill.
+Set the platform termination grace beyond the configured provider deadline plus terminal-commit time. The Modal adapter uses `UNRENDER_PROVIDER_TIMEOUT_SECONDS` (default 240, allowed 1–240) for async lookup, dispatch and result retrieval. A timeout becomes a terminal `provider_timeout` failure with dispatched credit retained; remote execution may still continue, so no automatic redispatch is attempted. Verify cancellation and shutdown on the deployed SDK/network path. On shutdown the worker stops claiming immediately and readiness turns false; if a dispatched provider call exceeds `UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS`, the process logs the missed warning threshold but keeps heartbeating and waits for the fenced terminal commit. The platform must not send an earlier hard kill.
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
@@ -86,3 +86,14 @@ Pause uploads, let housekeeping drain the deletion outbox, expand the volume, an
 ## Rollback
 
 Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. This release uses schema version 8 with crash-atomic, cross-process-serialized forward migrations from versions 1–7 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 added account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Version 8 gives every storage reservation an opaque owner token: resize renews only that live lease, publication must atomically consume the matching unexpired reservation, and deletion holds the exclusive operational lock through reference check and file removal. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
+
+## Base-image advisory constraints
+
+See `CONTAINER_SCAN.md` for the current package scan and runtime assessment.
+Only restore recovery sets from the operator-controlled backup destination:
+manifest hashes detect corruption but do not authenticate an arbitrary supplied
+backup. The app does not support uploaded databases or operator execution of
+customer-provided commands, Perl expressions, terminal descriptions or archives.
+Verify deployed UID, mount/capability boundaries and operator access before
+relying on the image-specific advisory assessment. Keep scan findings visible
+and reassess when the base image or operational workflow changes.

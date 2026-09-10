@@ -282,11 +282,11 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
     }
     remote_calls: list[tuple[object, ...]] = []
 
-    def remote_call(*args: object) -> dict[str, object]:
+    async def remote_call(*args: object) -> dict[str, object]:
         remote_calls.append(args)
         return response
 
-    remote = SimpleNamespace(remote=remote_call)
+    remote = SimpleNamespace(remote=SimpleNamespace(aio=remote_call))
     modal = SimpleNamespace(
         Function=SimpleNamespace(from_name=lambda *_: remote),
     )
@@ -2696,9 +2696,19 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
 ) -> None:
     resolved: list[tuple[str, str]] = []
 
+    hydrated = []
+
+    async def hydrate():
+        hydrated.append(True)
+
+    async def forbidden(*args):
+        raise AssertionError("spent")
+
     def from_name(app_name: str, function_name: str) -> SimpleNamespace:
         resolved.append((app_name, function_name))
-        return SimpleNamespace(remote=lambda *_: (_ for _ in ()).throw(AssertionError("spent")))
+        return SimpleNamespace(
+            remote=SimpleNamespace(aio=forbidden), hydrate=SimpleNamespace(aio=hydrate)
+        )
 
     monkeypatch.setitem(
         sys.modules,
@@ -2713,6 +2723,7 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
     extractor = ModalExtractor(settings)
     assert extractor.canary_contract()
     assert resolved == [("unrender", "infer_one")]
+    assert hydrated == [True]
 
     response = {
         "json": json.loads(
@@ -2721,12 +2732,16 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
         "raw": "case-normalized",
         "provider_release": "a" * 64,
     }
+
+    async def remote_response(*args):
+        return response
+
     monkeypatch.setitem(
         sys.modules,
         "modal",
         SimpleNamespace(
             Function=SimpleNamespace(
-                from_name=lambda *_: SimpleNamespace(remote=lambda *_: response)
+                from_name=lambda *_: SimpleNamespace(remote=SimpleNamespace(aio=remote_response))
             )
         ),
     )
@@ -3656,3 +3671,93 @@ def test_browser_privacy_editor_and_two_tab_regressions(script: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_modal_deadline_drains_worker_without_refund_or_redispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    cancelled = threading.Event()
+    calls: list[bytes] = []
+
+    async def remote(image: bytes, *_: object) -> None:
+        calls.append(image)
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(
+            Function=SimpleNamespace(
+                from_name=lambda *_: SimpleNamespace(remote=SimpleNamespace(aio=remote))
+            )
+        ),
+    )
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        extractor_backend="modal",
+        provider_timeout_seconds=1,
+    )
+    service.extractor = ModalExtractor(service.settings)
+    user_id = customer_id(service)
+    job = _paid_job(service, user_id, color="purple")
+    worker = JobWorker(service, poll_seconds=0.01)
+    worker.start()
+    try:
+        assert started.wait(timeout=5)
+        assert worker.stop(timeout=5)
+    finally:
+        worker.stop(timeout=5)
+    assert cancelled.is_set()
+    result = service.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "provider_timeout"
+    assert service.account(user_id)["credits"] == 0
+    assert service.recover_interrupted_jobs() == 0
+    assert not service.process_one("after-restart")
+    assert len(calls) == 1
+    with service.database.connect() as conn:
+        assert (
+            conn.execute(
+                "SELECT provider_dispatched FROM jobs WHERE id=?", (job["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_modal_canary_bounds_lazy_resolution_without_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hydrate() -> None:
+        await asyncio.Event().wait()
+
+    def remote(*_: object) -> None:
+        pytest.fail("Canary must not invoke inference")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(
+            Function=SimpleNamespace(
+                from_name=lambda *_: SimpleNamespace(
+                    hydrate=SimpleNamespace(aio=hydrate), remote=SimpleNamespace(aio=remote)
+                )
+            )
+        ),
+    )
+    extractor = ModalExtractor(settings_for(tmp_path, provider_timeout_seconds=1))
+    with pytest.raises(ExtractionError) as error:
+        extractor.canary_contract()
+    assert error.value.code == "provider_contract_unavailable"
+
+
+@pytest.mark.parametrize("deadline", [0, 241])
+def test_provider_deadline_rejects_unbounded_configuration(tmp_path: Path, deadline: int) -> None:
+    with pytest.raises(ValueError, match="PROVIDER_TIMEOUT_SECONDS"):
+        settings_for(tmp_path, provider_timeout_seconds=deadline).validate()

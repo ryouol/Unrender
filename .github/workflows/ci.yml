@@ -30,14 +30,16 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Product lint
         run: |
-          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
-          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
+          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_accounts.py tests/test_public_site.py tests/test_release_policy.py tests/test_train_config.py
+          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_accounts.py tests/test_public_site.py tests/test_release_policy.py tests/test_train_config.py
           ruff check --select S unrender/product
       - name: Product types
         run: mypy unrender/product
       - name: Frontend syntax
         run: |
           node --check unrender/product/static/app.js
+          node --check unrender/product/static/account.js
+          node --check unrender/product/static/site.js
           node tests/browser_auth_epoch.mjs
           node tests/browser_two_tab.mjs
       - name: Runtime dependency audit
@@ -70,6 +72,7 @@ jobs:
           push: false
           load: true
           tags: unrender:ci
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke production runtime dependencies

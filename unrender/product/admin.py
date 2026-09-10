@@ -20,6 +20,14 @@ def parser() -> argparse.ArgumentParser:
     create = commands.add_parser("create-user", help="provision a controlled-beta account")
     create.add_argument("email")
     create.add_argument("--credits", type=int, default=0)
+    grant = commands.add_parser(
+        "grant-credits", help="grant extraction credits to a verified account"
+    )
+    grant.add_argument("email")
+    grant.add_argument("--credits", type=int, required=True)
+    grant.add_argument(
+        "--reference", required=True, help="unique grant reference; retry with the same reference"
+    )
     backup = commands.add_parser("backup", help="create a coordinated recovery set")
     backup.add_argument("--destination", required=True, type=Path)
     restore = commands.add_parser("restore", help="restore a verified recovery set")
@@ -60,12 +68,14 @@ def main() -> None:
             "no inference was invoked"
         )
         return
-    if arguments.command != "create-user":
+    if arguments.command not in {"create-user", "grant-credits"}:
         raise SystemExit(2)
-    password = getpass.getpass("Password (12+ characters): ")
-    confirmation = getpass.getpass("Confirm password: ")
-    if password != confirmation:
-        raise SystemExit("Passwords did not match")
+    password = ""
+    if arguments.command == "create-user":
+        password = getpass.getpass("Password (12+ characters): ")
+        confirmation = getpass.getpass("Confirm password: ")
+        if password != confirmation:
+            raise SystemExit("Passwords did not match")
 
     static_dir = Path(__file__).with_name("static")
     database = Database(settings.database_path)
@@ -79,6 +89,12 @@ def main() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     database.initialize()
     try:
+        if arguments.command == "grant-credits":
+            service.grant_credits(
+                arguments.email, credits=arguments.credits, reference=arguments.reference
+            )
+            print("Credit grant applied (retries with the same reference are idempotent)")
+            return
         user_id = service.provision_user(arguments.email, password, credits=arguments.credits)
     except ProductError as exc:
         raise SystemExit(str(exc)) from exc

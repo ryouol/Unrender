@@ -309,3 +309,9 @@ separate from these API checks.
 Node regressions cover anonymous input preservation, existing cross-tab privacy,
 email availability states, token completion during config failure, and email help
 on token pages. Recovery configuration tests now run in CI.
+
+Hosted `914c55c` passed Chromium setup/recovery completion, immediate sign-in,
+and session persistence after reload. The new no-email help state also passed in
+the hosted browser. No page JavaScript exceptions occurred; expected anonymous
+401 network responses still appear in developer tools. All three Node suites and
+nine focused public/static tests passed.

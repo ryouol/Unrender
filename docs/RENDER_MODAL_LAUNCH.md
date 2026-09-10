@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications inherit the
   workspace's failure-only setting. No other project's configuration changed.
-- Live runtime code: `437322d63b8891197b5b85b50881cbf65ffd35b1`.
+- Live runtime code: `914c55c`.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -137,6 +137,14 @@ Runtime `437322d` deployed successfully on September 10. Hosted HTTP checks
 confirmed activation through the existing reset endpoint with SMTP disabled,
 single-use token rejection, logout/relogin, and denial of a different tenant's
 approved chart. The test account has zero credits and triggered no inference.
-The new invitation UI copy is served in the deployed script; interactive browser
-completion of the invitation form has not yet been separately verified.
+Runtime `914c55c` subsequently passed real Chromium activation, immediate sign-in,
+and reload session persistence. The bearer fragment was removed from the address
+bar before requests. The email-disabled recovery page directs users to their
+inviter and hides the unavailable email form. No GPU calls or email were used.
 Local validation: 199 passed, 1 skipped; Ruff, mypy and JavaScript syntax passed.
+
+The browser check exposed an anonymous session-check race that API tests did not:
+a late 401 erased sign-in input before submit. Runtime `914c55c` fixes it without
+changing authenticated-session or cross-tab privacy protections. Three Node
+browser-state suites and nine focused public/static tests passed after the fix.
+A brief 502 was observed during the one-instance deployment; readiness recovered.

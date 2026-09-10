@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications inherit the
   workspace's failure-only setting. No other project's configuration changed.
-- Live runtime code: `e09a8f1` (invitation onboarding changes pending deployment).
+- Live runtime code: `437322d63b8891197b5b85b50881cbf65ffd35b1`.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -130,3 +130,13 @@ Review findings: [PRODUCTIZATION_REVIEW.md](PRODUCTIZATION_REVIEW.md).
 Container advisories: [CONTAINER_SCAN.md](CONTAINER_SCAN.md).
 Provider references: https://render.com/docs/disks,
 https://render.com/docs/blueprint-spec, https://render.com/docs/ssh.
+
+## Invitation release verification
+
+Runtime `437322d` deployed successfully on September 10. Hosted HTTP checks
+confirmed activation through the existing reset endpoint with SMTP disabled,
+single-use token rejection, logout/relogin, and denial of a different tenant's
+approved chart. The test account has zero credits and triggered no inference.
+The new invitation UI copy is served in the deployed script; interactive browser
+completion of the invitation form has not yet been separately verified.
+Local validation: 199 passed, 1 skipped; Ruff, mypy and JavaScript syntax passed.

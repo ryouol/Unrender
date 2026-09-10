@@ -272,3 +272,9 @@ Invitation checks cover activation, one-use consumption, reissue invalidation,
 password strength, persistence across service recreation, session revocation,
 atomic failure, private output permissions, and prevention of file overwrite.
 Efficiency/context/size review found no actionable issue.
+
+Invitation release `437322d` passed the full local suite (199 passed, 1 skipped),
+Ruff, mypy, and JavaScript syntax checks. Render deployed it successfully. Hosted
+HTTP activation, single-use rejection, logout/relogin and cross-tenant isolation
+passed without SMTP or GPU usage. Interactive invitation form verification remains
+separate from these API checks.

@@ -496,3 +496,19 @@ assert.equal(listAttempts, 2);
 assert.equal(test.state.jobsInitialized, true);
 assert.equal(test.state.upload.id, "pending-upload");
 assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);
+
+
+// A delayed anonymous session check must not erase a user's sign-in input.
+storageValues.clear();
+test.state.authRecord = null;
+test.state.principalMarker = null;
+const anonymousEpoch = test.state.authEpoch;
+document.getElementById("login-form").value = "typed sign-in fields";
+context.fetch = async () => ({
+  ok: false, status: 401, headers: { get: () => "application/json" },
+  json: async () => ({ error: { message: "Authentication required" } }),
+});
+await assert.rejects(test.api("/api/me"), (error) => error.status === 401);
+assert.equal(test.state.authEpoch, anonymousEpoch);
+assert.equal(document.getElementById("login-form").value, "typed sign-in fields");
+assert.equal(test.readDurableAuthRecord(), null);

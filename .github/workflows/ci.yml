@@ -42,6 +42,7 @@ jobs:
           node --check unrender/product/static/site.js
           node tests/browser_auth_epoch.mjs
           node tests/browser_two_tab.mjs
+          node tests/browser_account.mjs
       - name: Runtime dependency audit
         run: |
           pip-audit -r requirements-app.lock

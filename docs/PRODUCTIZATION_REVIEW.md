@@ -278,3 +278,34 @@ Ruff, mypy, and JavaScript syntax checks. Render deployed it successfully. Hoste
 HTTP activation, single-use rejection, logout/relogin and cross-tenant isolation
 passed without SMTP or GPU usage. Interactive invitation form verification remains
 separate from these API checks.
+
+33. **Fixed P2 — account help offered unavailable email delivery**
+    (`unrender/product/static/account.html:8` at discovery). The account page now
+    consults public configuration and directs invited users to their inviter when
+    email is disabled. Valid setup/recovery tokens still work without SMTP.
+34. **Fixed P2 — token pages hid available recovery actions**
+    (`unrender/product/static/account.js:40` at review). Quality review found that
+    fetching configuration only for no-token pages hid resend/recovery links after
+    expired token errors. Configuration now controls help links on all pages;
+    fetch failure cannot disable token completion.
+35. **Fixed P1 — anonymous session check erased sign-in input**
+    (`unrender/product/static/app.js:118`). Real Chromium activation succeeded but
+    sign-in submitted nothing: a delayed anonymous `/api/me` 401 reset the form.
+    The 401 now preserves input only when no principal and no durable auth record
+    exist. Existing epoch/context fences and authenticated-session quarantine stay
+    intact. Local frontend with the hosted backend passed activation, immediate
+    sign-in, and reload persistence; no GPU was used.
+36. **Resolved P2 — startup gating could drop cross-tab restoration**
+    (`unrender/product/static/app.js:751` in the discarded draft). All three
+    reviewers found this. The draft suppression could abort boot reconciliation
+    and discard its replacement. Removed startup gating entirely in favor of the
+    anonymous-401 correction in finding 35; coordination paths are unchanged.
+37. **Resolved P2 — late pageshow escaped startup gating**
+    (`unrender/product/static/app.js:756` in the discarded draft). Breaking review
+    identified that late image loading could deliver pageshow after boot, allowing
+    another anonymous 401 to erase input. Removing the unnecessary anonymous wipe
+    fixes the case regardless of event timing.
+
+Node regressions cover anonymous input preservation, existing cross-tab privacy,
+email availability states, token completion during config failure, and email help
+on token pages. Recovery configuration tests now run in CI.

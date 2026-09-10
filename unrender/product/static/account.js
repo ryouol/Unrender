@@ -15,6 +15,7 @@
   const email = form.elements.namedItem("email");
   const password = form.elements.namedItem("password");
   if (completing) {
+    form.hidden = false;
     byId("email-field").hidden = true;
     email.disabled = true;
     byId("password-field").hidden = false;
@@ -36,6 +37,25 @@
     byId("account-description").textContent = "Enter the email you used to create your workspace.";
     button.textContent = "Send verification link";
   }
+  fetch("/api/public-config", { headers: { Accept: "application/json" } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Account options could not be loaded. Refresh to try again.");
+        const config = await response.json();
+        byId("email-help-links").hidden = !config.email_available;
+        if (completing) return;
+        if (config.email_available) {
+          form.hidden = false;
+          if (!verifying) byId("account-description").textContent = "Enter your email and we’ll send a link to reset your password.";
+        } else {
+          byId("account-title").textContent = "Request an account link";
+          byId("account-description").textContent = "Email recovery is not available for this workspace. Ask the person who invited you for a new account setup or recovery link. Your saved charts remain in your account.";
+        }
+      })
+      .catch((error) => {
+        if (completing) return;
+        byId("account-error").textContent = error.message;
+        byId("account-error").hidden = false;
+      });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (button.disabled) return;

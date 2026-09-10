@@ -117,6 +117,8 @@ async function api(path, options = {}) {
     error.status = response.status;
     if (response.status === 401 && !path.startsWith("/api/auth/")) {
       const hadPrincipal = Boolean(state.principalMarker);
+      // A fresh anonymous session check must not erase the sign-in form.
+      if (!hadPrincipal && authRecord === null) throw error;
       quarantineAuth("signed-out", { clearCsrf: true });
       if (hadPrincipal) void publishAuthChange("session-ended");
       throw staleAuthError("The authenticated session ended");

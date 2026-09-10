@@ -987,6 +987,28 @@ class ProductService:
                 replacement = hash_password(password)
             except ValueError as exc:
                 raise ProductError("invalid_password", str(exc), 422) from exc
+        verified_hash = None
+        verified_generation = None
+        if purpose == "verify":
+            with self.database.connect() as conn:
+                candidate = conn.execute(
+                    "SELECT users.password_hash,users.session_generation FROM account_challenges "
+                    "JOIN users ON users.id=account_challenges.user_id "
+                    "WHERE account_challenges.token_hash=? AND account_challenges.purpose=? "
+                    "AND account_challenges.expires_at>? AND users.account_kind='customer'",
+                    (token_hash(token), purpose, timestamp()),
+                ).fetchone()
+            if not candidate:
+                raise ProductError(
+                    "invalid_account_link",
+                    "This link expired or was already used. Request a new one.", 400,
+                )
+            if not verify_password(password, candidate["password_hash"]):
+                raise ProductError(
+                    "invalid_credentials", "Enter the password you chose when signing up", 400
+                )
+            verified_hash = candidate["password_hash"]
+            verified_generation = candidate["session_generation"]
         with self.database.transaction(immediate=True) as conn:
             user = conn.execute(
                 "SELECT users.* FROM account_challenges "
@@ -1002,9 +1024,10 @@ class ProductService:
                     400,
                 )
             if purpose == "verify":
-                if not verify_password(password, user["password_hash"]):
+                if (user["password_hash"] != verified_hash
+                        or user["session_generation"] != verified_generation):
                     raise ProductError(
-                        "invalid_credentials", "Enter the password you chose when signing up", 400
+                        "invalid_account_link", "Account credentials changed. Request a new link.", 400
                     )
                 conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
                 conn.execute(

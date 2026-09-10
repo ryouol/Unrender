@@ -1,6 +1,7 @@
 const state = {
   account: null,
   jobs: [],
+  jobsInitialized: false,
   currentJob: null,
   upload: null,
   uploadPage: 0,
@@ -562,6 +563,7 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   if (clearCsrf) document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
   state.account = null;
   state.jobs = [];
+  state.jobsInitialized = false;
   state.currentJob = null;
   state.upload = null;
   state.uploadPage = 0;
@@ -601,6 +603,7 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   byId("file-input").value = "";
   byId("result-form").reset();
   byId("dropzone").removeAttribute("aria-busy");
+  byId("file-input").disabled = false;
   for (const id of ["open-sample-button", "queue-job-button", "buy-credits-button"]) {
     byId(id).disabled = false;
   }
@@ -722,9 +725,10 @@ async function reconcilePrincipal() {
       throw staleAuthError("The authenticated principal did not match the durable browser state");
     }
     applyAccount(account);
-    if (previous !== account.principal_marker) {
+    if (previous !== account.principal_marker || !state.jobsInitialized) {
       await loadJobs();
       if (await recoverDurableJobSubmission()) return;
+      if (state.upload || !byId("upload-view").hidden) return;
       if (state.jobs.length) await openJob(state.jobs[0].id);
       else showMainView("empty-view");
     }
@@ -993,6 +997,7 @@ async function loadJobs() {
   } while (cursor);
   if (authEpoch !== state.authEpoch) throw staleAuthError();
   state.jobs = jobs;
+  state.jobsInitialized = true;
   renderJobList();
 }
 
@@ -1047,6 +1052,7 @@ async function prepareFile(file) {
   const form = new FormData();
   form.append("file", file);
   byId("dropzone").setAttribute("aria-busy", "true");
+  byId("file-input").disabled = true;
   try {
     const upload = await api("/api/uploads", {
       method: "POST", body: form, signal: view.signal,
@@ -1060,7 +1066,11 @@ async function prepareFile(file) {
   } catch (error) {
     showError("upload-error", error);
   } finally {
-    if (epoch === state.authEpoch) byId("dropzone").removeAttribute("aria-busy");
+    if (epoch === state.authEpoch) {
+      byId("dropzone").removeAttribute("aria-busy");
+      byId("file-input").disabled = false;
+      byId("file-input").value = "";
+    }
   }
 }
 

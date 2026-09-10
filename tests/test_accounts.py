@@ -371,3 +371,35 @@ def test_logout_remains_available_after_login_rate_limit(tmp_path):
         )
         assert response.status_code == 200
         assert client.get("/api/me").status_code == 401
+
+
+def test_verification_hashing_releases_writer_and_fences_credential_change(tmp_path, monkeypatch):
+    deliveries = []
+    monkeypatch.setattr(
+        "unrender.product.mail.send_account_email", lambda *args: deliveries.append(args)
+    )
+    service = service_for(
+        tmp_path, require_email_verification=True, smtp_host="smtp.example.com",
+        smtp_username="user", smtp_password="test-only-secret",
+        email_from="hello@example.com", initial_credits=0,
+    )
+    service.register("race@example.com", PASSWORD)
+    token = deliveries[-1][-1]
+    from unrender.product import service as service_module
+    original_verify = service_module.verify_password
+
+    def verify_with_concurrent_change(password, encoded):
+        # A separate writer must succeed during KDF work. Changing the generation
+        # simulates a credential replacement before the verification commit.
+        with service.database.connect() as conn:
+            conn.execute("PRAGMA busy_timeout=50")
+            conn.execute("UPDATE users SET session_generation=session_generation+1")
+            conn.commit()
+        return original_verify(password, encoded)
+
+    monkeypatch.setattr(service_module, "verify_password", verify_with_concurrent_change)
+    with pytest.raises(ProductError) as caught:
+        service.complete_account_email(token, purpose="verify", password=PASSWORD)
+    assert caught.value.code == "invalid_account_link"
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT email_verified FROM users").fetchone()[0] == 0

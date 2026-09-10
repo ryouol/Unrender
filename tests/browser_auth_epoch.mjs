@@ -459,6 +459,7 @@ assert.ok(
 installAuthenticatedRecord("upload-principal");
 test.state.principalMarker = "upload-principal";
 test.state.jobs = [];
+test.state.jobsInitialized = true;
 test.state.upload = { id: "pending-upload" };
 const viewsBeforeFocus = context.__mainViewCalls.length;
 const focusRequests = [];
@@ -475,3 +476,23 @@ await test.reconcilePrincipal();
 assert.deepEqual(focusRequests, ["/api/me"]);
 assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);
 assert.equal(test.state.upload.id, "pending-upload");
+
+// A failed initial list fetch retries on focus without replacing an upload.
+test.state.jobsInitialized = false;
+let listAttempts = 0;
+context.fetch = async (path) => {
+  if (path.startsWith("/api/jobs") && ++listAttempts === 1) throw new Error("temporary network failure");
+  return {
+    ok: true, status: 200, headers: { get: () => "application/json" },
+    json: async () => path === "/api/me"
+      ? { id: "upload-user", principal_marker: "upload-principal", credits: 3 }
+      : { items: [] },
+  };
+};
+await test.reconcilePrincipal();
+assert.equal(test.state.jobsInitialized, false);
+await test.reconcilePrincipal();
+assert.equal(listAttempts, 2);
+assert.equal(test.state.jobsInitialized, true);
+assert.equal(test.state.upload.id, "pending-upload");
+assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);

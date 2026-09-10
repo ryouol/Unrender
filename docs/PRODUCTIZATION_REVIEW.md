@@ -85,3 +85,45 @@ The context review found no applicable model-context changes. The testing review
 found no additional defect but retained live SMTP, browser account-flow and
 Render/Modal verification limits. All reviewer findings are recorded here;
 code review is not deployment approval.
+
+## September 10 final pass and deployment inventory
+
+12. **Fixed P2 — initial job-list recovery** (`unrender/product/static/app.js:728`).
+    Successful list initialization is tracked separately from the authenticated
+    principal. Focus retries failed initialization without replacing an active
+    upload. The Node regression exercises both failure recovery and picker focus.
+13. **Fixed P2 — file selection during upload** (`unrender/product/static/app.js:1055`).
+    The picker is disabled during upload and restored/reset on completion or
+    private-state clearing, preventing silently discarded selections.
+14. **Fixed P3 — verification KDF writer lock** (`unrender/product/service.py:992`).
+    Password verification occurs before the write transaction; the transaction
+    rechecks the live challenge and exact hash/generation. A regression performs
+    a concurrent write during verification and verifies stale credentials fail.
+15. **Open P2 — SMTP occupies authentication admission** (`unrender/product/web.py:199`,
+    `unrender/product/service.py:974`). Slow synchronous email delivery can occupy
+    the sole authentication slot and reject unrelated logins. Registration also
+    sends mail inside that admission window. Separate bounded mail delivery from
+    KDF admission before public signup launch.
+16. **Fixed P3 — schema rollback instructions** (`docs/OPERATIONS.md:88`).
+    The release uses schema 9; rollback to schema 8 requires the pre-v9 recovery set.
+17. **Open change-size concern**: reviewed baseline 4bf1352 changes 2,354 text
+    lines across 52 files (1,638 excluding README/docs). Smallest first stage is
+    schema v9 and its v8 preservation test (~45–50 lines), followed by account
+    verification, recovery/revocation, provider deadline, browser integration,
+    deployment/operator integration, and visual/documentation stages. Existing
+    PR remains draft. Context review found no new model-context injection.
+
+Created Render project `UNRENDER` with a `Production` environment:
+https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
+No service has been deployed there. Wayline remains separate. No shared billing
+settings were changed. Modal's September workspace billing summary showed $0
+billed and $3.04849077 metered before adjustments; this is shared-workspace
+history, not a project cap or forecast.
+
+The user's $20 maximum has not been enforceably configured. Render bills
+workspace bandwidth overages with a card on file. Modal's workspace spend cap
+would affect other projects; environment compute budgets require Team/Enterprise
+and omit storage. A combined project hard cap cannot be claimed from these
+controls. The requested monthly-versus-total interpretation is still pending.
+Real pinned model release, SMTP delivery, deployed proxy attribution, backup
+restore, and live end-to-end inference remain release gates.

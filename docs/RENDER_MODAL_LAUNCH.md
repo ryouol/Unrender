@@ -95,8 +95,8 @@ restarts does not mean indefinite retention.
 Current preparation branch: `codex/render-modal-productization`, published in
 [draft PR #2](https://github.com/ryouol/Unrender/pull/2). No Render service has
 been activated. Use the isolated in-app Render tab: native Dia window targeting
-was unreliable. Modal CLI authentication is verified for `royluo05`; email/domain choices and
-production secrets remain outstanding.
+was unreliable. Modal CLI authentication is verified for `royluo05`; Gmail was selected as the sender on September 10. The Google app password and
+production model secrets remain outstanding; do not put credentials in this file.
 
 ## Small-instance capacity gate
 
@@ -106,16 +106,24 @@ authentication and expensive-request concurrency to one each. The existing
 256 MiB minimum-free-space and 128 MiB database-headroom settings remain in force.
 The upload screen reads its limits from the server configuration.
 
-These limits are a starting configuration, not proof of 512 MB suitability.
-A Docker check with 512 MB RAM, no swap and half a CPU was started, but its
-process handle disappeared after a tooling reconnect and Docker became
-unavailable. No passing result was recovered. Repeat the constrained run with
-signup/signin, allowed-size images/PDFs, correction, exports and overlapping
-authentication, expensive HTTP requests and worker activity; verify peak memory and OOM status before activating this plan.
+A constrained Docker run completed on September 10 with 512 MiB RAM, no swap
+and half a CPU: three rounds of concurrent sign-in, 4 MP image/2200-edge PDF
+rendering and replay worker processing, followed by correction, three export
+formats and database reopen. It took 28.37 seconds, with 218.1 MiB peak process
+RSS and 233,549,824 bytes (222.7 MiB) peak cgroup memory. Exit code was zero and
+OOMKilled was false. The harness is retained locally at
+`outputs/local-verification/budget-capacity.py`.
+
+This used the existing runtime image with current source mounted read-only.
+It called service methods in threads; it did not run the HTTP listener, real
+Modal inference or Gmail delivery. The inherited container healthcheck timed
+out because the harness replaced the server command. This is a bounded capacity
+smoke check, not an HTTP load test or proof of production readiness. Verify the
+actual server and real provider under the same limit before launch.
 Modal spending is authorized only within the available free credit. The earlier
 US$30/month proposal is superseded; do not activate it.
 
 Local validation of this budget change: 14 focused storage/sample/account/public-page
 tests passed; JavaScript syntax, Ruff and diff whitespace checks passed. The
 production configuration validates with synthetic model/email placeholders.
-These checks do not establish live email, model inference or memory capacity.
+The focused tests do not establish live email or model inference.

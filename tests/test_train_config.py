@@ -399,3 +399,20 @@ def test_render_origin_uses_platform_url_with_explicit_override(monkeypatch):
     assert Settings.from_env().base_url == "https://assigned-service.onrender.com"
     monkeypatch.setenv("UNRENDER_BASE_URL", "https://custom.example/")
     assert Settings.from_env().base_url == "https://custom.example"
+
+
+def test_inference_import_does_not_require_evaluation_dependencies():
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['rapidfuzz'] = None; "
+            "from unrender.eval import providers; "
+            "assert callable(providers.hf_vlm_provider); "
+            "assert 'unrender.eval.metrics' not in sys.modules",
+        ],
+        check=True,
+    )

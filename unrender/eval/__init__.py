@@ -6,6 +6,12 @@ files, so you can re-score for free whenever you tweak a metric — you never
 re-call (re-pay) an API to change how you measure.
 """
 
-from unrender.eval.metrics import aggregate, score_sample
-
 __all__ = ["aggregate", "score_sample"]
+
+
+def __getattr__(name):
+    if name in __all__:
+        from unrender.eval import metrics
+
+        return getattr(metrics, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

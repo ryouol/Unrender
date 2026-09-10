@@ -76,6 +76,7 @@ def _inference_source_digest() -> str:
     root = Path(__file__).resolve().parent
     paths = (
         Path("modal_train.py"),
+        Path("unrender/eval/__init__.py"),
         Path("unrender/eval/providers.py"),
         Path("unrender/prompts.py"),
         Path("unrender/schema/chart_schema.py"),

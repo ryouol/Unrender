@@ -722,7 +722,7 @@ async function reconcilePrincipal() {
       throw staleAuthError("The authenticated principal did not match the durable browser state");
     }
     applyAccount(account);
-    if (previous !== account.principal_marker || !state.jobs.length) {
+    if (previous !== account.principal_marker) {
       await loadJobs();
       if (await recoverDurableJobSubmission()) return;
       if (state.jobs.length) await openJob(state.jobs[0].id);
@@ -1040,7 +1040,7 @@ function startUpload() {
 }
 
 async function prepareFile(file) {
-  if (!file) return;
+  if (!file || byId("dropzone").getAttribute("aria-busy") === "true") return;
   const epoch = state.authEpoch;
   const view = beginViewSelection();
   clearError("upload-error");
@@ -2019,6 +2019,29 @@ function bindEvents() {
     if (state.currentJob) openJob(state.currentJob.id); else showMainView("empty-view");
   });
   byId("file-input").addEventListener("change", (event) => prepareFile(event.target.files[0]));
+  const dropzone = byId("dropzone");
+  dropzone.addEventListener("dragover", (event) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+    event.preventDefault();
+    const busy = dropzone.getAttribute("aria-busy") === "true";
+    event.dataTransfer.dropEffect = busy ? "none" : "copy";
+    dropzone.classList.toggle("is-dragover", !busy);
+  });
+  dropzone.addEventListener("dragleave", (event) => {
+    if (!dropzone.contains(event.relatedTarget)) dropzone.classList.remove("is-dragover");
+  });
+  dropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropzone.classList.remove("is-dragover");
+    if (dropzone.getAttribute("aria-busy") === "true") return;
+    const files = event.dataTransfer?.files;
+    if (!files?.length) return;
+    if (files.length !== 1) {
+      showError("upload-error", new Error("Drop one chart image or PDF at a time."));
+      return;
+    }
+    prepareFile(files[0]);
+  });
   byId("previous-page-button").addEventListener("click", () => changePage(-1));
   byId("next-page-button").addEventListener("click", () => changePage(1));
   byId("clear-crop-button").addEventListener("click", clearCrop);

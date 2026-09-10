@@ -103,11 +103,12 @@ vm.runInContext(
   `${source}
 renderJobList = () => {};
 renderJob = () => {};
-showMainView = () => {};
+globalThis.__mainViewCalls = [];
+showMainView = (name) => globalThis.__mainViewCalls.push(name);
 globalThis.__unrenderTest = {
   api, clearApiKeySecret, closeKeyDialog, createKey, downloadExport, editorRows,
   loadApiKeys, logout, queueCurrentUpload, resetPrivateState, showPublic, state,
-  syncAuthRecordFromStorage, readDurableAuthRecord, publishAuthChange,
+  syncAuthRecordFromStorage, readDurableAuthRecord, publishAuthChange, reconcilePrincipal,
   EDITOR_PAGE_SIZE, EDITOR_MOUNTED_CELL_LIMIT,
 };`,
   context,
@@ -453,3 +454,24 @@ assert.ok(Date.now() - started < 1000);
 assert.ok(
   (50 * 2) + (test.EDITOR_PAGE_SIZE * 9) + 7 + 5 <= test.EDITOR_MOUNTED_CELL_LIMIT,
 );
+
+// Returning from a file picker must not discard a first-time customer's upload.
+installAuthenticatedRecord("upload-principal");
+test.state.principalMarker = "upload-principal";
+test.state.jobs = [];
+test.state.upload = { id: "pending-upload" };
+const viewsBeforeFocus = context.__mainViewCalls.length;
+const focusRequests = [];
+context.fetch = async (path) => {
+  focusRequests.push(path);
+  return {
+    ok: true, status: 200, headers: { get: () => "application/json" },
+    json: async () => path === "/api/me"
+      ? { id: "upload-user", principal_marker: "upload-principal", credits: 3 }
+      : { items: [] },
+  };
+};
+await test.reconcilePrincipal();
+assert.deepEqual(focusRequests, ["/api/me"]);
+assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);
+assert.equal(test.state.upload.id, "pending-upload");

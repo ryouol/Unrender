@@ -205,6 +205,7 @@ input, select {
 .upload-flow { max-width: 980px; margin: 0 auto; }
 .dropzone { margin-top: 26px; min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 7px; border: 1px dashed var(--line-strong); background: var(--surface); cursor: pointer; }
 .dropzone:hover { border-color: var(--green); }
+.dropzone.is-dragover { border-color: var(--green); background: var(--green-light); }
 .dropzone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .dropzone span { color: var(--muted); font-size: 0.86rem; }
 .page-review { margin-top: 24px; }

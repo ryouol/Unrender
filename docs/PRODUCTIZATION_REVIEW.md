@@ -192,11 +192,11 @@ observation time, before credits and excluding storage and reporting delay.
     root is platform-owned, so chmod correctly failed under UID 10001. Configure
     `/data/unrender` inside the persistent disk. The app owns that directory and
     retains mode 0700; no permission checks or non-root execution were weakened.
-24. **Removed invalid deployment assumption; interruption gate remains open**
+24. **Removed invalid deployment assumption; restart path verified**
     (`render.yaml:8`). Render rejects custom shutdown grace on disk-backed
     services. Removed `maxShutdownDelaySeconds: 300`. Drain jobs before planned
-    deploys; verify forced termination preserves dispatched spend without
-    redispatch. An idle persistence test does not establish in-flight recovery.
+    deploys; the subsequent hosted in-flight restart test verified retained spend
+    without redispatch. Other timeout/cancellation scenarios remain separate.
 
 Render's Blueprint validator accepted the updated configuration. Live HTTPS
 readiness reports the Modal extractor and running worker. Non-root SSH and
@@ -213,15 +213,15 @@ public-launch limits are in RENDER_MODAL_LAUNCH.md.
     (`docs/RENDER_MODAL_LAUNCH.md:112` at review). Storage quotas are described as
     server-enforced; only upload/image/PDF limits are described as UI-visible.
 
-28. **Fixed locally P1 — lease expires after worker startup**
+28. **Fixed and verified on Render P1 — lease expires after worker startup**
     (`unrender/product/worker.py:60`). A real Render restart left a dispatched job
     running after its lease expired because recovery ran only during startup.
     The worker now revisits transactional, fenced recovery between jobs at the
     heartbeat cadence. Active leases stay untouched; expired dispatched attempts
     retain spent credits and cannot automatically redispatch. A regression expires
     the lease after the first new-worker poll and verifies terminal state, no
-    second provider call, and one charged attempt. Hosted re-verification follows
-    deployment. This cadence is not a strict deadline while another job runs.
+    second provider call, and one charged attempt. Hosted re-verification passed
+    after deployment. This cadence is not a strict deadline while another job runs.
 
 Hosted initial canary passed in 82.89 seconds with secure HttpOnly session cookie,
 upload, correction, approval, CSV/JSON/XLSX and audit sheet. Coordinated backup
@@ -233,3 +233,10 @@ Focused follow-up reuse/breaking, quality/testing, and efficiency/context/size
 reviews found no additional issue in the periodic recovery change. Full local
 validation passed: 194 tests, 1 skipped; Ruff, mypy (15 product files), and
 Blueprint validation passed. Starlette's TestClient/httpx deprecation remains.
+
+Live runtime `12043ac` passed the repeated dispatched-job restart test in 70.08
+seconds: terminal `worker_lease_expired_after_dispatch`, attempt count one, credit
+retained, approved prior job and all exports preserved. The failed diagnostic
+jobs were removed afterward; the approved sample remains in the invited account.
+The provider release is unchanged. No provider- or account-wide billing cap was
+changed. Repository reports contain no login/provider secrets.

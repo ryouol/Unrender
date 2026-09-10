@@ -44,10 +44,10 @@ docker compose up --build
 ## Production accounts and Render
 
 See [`docs/RENDER_MODAL_LAUNCH.md`](docs/RENDER_MODAL_LAUNCH.md) for the Render + Modal
-configuration and remaining external release gates. Public signup now requires
-verified email delivery and zero welcome credits in production. Recovery revokes
-sessions and API keys while retaining saved work. `render.yaml` is a deployment
-template, not evidence of an active hosted service.
+configuration, hosted verification, and remaining public-release gates. The invited
+pilot is live at https://unrender.onrender.com. Public signup and email are off.
+Enabling public signup later requires verified email and zero welcome credits;
+password recovery revokes sessions and API keys while retaining saved work.
 
 ## Configure real extraction
 
@@ -56,7 +56,7 @@ The current production adapter calls the existing `modal_train.py::infer_one` de
 ```dotenv
 UNRENDER_ENV=production
 UNRENDER_BASE_URL=https://unrender.example.com
-UNRENDER_DATA_DIR=/data
+UNRENDER_DATA_DIR=/data/unrender
 UNRENDER_EXTRACTOR=modal
 UNRENDER_WORKER_ENABLED=true
 UNRENDER_SEED_DEMO=false

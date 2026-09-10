@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications inherit the
   workspace's failure-only setting. No other project's configuration changed.
-- Initial live code: `c5fae0782f75a9089158192ce42223e439973ce7`.
+- Live runtime code: `12043accc805d12b9f947b46fc8b8ce3c7adb326`.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -27,8 +27,10 @@ Render rejects custom shutdown grace periods on services with disks. Do not add
 `maxShutdownDelaySeconds: 300` to this topology: the API rejected that setting.
 Drain active jobs before planned restarts/deployments. The app's 240-second
 provider deadline does not establish a matching platform termination grace.
-An interrupted dispatched attempt must remain spent and must not automatically
-redispatch; verify recovery separately from a clean idle restart.
+The hosted in-flight restart test passed after the recovery fix: the interrupted
+attempt became terminal with `worker_lease_expired_after_dispatch`, stayed charged
+once, and was not redispatched. Approved work and exports survived the restart.
+The observed restart/recovery check took 70.08 seconds and included downtime.
 
 ## Budget and access
 
@@ -101,15 +103,18 @@ preprocessing was not silently changed during deployment.
   private recovery archive was copied off-host to the operator machine. These
   are manual checks, not scheduled recovery coverage.
 - The first in-flight restart test exposed a post-startup lease-recovery gap.
-  A worker fix and regression now recover leases expiring after startup without
-  refunding or redispatching a charged attempt; hosted retest is pending.
+  The deployed fix and regression recover leases expiring after startup. Hosted
+  retest passed: one charged attempt, no redispatch, terminal failure, and approved
+  work/export persistence. Failed diagnostic jobs were removed after recording
+  the results; the approved example remains available.
 - Trusted proxy client-IP attribution remains open: live access logs show Render
   private proxy addresses. Do not blindly trust forwarded headers. Verify header
   rewriting and the private/direct ingress boundary before public signup.
 - Configure scheduled coordinated off-host backups and alert delivery. A disk
   snapshot alone does not meet the app's database/file consistency contract.
 - Complete the base-image advisory assessment's deployment assumptions, provider
-  interruption tests, and intended-input numerical/correction-time evaluation.
+  timeout/cancellation coverage beyond the tested restart path, and intended-input
+  numerical/correction-time evaluation.
 - Public legal/operator/support details still need completion before a broad
   customer launch. Email setup is explicitly deferred, not silently considered
   tested. This is an invited pilot deployment, not a claim that all release gates

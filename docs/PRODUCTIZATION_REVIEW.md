@@ -158,3 +158,33 @@ CPU-only publication completed successfully in Modal run
 `ap-RkfwH2s4N8OiiiNA2eezXZ`, returning `private_release_verified` for digest
 `3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
 This establishes a committed private artifact, not inference quality or latency.
+
+21. **Fixed P2 — scorer imported during inference startup**
+    (`unrender/eval/__init__.py:9`). Live canary failed on missing `rapidfuzz`.
+    Scoring exports now load lazily; provider import works without scorer extras.
+    A subprocess regression hides rapidfuzz and verifies independent inference import.
+22. **Fixed P2 — missing Qwen processor dependency** (`modal_train.py:68`).
+    Live canary required Torchvision. The inference image now pins torchvision
+    0.24.1 alongside the officially paired torch 2.9.1.
+
+The deployed model subsequently returned valid schema data with no parse errors:
+first call 91.29 seconds, immediate repeat 51.84 seconds, identical provider release
+`9435fb6f0b24068f7006401fd44d49e3a925330267dfb2302156eb677104b08d`.
+The Render template now pins this observed release and the verified private model.
+Numerical readings still need review (for example the model returned 9.0 for
+Q1 2017 where the saved sample reference is 9.8). This single low-resolution chart
+is operational evidence, not a representative accuracy benchmark. Tokenizer regex
+and truncation warnings appeared; no automatic tokenizer change was made that
+would silently alter the trained release's preprocessing.
+
+The full local production-configured HTTP flow also passed using the real remote
+model: operator provisioning and sign-in, upload, inference (48.26 seconds),
+correction of Q3 2016 from 9.0 to 9.2, approval, CSV/JSON/XLSX exports, workbook
+audit-sheet presence, logout, application restart, re-login, and approved-job
+persistence. Evidence is in `outputs/local-verification/live-product-flow/report.json`
+and its exported files. TestClient's HTTPS URL is simulated; this does not prove
+Render TLS, proxy attribution, disk ownership, or externally reachable production.
+
+Latest completed CI at b164f77 passed both verification and container builds.
+Modal billing reported $0.07880970 of UNRENDER app compute for the day at the
+observation time, before credits and excluding storage and reporting delay.

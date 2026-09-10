@@ -50,13 +50,13 @@ services:
       - key: UNRENDER_MODAL_FUNCTION
         value: infer_one
       - key: UNRENDER_MODAL_MODEL
-        sync: false
+        value: "modal-volume/unrender-inference-cache"
       - key: UNRENDER_MODAL_REVISION
-        sync: false
+        value: "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e"
       - key: UNRENDER_MODAL_MODEL_DIGEST
-        sync: false
+        value: "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e"
       - key: UNRENDER_MODAL_PROVIDER_RELEASE
-        sync: false
+        value: "9435fb6f0b24068f7006401fd44d49e3a925330267dfb2302156eb677104b08d"
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET

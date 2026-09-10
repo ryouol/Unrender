@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications inherit the
   workspace's failure-only setting. No other project's configuration changed.
-- Live runtime code: `12043accc805d12b9f947b46fc8b8ce3c7adb326`.
+- Live runtime code: `e09a8f1` (invitation onboarding changes pending deployment).
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -41,12 +41,11 @@ Modal compute/storage and any Render usage overages are additional. This is not
 a provider-enforced dollar cap.
 
 Only invited accounts are enabled. Public registration, welcome credits, customer
-billing, and email delivery are off. Provision users using `unrender-admin
-create-user email --credits N`; the password is prompted, never a command-line
-argument. Grant credits deliberately using a unique reference:
-`unrender-admin grant-credits email --credits N --reference pilot-001`.
-Repeating the reference does not grant twice. Self-service account recovery is
-unavailable while email setup is deferred.
+billing, and email delivery are off. The invitation commands in OPERATIONS.md let
+recipients choose their own password through a one-use link, without sending email.
+Grant credits deliberately with `unrender-admin grant-credits email --credits N
+--reference pilot-001`; repeating the reference does not grant twice. Operator
+recovery links are supported; self-service email recovery remains deferred.
 
 Modal's dedicated `unrender-production` app allows one L4 container, zero automatic
 retries, a 240-second function timeout, and a two-second idle scale-down window.

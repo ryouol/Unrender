@@ -246,7 +246,8 @@ changed. Repository reports contain no login/provider secrets.
     product logger on stdout. The JSON formatter retains only operational fields
     and exception type; arbitrary extras and exception text/tracebacks are omitted.
     A subprocess entrypoint regression covers actual log configuration, not only
-    records captured by pytest's configured logger. Hosted verification follows.
+    records captured by pytest's configured logger. Hosted verification passed on `e09a8f1`: the owned-chart canary reached review in
+    76.7 seconds and Render emitted both start and provider-success JSON records.
 30. **Fixed P2 — reserved logging test attribute**
     (`tests/test_product.py:3871` at review). All three reviewers identified that
     `filename` cannot be supplied through LogRecord extras. The sensitive synthetic
@@ -258,3 +259,16 @@ changed. Repository reports contain no login/provider secrets.
 Reuse/breaking, quality/testing, and efficiency/context/size review found no
 remaining runtime defect in the logging change. Current event call sites use
 constant messages; the formatter deliberately does not interpolate log arguments.
+
+32. **Fixed P2 — private link publication could fail after account commit**
+    (`unrender/product/admin.py:106` at review). Reuse/breaking and quality/testing
+    reviewers both reported this. The operator publication callback now writes,
+    flushes, and syncs before the surrounding account/challenge transaction commits.
+    Failure rolls back account creation or challenge replacement; the CLI removes
+    the incomplete file. Regression verifies no orphaned account and preservation
+    of the previous working link. Follow-up review found no further defect.
+
+Invitation checks cover activation, one-use consumption, reissue invalidation,
+password strength, persistence across service recreation, session revocation,
+atomic failure, private output permissions, and prevention of file overwrite.
+Efficiency/context/size review found no actionable issue.

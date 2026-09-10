@@ -8,6 +8,7 @@
   // Remove bearer credentials from the address bar/history before any request.
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   const completing = Boolean(token && ["verify", "reset"].includes(purpose));
+  const invitation = completing && purpose === "reset" && new URLSearchParams(location.search).get("mode") === "invite";
   const verifying = completing ? purpose === "verify" : new URLSearchParams(location.search).get("mode") === "verify";
   const form = byId("account-form");
   const button = byId("account-submit");
@@ -25,6 +26,11 @@
       ? "Enter the password you chose when signing up to finish verifying your account."
       : "Use at least 12 characters. Resetting your password signs out all sessions and revokes existing API keys. Your saved charts remain in your account.";
     button.textContent = verifying ? "Verify email" : "Reset password";
+    if (invitation) {
+      byId("account-title").textContent = "Create your workspace password";
+      byId("account-description").textContent = "Your operator invited you to Unrender. Choose a password with at least 12 characters to activate your private workspace. This link works once and expires after 30 minutes.";
+      button.textContent = "Activate workspace";
+    }
   } else if (verifying) {
     byId("account-title").textContent = "Resend verification email";
     byId("account-description").textContent = "Enter the email you used to create your workspace.";

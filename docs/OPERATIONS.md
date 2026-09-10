@@ -19,13 +19,21 @@ The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture m
 
 `/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. The readiness route is covered by the client-IP admission bucket and should also be private to the platform health network; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider.
 
-Provision controlled-beta accounts from a trusted shell on the running service with the configured data directory (Render one-off jobs do not mount the service disk). The password is prompted without echo and is never accepted as a command-line argument; the command does not start a worker or recover running jobs:
+Invite users from a trusted shell on the running service with its configured data directory (Render one-off jobs do not mount the service disk):
 
 ```bash
-unrender-admin create-user analyst@example.com --credits 25
+unrender-admin invite-user analyst@example.com --credits 0 --destination /tmp/analyst-invite.txt
 ```
 
-Do not expose this command through the web service or run it in a shared shell transcript.
+The command saves a one-use, 30-minute setup link in a new mode-0600 file. Deliver it privately to the intended person after verifying their identity; do not paste it in shared logs or issue trackers. The recipient chooses their own password. Email delivery and public registration can remain disabled. Default credits are zero; grant a deliberate allowance separately. Account and challenge changes roll back if writing or syncing the file fails. Delete the link file after secure delivery. An expired or lost link can be replaced:
+
+```bash
+unrender-admin account-link analyst@example.com --destination /tmp/analyst-recovery.txt
+```
+
+Only issue recovery links after verifying the person's identity. A successful reissue invalidates prior account links. Completing recovery changes the password, signs out existing sessions, and revokes API keys; charts and credits remain. Neither command invokes inference. Existing destination files are never overwritten. A crash after file publication but before database commit can leave an unusable file; issue a new link through the operator command. Self-service email recovery remains unavailable until email is configured.
+
+`create-user` remains available for operator-provisioned accounts and prompts for the password without echo. Do not expose administrative commands through the web service.
 
 ## Logs and alerts
 

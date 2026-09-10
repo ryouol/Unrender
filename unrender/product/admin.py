@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 from pathlib import Path
 
 from unrender.product.backup import BackupError, create_backup, restore_backup
@@ -20,6 +21,15 @@ def parser() -> argparse.ArgumentParser:
     create = commands.add_parser("create-user", help="provision a controlled-beta account")
     create.add_argument("email")
     create.add_argument("--credits", type=int, default=0)
+    invite = commands.add_parser("invite-user", help="create an account with a one-use setup link")
+    invite.add_argument("email")
+    invite.add_argument("--credits", type=int, default=0)
+    invite.add_argument("--destination", required=True, type=Path)
+    link = commands.add_parser(
+        "account-link", help="issue an operator-verified recovery/setup link"
+    )
+    link.add_argument("email")
+    link.add_argument("--destination", required=True, type=Path)
     grant = commands.add_parser(
         "grant-credits", help="grant extraction credits to a verified account"
     )
@@ -68,7 +78,7 @@ def main() -> None:
             "no inference was invoked"
         )
         return
-    if arguments.command not in {"create-user", "grant-credits"}:
+    if arguments.command not in {"create-user", "grant-credits", "invite-user", "account-link"}:
         raise SystemExit(2)
     password = ""
     if arguments.command == "create-user":
@@ -89,6 +99,30 @@ def main() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     database.initialize()
     try:
+        if arguments.command in {"invite-user", "account-link"}:
+            descriptor = os.open(arguments.destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(descriptor, "w") as output:
+
+                    def publish(link: str) -> None:
+                        output.write(link + "\n")
+                        output.flush()
+                        os.fsync(output.fileno())
+
+                    if arguments.command == "invite-user":
+                        service.invite_user(
+                            arguments.email, credits=arguments.credits, publish=publish
+                        )
+                    else:
+                        service.operator_account_link(arguments.email, publish=publish)
+            except BaseException:
+                arguments.destination.unlink(missing_ok=True)
+                raise
+            print(
+                f"One-use account link saved privately to {arguments.destination}; "
+                "expires in 30 minutes"
+            )
+            return
         if arguments.command == "grant-credits":
             service.grant_credits(
                 arguments.email, credits=arguments.credits, reference=arguments.reference
@@ -96,6 +130,6 @@ def main() -> None:
             print("Credit grant applied (retries with the same reference are idempotent)")
             return
         user_id = service.provision_user(arguments.email, password, credits=arguments.credits)
-    except ProductError as exc:
+    except (ProductError, OSError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"Created account {user_id}")

@@ -3890,3 +3890,104 @@ main()
     assert all(record["job_id"] == "test-job" for record in records)
     assert "private" not in result.stdout + result.stderr
     assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_invitation_activation_reissue_and_persistence(tmp_path: Path) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+    link = service.invite_user("invited@example.com", credits=2)
+    token = link.split("token=", 1)[1]
+    with service.database.connect() as conn:
+        row = conn.execute("SELECT * FROM users").fetchone()
+        challenge = conn.execute("SELECT * FROM account_challenges").fetchone()
+    assert row["email_verified"] == 0
+    assert challenge["token_hash"] != token
+    assert row["credit_balance"] == 2
+    with pytest.raises(ProductError):
+        service.authenticate("invited@example.com", "a password never configured")
+    with pytest.raises(ProductError):
+        service.complete_account_email(token, purpose="reset", password="short")
+    replacement = service.operator_account_link("invited@example.com").split("token=", 1)[1]
+    with pytest.raises(ProductError, match="expired or was already used"):
+        service.complete_account_email(token, purpose="reset", password="a long chosen password")
+    service.complete_account_email(replacement, purpose="reset", password="a long chosen password")
+    session = service.authenticate("invited@example.com", "a long chosen password")
+    assert service.session_user(session["session"])["id"] == row["id"]
+    with pytest.raises(ProductError, match="expired or was already used"):
+        service.complete_account_email(
+            replacement, purpose="reset", password="a long chosen password"
+        )
+    restarted = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+    assert restarted.session_user(session["session"])["id"] == row["id"]
+    assert restarted.account(row["id"])["credits"] == 2
+    recovery = restarted.operator_account_link("invited@example.com").split("token=", 1)[1]
+    assert restarted.session_user(session["session"]) is not None
+    restarted.complete_account_email(
+        recovery, purpose="reset", password="a different chosen password"
+    )
+    assert restarted.session_user(session["session"]) is None
+    restarted.authenticate("invited@example.com", "a different chosen password")
+
+
+def test_invitation_creation_rolls_back_if_challenge_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+
+    def fail(*args: object) -> None:
+        raise RuntimeError("storage failure")
+
+    monkeypatch.setattr(service, "_store_account_challenge", fail)
+    with pytest.raises(RuntimeError, match="storage failure"):
+        service.invite_user("invited@example.com", credits=2)
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM credit_ledger").fetchone()[0] == 0
+
+
+def test_admin_invitation_writes_private_link_without_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "operator-data"
+    destination = tmp_path / "invitation.txt"
+    monkeypatch.setenv("UNRENDER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("UNRENDER_ENV", "test")
+    monkeypatch.setenv("UNRENDER_BASE_URL", "http://testserver")
+    monkeypatch.setenv("UNRENDER_SEED_DEMO", "false")
+    monkeypatch.setenv("UNRENDER_ALLOW_REGISTRATION", "false")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["unrender-admin", "invite-user", "invited@example.com", "--destination", str(destination)],
+    )
+    admin.main()
+    link = destination.read_text().strip()
+    assert link.startswith("http://testserver/account?mode=invite#account=reset&token=")
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert link not in capsys.readouterr().out
+    monkeypatch.setattr(
+        "sys.argv",
+        ["unrender-admin", "invite-user", "other@example.com", "--destination", str(destination)],
+    )
+    with pytest.raises(SystemExit, match="File exists"):
+        admin.main()
+    assert destination.read_text().strip() == link
+    with Database(data_dir / "unrender.sqlite3").connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+
+
+def test_invitation_publication_failure_preserves_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+
+    def fail(link: str) -> None:
+        raise OSError("disk full")
+
+    with pytest.raises(OSError, match="disk full"):
+        service.invite_user("invited@example.com", credits=2, publish=fail)
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    token = service.invite_user("invited@example.com").split("token=", 1)[1]
+    with pytest.raises(OSError, match="disk full"):
+        service.operator_account_link("invited@example.com", publish=fail)
+    service.complete_account_email(token, purpose="reset", password="a long chosen password")
+    service.authenticate("invited@example.com", "a long chosen password")

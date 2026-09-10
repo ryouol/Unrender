@@ -16,6 +16,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -867,6 +868,8 @@ class ProductService:
         credit_reason: str = "welcome_allowance",
         account_kind: str = "customer",
         email_verified: bool = True,
+        activation_token: str | None = None,
+        publish_activation: Callable[[], None] | None = None,
     ) -> str:
         user_id = self._id()
         now = timestamp()
@@ -909,6 +912,10 @@ class ProductService:
                         idempotency_key=f"welcome:{user_id}",
                     )
                 self._audit(conn, user_id=user_id, event_type="account_created")
+                if activation_token:
+                    self._store_account_challenge(conn, user_id, "reset", activation_token)
+                    if publish_activation:
+                        publish_activation()
         except sqlite3.IntegrityError as exc:
             raise ProductError("email_in_use", "An account already uses that email", 409) from exc
         return user_id
@@ -956,27 +963,75 @@ class ProductService:
             ).fetchone()[0]
             if count >= 5:
                 return
-            self._insert_row(
-                conn,
-                "INSERT INTO account_challenges("
-                "id,user_id,purpose,token_hash,expires_at,created_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (
-                    self._id(),
-                    user["id"],
-                    purpose,
-                    token_hash(token),
-                    timestamp(utcnow() + timedelta(minutes=30)),
-                    now,
-                ),
-                user_id=user["id"],
-            )
+            self._store_account_challenge(conn, str(user["id"]), purpose, token)
         # Preserve other delivered links across failed or reordered delivery.
         if send_account_email(self.settings, normalized, purpose, token) is False:
             with self.database.transaction(immediate=True) as conn:
                 conn.execute(
                     "DELETE FROM account_challenges WHERE token_hash=?", (token_hash(token),)
                 )
+
+    def _store_account_challenge(
+        self, conn: sqlite3.Connection, user_id: str, purpose: str, token: str
+    ) -> None:
+        self._insert_row(
+            conn,
+            "INSERT INTO account_challenges("
+            "id,user_id,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,?,?,?)",
+            (
+                self._id(),
+                user_id,
+                purpose,
+                token_hash(token),
+                timestamp(utcnow() + timedelta(minutes=30)),
+                timestamp(),
+            ),
+            user_id=user_id,
+        )
+
+    def invite_user(
+        self, email: str, *, credits: int = 0, publish: Callable[[str], None] | None = None
+    ) -> str:
+        """Operator-vetted signup without transporting a password or sending email."""
+        if not 0 <= credits <= 1_000_000:
+            raise ProductError("invalid_credits", "Credits must be between 0 and 1,000,000", 422)
+        token = random_token()
+        link = f"{self.settings.base_url}/account?mode=invite#account=reset&token={token}"
+        self._create_user(
+            email,
+            random_token(),
+            initial_credits=credits,
+            credit_reason="operator_grant",
+            email_verified=False,
+            activation_token=token,
+            publish_activation=(lambda: publish(link)) if publish else None,
+        )
+        return link
+
+    def operator_account_link(
+        self, email: str, *, publish: Callable[[str], None] | None = None
+    ) -> str:
+        """Replace account setup/recovery links after the operator checks identity."""
+        try:
+            normalized = normalize_email(email)
+        except ValueError as exc:
+            raise ProductError("invalid_account", str(exc), 422) from exc
+        token = random_token()
+        with self.database.transaction(immediate=True) as conn:
+            user = conn.execute(
+                "SELECT id,email_verified FROM users WHERE email=? AND account_kind='customer'",
+                (normalized,),
+            ).fetchone()
+            if not user:
+                raise ProductError("user_not_found", "Account not found", 404)
+            conn.execute("DELETE FROM account_challenges WHERE user_id=?", (user["id"],))
+            self._store_account_challenge(conn, str(user["id"]), "reset", token)
+            self._audit(conn, user_id=user["id"], event_type="operator_account_link_issued")
+            mode = "" if user["email_verified"] else "?mode=invite"
+            link = f"{self.settings.base_url}/account{mode}#account=reset&token={token}"
+            if publish:
+                publish(link)
+        return link
 
     def complete_account_email(self, token: str, *, purpose: str, password: str = "") -> None:
         if purpose not in {"verify", "reset"}:

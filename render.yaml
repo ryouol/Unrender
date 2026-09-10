@@ -17,6 +17,8 @@ services:
       # Uses Render-provided RENDER_EXTERNAL_URL; set UNRENDER_BASE_URL for a custom domain.
       - key: UNRENDER_DATA_DIR
         value: /data/unrender
+      - key: UNRENDER_BACKUP_VOLUME
+        value: unrender-production-backups
       # Leave disk room for SQLite, temporary copies and free-space reserves.
       - key: UNRENDER_MAX_STORAGE_BYTES_GLOBAL
         value: "524288000"

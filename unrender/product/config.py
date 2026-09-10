@@ -38,6 +38,7 @@ class Settings:
     worker_lease_seconds: int = 45
     worker_heartbeat_seconds: int = 10
     worker_shutdown_timeout_seconds: int = 30
+    backup_volume_name: str = ""
     allow_registration: bool = True
     smtp_host: str = ""
     smtp_port: int = 587
@@ -135,6 +136,10 @@ class Settings:
         return self.max_result_json_bytes + 64 * 1024
 
     def validate(self) -> None:
+        if self.backup_volume_name and not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", self.backup_volume_name
+        ):
+            raise ValueError("UNRENDER_BACKUP_VOLUME must be a valid Modal volume name")
         if self.environment not in {"development", "test", "production"}:
             raise ValueError("UNRENDER_ENV must be development, test, or production")
         if self.extractor_backend not in {"replay", "modal"}:
@@ -384,6 +389,7 @@ class Settings:
             ),
             reconciliation_grace_seconds=_int("UNRENDER_RECONCILIATION_GRACE_SECONDS", 300),
             provider_timeout_seconds=_int("UNRENDER_PROVIDER_TIMEOUT_SECONDS", 240),
+            backup_volume_name=os.getenv("UNRENDER_BACKUP_VOLUME", ""),
             modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender-production"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer_one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),

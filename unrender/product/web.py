@@ -7,7 +7,7 @@ import hashlib
 import logging
 import os
 from collections.abc import Awaitable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlsplit
@@ -36,6 +36,7 @@ from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
 from unrender.product.public_site import document, error_document, sitemap
+from unrender.product.scheduled_backup import ScheduledBackup
 from unrender.product.service import ProductError, ProductService
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.worker import JobWorker
@@ -372,13 +373,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         static_dir=static_dir,
     )
     worker = JobWorker(service)
+    backups = ScheduledBackup(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         service.initialize()
         if settings.worker_enabled:
             worker.start()
+            backups.start()
         yield
+        await run_in_threadpool(backups.stop)
         stopped = await run_in_threadpool(worker.stop)
         while not stopped and worker.is_running:
             # A dispatched provider call is deliberately not abandoned at the local
@@ -437,7 +441,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def allowed_request(bucket: str, *, group: str) -> bool:
         try:
-            return service.rate_limit(f"{bucket}:{group}", limit=rate_limit_for(group))
+            guard = (
+                database.operational_lock(exclusive=False, timeout_seconds=0)
+                if settings.backup_volume_name
+                else nullcontext()
+            )
+            with guard:
+                return service.rate_limit(f"{bucket}:{group}", limit=rate_limit_for(group))
+        except TimeoutError:
+            raise
         except Exception:
             return False
 
@@ -471,9 +483,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client = request.client.host if request.client else "unknown"
         ip_bucket = hashlib.sha256(f"ip:{client}".encode()).hexdigest()[:24]
         group = rate_group(request)
-        if request.url.path != "/health/live" and not allowed_request(
-            f"ip:{ip_bucket}", group=group
-        ):
+        try:
+            allowed = request.url.path == "/health/live" or await run_in_threadpool(
+                allowed_request, f"ip:{ip_bucket}", group=group
+            )
+        except TimeoutError:
+            return secure_response(
+                JSONResponse(
+                    {
+                        "error": {
+                            "code": "maintenance_busy",
+                            "message": "A recovery snapshot is in progress. Retry shortly.",
+                        }
+                    },
+                    status_code=503,
+                    headers={"Retry-After": "10"},
+                ),
+                request,
+            )
+        if not allowed:
             return secure_response(
                 JSONResponse(
                     {"error": {"code": "rate_limited", "message": "Try again in a minute"}},
@@ -505,6 +533,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(set(allowed_hosts)))
     app.add_middleware(SecurityHeadersMiddleware, secure_cookies=settings.secure_cookies)
+
+    @app.exception_handler(TimeoutError)
+    async def storage_busy(_: Request, exc: TimeoutError):
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "service_busy",
+                    "message": "The service is temporarily busy. Retry shortly.",
+                }
+            },
+            status_code=503,
+            headers={"Retry-After": "10"},
+        )
 
     @app.exception_handler(ProductError)
     async def product_error(_: Request, exc: ProductError):

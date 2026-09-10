@@ -107,3 +107,50 @@ customer-provided commands, Perl expressions, terminal descriptions or archives.
 Verify deployed UID, mount/capability boundaries and operator access before
 relying on the image-specific advisory assessment. Keep scan findings visible
 and reassess when the base image or operational workflow changes.
+
+
+## Scheduled off-host recovery copies
+
+Set `UNRENDER_BACKUP_VOLUME=unrender-production-backups` only after creating that
+private Modal v1 volume. This optional scheduler uses the Render service's existing
+Modal credentials; it adds no GPU function, public backup endpoint or Render SSH
+credential in Modal. It is disabled when the setting is empty.
+
+The single-instance service checks hourly and creates a coordinated snapshot when
+its previous verified copy is at least 24 hours old. It defers while an extraction
+or source publication is active. During the local snapshot lock, requests receive
+503 with Retry-After; `/health/live` remains available. This is a brief maintenance
+window, not a zero-downtime backup promise. Each attempt has a 600-second deadline.
+
+A snapshot includes SQLite, committed sources and a hash inventory. Temporary
+space and snapshot size are checked before copying. Archives are limited to one
+GiB. Upload readback uses concurrency one through the pinned Modal 1.5.5 SDK;
+review this private-method contract when upgrading that dependency. The dedicated
+backup subprocess also bounds the
+pinned SDK multipart upload budget to 64 MiB (one 16 MiB segment plus SDK buffers);
+the web and inference processes keep their SDK defaults. Recheck both private SDK
+contracts when upgrading Modal. Seven archives
+are retained after verification; at eight, the scheduler resumes verification and
+pruning instead of uploading again. Unexpected extra archives or corrupt readback
+fail closed and require operator investigation. These are application bounds for
+this dedicated volume, not an account-wide dollar cap.
+
+The private `/data/unrender/backup-status.json` records the last verified archive,
+SHA-256, size and timestamp. `scheduled_backup_succeeded`,
+`scheduled_backup_failed`, and `scheduled_backup_status_write_failed` appear in
+structured logs. A status file older than 48 hours requires investigation; alert
+delivery for this condition must be configured separately. Successful manual and
+round-trip tests do not establish an RPO or restoration SLA.
+
+To restore, download the named archive privately, verify its full SHA-256 against
+its filename/status record, extract it using a safe tar extractor, and run
+`unrender-admin restore --source EXTRACTED/snapshot --target NEW_EMPTY_DATA_DIR`.
+Use an isolated target first and validate accounts, sources, approved charts and
+exports before replacing the live data directory. Never restore onto the running
+service's active data directory.
+
+Render also provides encrypted daily disk snapshots, but its documentation warns
+against treating whole-disk restores as database recovery. Keep the coordinated
+recovery copy workflow above. See [Render disks](https://render.com/docs/disks)
+and [Modal Volumes](https://modal.com/docs/guide/volumes); Modal notes that deleted
+storage may remain billable for up to four days.

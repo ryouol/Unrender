@@ -184,7 +184,13 @@ def _validate_restored_storage(
         _storage_relative(row[0], old_data_root)
 
 
-def create_backup(settings: Settings, destination: Path) -> Path:
+def create_backup(
+    settings: Settings,
+    destination: Path,
+    *,
+    require_idle: bool = False,
+    max_snapshot_bytes: int | None = None,
+) -> Path:
     data_dir = settings.data_dir.resolve()
     destination = destination.expanduser().resolve()
     if destination.exists():
@@ -201,6 +207,27 @@ def create_backup(settings: Settings, destination: Path) -> Path:
             with lock:
                 if not database.ready():
                     raise BackupError("The live database is not initialized at the current schema")
+                if require_idle:
+                    with database.connect() as connection:
+                        if connection.execute(
+                            "SELECT 1 FROM jobs WHERE status='running' LIMIT 1"
+                        ).fetchone():
+                            raise BackupError(
+                                "An extraction is running; retry the backup when idle"
+                            )
+                if max_snapshot_bytes is not None:
+                    with database.connect() as connection:
+                        paths = _committed_storage_paths(connection, settings.storage_dir)
+                        database_bytes = (
+                            connection.execute("PRAGMA page_count").fetchone()[0]
+                            * connection.execute("PRAGMA page_size").fetchone()[0]
+                        )
+                    estimated = database_bytes + sum(path.stat().st_size for path in paths)
+                    estimated += 16384 * (len(paths) + 4) + 10240
+                    if estimated > max_snapshot_bytes:
+                        raise BackupError("Snapshot exceeds the configured backup byte limit")
+                    if shutil.disk_usage(temporary).free < estimated * 3 + 128 * 1024**2:
+                        raise BackupError("Insufficient temporary space for a verified backup")
                 output_db = temporary / "unrender.sqlite3"
                 source = database.connect()
                 target = sqlite3.connect(output_db)

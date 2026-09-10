@@ -315,3 +315,59 @@ and session persistence after reload. The new no-email help state also passed in
 the hosted browser. No page JavaScript exceptions occurred; expected anonymous
 401 network responses still appear in developer tools. All three Node suites and
 nine focused public/static tests passed.
+
+38. **Fixed P1 — default Modal readback could exhaust instance memory**
+    (`unrender/product/scheduled_backup.py:44` at review). All three reviewers
+    identified whole-block prefetch based on host CPU count in Modal 1.5.5. The
+    backup downloader uses the pinned SDK's file streaming method with concurrency
+    one and a bounded writer; a real v1 Volume round trip verified this contract.
+39. **Fixed P2 — stalled network transfer prevented future backups**
+    (`unrender/product/scheduled_backup.py:136` at review). Quality and efficiency
+    review identified the missing SDK deadline. Each scheduled attempt now runs
+    in a child process with a 600-second deadline, kill/reap on timeout and
+    termination on application shutdown. Failure allows the next hourly retry.
+40. **Fixed P2 — archive limit was enforced after oversized local copying**
+    (`unrender/product/scheduled_backup.py:74` at review). Snapshot preflight under
+    the exclusive lock accounts for SQLite pages, committed source sizes, archive
+    metadata headroom and three temporary copies. Oversized/low-space snapshots
+    fail before copying; archive creation and download also enforce one GiB.
+41. **Fixed P2 — local status failure replaced daily recovery history**
+    (`unrender/product/scheduled_backup.py:122` at review). A recent remote copy is
+    verified and reused before new uploads; verified success is also remembered
+    in memory when publishing the local status file fails. Regression forces the
+    status write failure, recreates the scheduler and verifies only one upload.
+42. **Fixed P2 — automatic snapshot lock caused unhandled live request failures**
+    (`unrender/product/scheduled_backup.py:74` at review). Breaking review identified
+    contention with live mutations. Maintenance admission returns a retryable 503
+    with Retry-After before entering routes; lock-timeout races also map to 503.
+43. **Fixed P2 — non-API paths still entered the database rate limiter**
+    (`unrender/product/web.py:475` at review). The first maintenance probe covered
+    only /api; page/static/readiness requests could still wait then return 429.
+    The probe now covers every path except the inexpensive liveness route.
+44. **Fixed P2 — terminated child left partial backup files behind**
+    (`unrender/product/scheduled_backup.py:174` at review). The parent owns the
+    temporary workspace and removes it after the child is terminated and reaped.
+    Regression leaves a partial child file and verifies deadline cleanup.
+
+45. **Fixed P2 — snapshot could enter between admission probe and rate limiting**
+    (`unrender/product/web.py:445`). All three reviewers identified the remaining
+    race. The shared operational lock now covers the entire rate-limit transaction
+    in the thread pool. A regression attempts an exclusive lock inside admission
+    and verifies it cannot enter.
+46. **Fixed P1 — multipart upload budget used host memory on a 512 MiB instance**
+    (`unrender/product/scheduled_backup.py:212`). Breaking review identified Modal
+    v1's host-derived upload budget. Only the isolated backup child sets the pinned
+    SDK budget to 64 MiB. A subprocess contract test verifies one in-flight segment
+    and unchanged parent SDK settings.
+47. **Accepted size guidance — scheduled recovery spans more than 500 lines**
+    (`unrender/product/scheduled_backup.py:1`). Efficiency review suggested staged
+    commits for backup primitives, scheduling, tests and documentation. This is one
+    optional recovery feature with coupled admission and SDK memory regressions;
+    it remains together so the committed feature includes its tests and operating
+    instructions. No unrelated refactor is included.
+
+Backup validation: 210 tests passed, 1 skipped; Ruff and mypy across 17 product
+files passed. A real Modal v1 test volume accepted the backup, bounded readback
+matched its SHA-256, and isolated restore passed SQLite integrity plus account
+and source checks. The disposable test volume was deleted. Production scheduling
+is not yet enabled at this point in the record.

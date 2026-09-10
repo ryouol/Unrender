@@ -3991,3 +3991,273 @@ def test_invitation_publication_failure_preserves_database(
         service.operator_account_link("invited@example.com", publish=fail)
     service.complete_account_email(token, purpose="reset", password="a long chosen password")
     service.authenticate("invited@example.com", "a long chosen password")
+
+
+class _BackupVolume:
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.uploads = 0
+        self.corrupt_reads = False
+
+    def listdir(self, _: str) -> list[SimpleNamespace]:
+        return [SimpleNamespace(path=name) for name in self.files]
+
+    @contextmanager
+    def batch_upload(self) -> Iterator[_BackupVolume]:
+        yield self
+
+    def put_file(self, source: Path, destination: str, *, mode: int) -> None:
+        assert mode == 0o600
+        self.uploads += 1
+        self.files[destination.lstrip("/")] = source.read_bytes()
+
+    def _read_file_into_fileobj(self, name: str, output: Any, *, concurrency: int) -> int:
+        assert concurrency == 1
+        return int(output.write(b"corrupted" if self.corrupt_reads else self.files[name]))
+
+    def remove_file(self, name: str) -> None:
+        del self.files[name]
+
+
+def test_scheduled_backup_restores_accounts_and_sources(tmp_path: Path) -> None:
+    import tarfile
+
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    user = customer_id(service)
+    service.prepare_upload(user_id=user, filename="owned.png", content=png_bytes())
+    volume = _BackupVolume()
+    status = upload_backup(service.settings, volume)
+    archive = volume.files[str(status["archive"])]
+    assert hashlib.sha256(archive).hexdigest() == status["sha256"]
+    extracted = tmp_path / "extracted"
+    with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+        source.extractall(extracted, filter="data")
+    restored = restore_backup(extracted / "snapshot", tmp_path / "restored")
+    with Database(restored / "unrender.sqlite3").connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        upload = conn.execute("SELECT storage_path FROM uploads").fetchone()
+        assert Path(upload[0]).read_bytes() == png_bytes()
+
+
+def test_scheduled_backup_verifies_before_pruning_and_resumes(tmp_path: Path) -> None:
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    volume = _BackupVolume()
+    digest = hashlib.sha256(b"old").hexdigest()
+    old_names = {f"backup-{1000000000 + index}-{digest}.tar" for index in range(7)}
+    volume.files.update({name: b"old" for name in old_names})
+    volume.files["unrelated.txt"] = b"preserve"
+    volume.corrupt_reads = True
+    with pytest.raises(RuntimeError, match="verification failed"):
+        upload_backup(service.settings, volume)
+    assert old_names.issubset(volume.files)
+    assert volume.uploads == 1
+    volume.corrupt_reads = False
+    status = upload_backup(service.settings, volume)
+    assert status["archive"] in volume.files
+    assert volume.uploads == 1
+    assert len(volume.files) == 8  # seven archives plus unrelated content
+    assert volume.files["unrelated.txt"] == b"preserve"
+
+
+def test_scheduled_backup_refuses_unbounded_volume_growth(tmp_path: Path) -> None:
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    volume = _BackupVolume()
+    digest = hashlib.sha256(b"old").hexdigest()
+    volume.files.update({f"backup-{1000000000 + i}-{digest}.tar": b"old" for i in range(9)})
+    with pytest.raises(RuntimeError, match="operator cleanup"):
+        upload_backup(service.settings, volume)
+    assert volume.uploads == 0
+    assert len(volume.files) == 9
+
+
+def test_scheduled_backup_remembers_success_across_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modal
+
+    from unrender.product.scheduled_backup import ScheduledBackup
+
+    service = service_for(tmp_path, seed_demo_account=False, backup_volume_name="unrender-test")
+    volume = _BackupVolume()
+    monkeypatch.setattr(modal.Volume, "from_name", lambda name: volume)
+    runner = ScheduledBackup(service.settings)
+    assert runner.due()
+    runner.run_once()
+    assert not ScheduledBackup(service.settings).due()
+    assert stat.S_IMODE(runner.status_path.stat().st_mode) == 0o600
+    runner.status_path.write_text(json.dumps({"last_success": time.time() - 86401}))
+    assert ScheduledBackup(service.settings).due()
+    runner.status_path.write_text("broken json")
+    assert ScheduledBackup(service.settings).due()
+
+
+def test_automatic_backup_waits_for_inference_to_be_idle(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False)
+    user = customer_id(service)
+    job = _paid_job(service, user)
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE jobs SET status='running' WHERE id=?", (job["id"],))
+    with pytest.raises(BackupError, match="extraction is running"):
+        create_backup(service.settings, tmp_path / "backup", require_idle=True)
+    assert not (tmp_path / "backup").exists()
+
+
+def test_backup_status_failure_does_not_replace_daily_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modal
+
+    from unrender.product import scheduled_backup
+
+    service = service_for(tmp_path, seed_demo_account=False, backup_volume_name="unrender-test")
+    volume = _BackupVolume()
+    monkeypatch.setattr(modal.Volume, "from_name", lambda name: volume)
+    runner = scheduled_backup.ScheduledBackup(service.settings)
+    original_replace = os.replace
+
+    def fail_status(source: Any, destination: Any) -> None:
+        if Path(destination) == runner.status_path:
+            raise OSError("status volume full")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(scheduled_backup.os, "replace", fail_status)
+    result = runner.run_once()
+    assert result["status_persisted"] is False
+    assert not runner.due()
+    scheduled_backup.ScheduledBackup(service.settings).run_once()
+    assert volume.uploads == 1
+    assert len(volume.files) == 1
+
+
+def test_scheduled_backup_deadline_kills_and_reaps_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unrender.product import scheduled_backup
+
+    class StalledProcess:
+        returncode = None
+        killed = False
+        calls = 0
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, None]:
+            self.calls += 1
+            if self.calls == 1:
+                assert timeout == 600
+                raise subprocess.TimeoutExpired("backup", timeout)
+            self.returncode = -9
+            return "", None
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = StalledProcess()
+    directories = []
+
+    def start_process(*args: Any, **kwargs: Any) -> StalledProcess:
+        directory = Path(kwargs["env"]["TMPDIR"])
+        assert directory.is_dir()
+        (directory / "partial-backup").write_bytes(b"partial")
+        directories.append(directory)
+        return process
+
+    monkeypatch.setattr(scheduled_backup.subprocess, "Popen", start_process)
+    runner = scheduled_backup.ScheduledBackup(settings_for(tmp_path))
+    with pytest.raises(subprocess.TimeoutExpired):
+        runner._run_isolated()
+    assert process.killed
+    assert process.calls == 2
+    assert runner._process is None
+    assert directories and not directories[0].exists()
+
+
+def test_backup_limits_before_copy_and_download_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unrender.product import scheduled_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    with pytest.raises(BackupError, match="byte limit"):
+        create_backup(service.settings, tmp_path / "backup", max_snapshot_bytes=1)
+    assert not (tmp_path / "backup").exists()
+    monkeypatch.setattr(scheduled_backup, "_MAX_ARCHIVE_BYTES", 16)
+    buffer = io.BytesIO()
+    with pytest.raises(RuntimeError, match="archive limit"):
+        scheduled_backup._BoundedDownload(buffer).write(b"x" * 17)
+    assert buffer.getvalue() == b""
+
+
+def test_backup_maintenance_returns_retryable_response(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path, backup_volume_name="unrender-test")
+    app = create_app(settings)
+    with TestClient(app) as client:
+        with Database(settings.database_path).operational_lock(exclusive=True):
+            for path in ["/", "/static/app.js", "/health/ready"]:
+                assert client.get(path).status_code == 503
+            response = client.get("/api/public-config")
+            assert response.status_code == 503
+            assert response.json()["error"]["code"] == "maintenance_busy"
+            assert response.headers["Retry-After"] == "10"
+            assert client.get("/health/live").status_code == 200
+        assert client.get("/api/public-config").status_code == 200
+
+
+def test_backup_upload_budget_is_isolated_and_limits_sdk_segments() -> None:
+    from modal._utils import blob_utils
+
+    parent_budget = blob_utils.MULTIPART_INFLIGHT_BYTES_MAX
+    probe = """
+import asyncio, json
+from unrender.product.scheduled_backup import _configure_upload_budget
+from modal._utils import blob_utils
+_configure_upload_budget()
+assert 4 * blob_utils.DEFAULT_SEGMENT_CHUNK_SIZE == 64 * 1024**2
+async def check():
+    budget = blob_utils._ByteBudget.from_system_memory()
+    active = 0
+    peak = 0
+    async def part():
+        nonlocal active, peak
+        async with budget.acquire(64 * 1024**2):
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+    await asyncio.gather(*(part() for _ in range(4)))
+    assert peak == 1
+    print(json.dumps({"peak_parts": peak, "budget_bytes": budget._total}))
+asyncio.run(check())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True, timeout=20
+    )
+    assert json.loads(result.stdout) == {"peak_parts": 1, "budget_bytes": 64 * 1024**2}
+    assert parent_budget == blob_utils.MULTIPART_INFLIGHT_BYTES_MAX
+
+
+def test_backup_cannot_enter_between_probe_and_rate_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = settings_for(tmp_path, backup_volume_name="unrender-test")
+    app = create_app(settings)
+    original = ProductService.rate_limit
+    checked = []
+
+    def admission(self: ProductService, *args: Any, **kwargs: Any) -> bool:
+        with (
+            pytest.raises(TimeoutError),
+            Database(settings.database_path).operational_lock(exclusive=True, timeout_seconds=0),
+        ):
+            pass
+        checked.append(True)
+        return original(self, *args, **kwargs)
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(ProductService, "rate_limit", admission)
+        assert client.get("/api/public-config").status_code == 200
+        assert checked

@@ -3854,3 +3854,39 @@ def test_worker_recovers_lease_that_expires_after_startup_without_redispatch(
             )
     finally:
         assert worker.stop(timeout=5)
+
+
+def test_server_entrypoint_emits_private_structured_lifecycle_logs() -> None:
+    script = """
+import logging
+import logging.config
+import uvicorn
+from unrender.product.cli import main
+
+def run(*args, **kwargs):
+    logging.config.dictConfig(kwargs['log_config'])
+    logger = logging.getLogger('unrender.product')
+    logger.info('provider_call_succeeded', extra={
+        'job_id': 'test-job', 'provider': 'modal', 'duration_ms': 123,
+        'source_filename': 'private-chart.png', 'password': 'private-password',
+    })
+    try:
+        raise ValueError('private exception detail')
+    except ValueError:
+        logger.exception('job_processing_failed', extra={'job_id': 'test-job'})
+
+uvicorn.run = run
+main()
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(records) == 2
+    assert records[0]["event"] == "provider_call_succeeded"
+    assert records[0]["provider"] == "modal"
+    assert records[0]["duration_ms"] == 123
+    assert records[1]["event"] == "job_processing_failed"
+    assert records[1]["exception_type"] == "ValueError"
+    assert all(record["job_id"] == "test-job" for record in records)
+    assert "private" not in result.stdout + result.stderr
+    assert "Traceback" not in result.stdout + result.stderr

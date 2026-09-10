@@ -240,3 +240,21 @@ retained, approved prior job and all exports preserved. The failed diagnostic
 jobs were removed afterward; the approved sample remains in the invited account.
 The provider release is unchanged. No provider- or account-wide billing cap was
 changed. Repository reports contain no login/provider secrets.
+
+29. **Fixed P1 — lifecycle records absent from server log configuration**
+    (`unrender/product/cli.py:16`). Uvicorn now installs a dedicated INFO-level
+    product logger on stdout. The JSON formatter retains only operational fields
+    and exception type; arbitrary extras and exception text/tracebacks are omitted.
+    A subprocess entrypoint regression covers actual log configuration, not only
+    records captured by pytest's configured logger. Hosted verification follows.
+30. **Fixed P2 — reserved logging test attribute**
+    (`tests/test_product.py:3871` at review). All three reviewers identified that
+    `filename` cannot be supplied through LogRecord extras. The sensitive synthetic
+    field is now `source_filename`, allowing the privacy assertions to execute.
+31. **Fixed P2 — formatter lint rule**
+    (`unrender/product/observability.py:13` at review). Changed timezone.utc to
+    datetime.UTC to satisfy the repository's enforced UP017 rule.
+
+Reuse/breaking, quality/testing, and efficiency/context/size review found no
+remaining runtime defect in the logging change. Current event call sites use
+constant messages; the formatter deliberately does not interpolate log arguments.

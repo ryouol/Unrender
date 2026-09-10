@@ -182,6 +182,10 @@ class BodyLimitMiddleware:
             await response(scope, receive, send)
 
 
+def _is_auth_attempt(path: str, method: str) -> bool:
+    return method == "POST" and path.startswith("/api/auth/") and path != "/api/auth/logout"
+
+
 class ConcurrencyLimitMiddleware:
     """Reject excess process-local KDF and file-processing work before allocation."""
 
@@ -192,7 +196,7 @@ class ConcurrencyLimitMiddleware:
 
     @staticmethod
     def _group(path: str, method: str) -> str | None:
-        if method == "POST" and path.startswith("/api/auth/"):
+        if _is_auth_attempt(path, method):
             return "auth"
         if path in {"/api/uploads", "/api/v1/extractions"} or (
             method == "GET"
@@ -397,7 +401,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_job_status = (
             request.method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "jobs"]
         )
-        is_auth = request.method == "POST" and request.url.path.startswith("/api/auth/")
+        is_auth = _is_auth_attempt(request.url.path, request.method)
         return "poll" if is_job_status else "auth" if is_auth else "request"
 
     def rate_limit_for(group: str) -> int:

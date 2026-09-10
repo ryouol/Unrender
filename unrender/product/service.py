@@ -1080,11 +1080,26 @@ class ProductService:
         if password_needs_rehash(expected_hash):
             replacement = hash_password(password)
             with self.database.transaction(immediate=True) as conn:
-                conn.execute(
+                changed = conn.execute(
                     "UPDATE users SET password_hash=? WHERE id=? AND password_hash=?",
                     (replacement, user["id"], user["password_hash"]),
-                )
-            expected_hash = replacement
+                ).rowcount
+                current = conn.execute(
+                    "SELECT password_hash,session_generation FROM users WHERE id=?",
+                    (user["id"],),
+                ).fetchone()
+            if changed:
+                expected_hash = replacement
+            else:
+                # Another login may have upgraded the same password. A reset must
+                # still invalidate this in-flight authentication attempt.
+                if (
+                    not current
+                    or current["session_generation"] != user["session_generation"]
+                    or not verify_password(password, current["password_hash"])
+                ):
+                    raise ProductError("invalid_credentials", "Credentials changed", 401)
+                expected_hash = str(current["password_hash"])
         return self.create_session(str(user["id"]), expected_password_hash=expected_hash)
 
     def demo_session(self) -> dict[str, str]:

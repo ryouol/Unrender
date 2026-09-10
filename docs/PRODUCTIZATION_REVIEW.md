@@ -30,18 +30,22 @@ review. A final review of the release diff remains required after remaining work
    behind the Render edge into a shared auth bucket. Verify ingress/header
    behavior and configure/test trust before release. Do not blindly trust spoofable
    forwarded values. See RENDER_MODAL_LAUNCH.md.
-8. **Open P2 — review size.** The combined pre-existing hardening and new feature
-   diff exceeds the skill's 800-line guidance (review snapshot: 1,485 text lines,
-   excluding binaries). Split into coherent review stages: first schema v9 and
-   its migration-preservation test, then account service/security and tests,
-   account UI/operator/deployment integration, and independent public-site polish.
-   The additive schema is the smallest prerequisite stage. No PR yet exists.
+8. **Open P2 — review size.** PR #2 at `02c3a6b` has 2,134 changed text
+   lines across 51 files (1,478 excluding README/docs). The smallest coherent
+   first stage is schema v9 plus isolated migration-preservation coverage
+   (roughly 45–50 lines). Follow with separate verified-signup/email and password
+   recovery/credential-invalidation stages, each below 500 complex lines. Keep
+   the independent Modal deadline as its own stage, then operator/deployment
+   integration. Public-shell helpers must precede or accompany account UI:
+   `/account` calls `document()` and requires the `account.html` allowlist entry.
+   Public/workspace polish and UX evidence can follow. These are proposed review
+   stages; PR #2 remains a combined draft and has not been split or merged.
 
 Reviewed locations (paths relative to `unrender/product/`): account lifecycle
 `service.py`, credential routes `web.py`, schema `database.py`, frontend
 `static/app.js` and `static/site.js`; repository `Dockerfile`, `render.yaml`, and
 `tests/test_accounts.py`. Line numbers move with fixes; final review must use the
-final commit. No GitHub review comments or labels have been posted.
+final commit. No GitHub review comments have been posted.
 
 Supplemental provider-deadline review found no concrete correctness issue in
 `unrender/product/extractors.py` and its worker/canary regressions. The reviewer
@@ -63,3 +67,21 @@ source/vendor assessment in CONTAINER_SCAN.md. Seven have artifact-specific
 component/architecture exclusions; eleven have no observed application route but
 retain operational assumptions requiring deployed verification. This narrows
 finding 9; it does not close it or suppress the scanner results.
+
+
+## Published PR review follow-up
+
+10. **Fixed P2 — concurrent legacy-password upgrade** (`service.py`, authenticate).
+    A losing conditional rehash now reads and verifies the winning hash while
+    rejecting a changed session generation; session creation still fences on
+    the exact validated hash. Two simultaneous valid logins now both succeed.
+    The existing reset-versus-login regression still rejects the old password.
+11. **Fixed P2 — logout blocked by login limits** (`web.py`, auth grouping).
+    Logout remains under general request limits but no longer shares the
+    credential-attempt rate/concurrency group. Regression exhausts login attempts,
+    successfully logs out with CSRF, and verifies the session is gone.
+
+The context review found no applicable model-context changes. The testing review
+found no additional defect but retained live SMTP, browser account-flow and
+Render/Modal verification limits. All reviewer findings are recorded here;
+code review is not deployment approval.

@@ -3761,3 +3761,34 @@ def test_modal_canary_bounds_lazy_resolution_without_inference(
 def test_provider_deadline_rejects_unbounded_configuration(tmp_path: Path, deadline: int) -> None:
     with pytest.raises(ValueError, match="PROVIDER_TIMEOUT_SECONDS"):
         settings_for(tmp_path, provider_timeout_seconds=deadline).validate()
+
+
+def test_concurrent_logins_can_share_a_legacy_password_upgrade(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    password = "legacy password is long enough"
+    user_id = service.provision_user("legacy@example.com", password)
+    salt = b"legacy-salt-1234"
+    derived = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
+    legacy = "scrypt$16384$8$1$" + base64.urlsafe_b64encode(salt).decode()
+    legacy += "$" + base64.urlsafe_b64encode(derived).decode()
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?", (legacy, user_id))
+    barrier = threading.Barrier(2)
+    original = service_module.verify_password
+
+    def overlapping_verification(value, encoded):
+        result = original(value, encoded)
+        if encoded == legacy:
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(service_module, "verify_password", overlapping_verification)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(service.authenticate, "legacy@example.com", password) for _ in range(2)
+        ]
+        sessions = [future.result(timeout=10) for future in futures]
+    assert len({session["session"] for session in sessions}) == 2
+    assert all(service.session_user(session["session"]) for session in sessions)

@@ -343,3 +343,31 @@ def test_email_challenges_are_bounded_and_expired_tokens_are_reclaimed(tmp_path,
     assert len(deliveries) == 6
     with service.database.connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM account_challenges").fetchone()[0] == 1
+
+
+def test_logout_remains_available_after_login_rate_limit(tmp_path):
+    settings = settings_for(tmp_path, seed_demo_account=False, auth_rate_limit_per_minute=2)
+    with TestClient(create_app(settings)) as client:
+        assert (
+            client.post(
+                "/api/auth/register", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": "wrong password"}
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 429
+        )
+        response = client.post(
+            "/api/auth/logout", headers={"X-CSRF-Token": client.cookies["unrender_csrf"]}
+        )
+        assert response.status_code == 200
+        assert client.get("/api/me").status_code == 401

@@ -48,9 +48,10 @@ application as root to work around a mount error.
 
 ## Required external checks before release
 
-1. Render authentication is confirmed in Dia (workspace "My Workspace", no
-   services yet). Confirm domain, region, spending cap and repository connection
-   during setup. The in-app browser has a separate unauthenticated session.
+1. Render authentication and the GitHub repository connection are confirmed in
+   the in-app browser (workspace "My Workspace"). The creation form is prepared
+   with 2 GB compute, 20 GB private storage and manual deployments. Base cost is
+   US$30/month; activation awaits the budget answer and complete configuration.
 2. Authenticate Modal, locate/publish the exact approved trained model, verify
    complete snapshot and provider digests, deploy the real function and run owned
    chart canaries. No configured Modal profile was available in this local run.
@@ -82,10 +83,11 @@ https://render.com/docs/environment-variables, https://render.com/docs/ssh.
 
 Real Render and Modal deployment, SMTP provisioning, published legal/operator
 content, provider evaluation, complete deployment regression, final review after
-remaining changes, and PR creation remain work. Source magnification, zero-credit onboarding, and a retention notice are implemented locally; final responsive verification remains in this workstream. Existing default chart retention is 30 days; persistence across
+remaining changes, remain work; draft PR #2 is open. Source magnification, zero-credit onboarding, and a retention notice are implemented locally; final responsive verification remains in this workstream. Existing default chart retention is 30 days; persistence across
 restarts does not mean indefinite retention.
 
-Current preparation branch: `codex/render-modal-productization`. Changes remain
-uncommitted; no PR or Render service has been created. Native-browser navigation
-needs a brief uninterrupted session because concurrent user activity changes the
-active tab. Modal CLI remains unauthenticated.
+Current preparation branch: `codex/render-modal-productization`, published in
+[draft PR #2](https://github.com/ryouol/Unrender/pull/2). No Render service has
+been activated. Use the isolated in-app Render tab: native Dia window targeting
+was unreliable. Modal CLI remains unauthenticated; email/domain choices and
+production secrets remain outstanding.

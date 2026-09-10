@@ -99,11 +99,11 @@ code review is not deployment approval.
     Password verification occurs before the write transaction; the transaction
     rechecks the live challenge and exact hash/generation. A regression performs
     a concurrent write during verification and verifies stale credentials fail.
-15. **Open P2 — SMTP occupies authentication admission** (`unrender/product/web.py:199`,
-    `unrender/product/service.py:974`). Slow synchronous email delivery can occupy
-    the sole authentication slot and reject unrelated logins. Registration also
-    sends mail inside that admission window. Separate bounded mail delivery from
-    KDF admission before public signup launch.
+15. **Fixed P2 — SMTP occupies authentication admission** (`unrender/product/web.py:215`).
+    Email requests have a separate one-request slot. Registration holds the shared
+    KDF slot only through account creation, then sends mail after releasing it.
+    Slow-mail regressions cover registration, resend, and recovery while login
+    succeeds and excess email requests receive 503.
 16. **Fixed P3 — schema rollback instructions** (`docs/OPERATIONS.md:88`).
     The release uses schema 9; rollback to schema 8 requires the pre-v9 recovery set.
 17. **Open change-size concern**: reviewed baseline 4bf1352 changes 2,354 text
@@ -127,3 +127,14 @@ and omit storage. A combined project hard cap cannot be claimed from these
 controls. The requested monthly-versus-total interpretation is still pending.
 Real pinned model release, SMTP delivery, deployed proxy attribution, backup
 restore, and live end-to-end inference remain release gates.
+
+18. **Fixed P2 — cancellation released admission while work continued**
+    (`unrender/product/web.py:190`). A shielded task now owns the acquired slot
+    until actual completion; cancelling its caller does not free capacity early.
+    This applies to both the middleware and registration KDF. A real-thread
+    cancellation regression verifies admission stays occupied until completion.
+
+Follow-up validation: 188 passed / 1 skipped before the cancellation change;
+all 15 account tests including cancellation passed afterward. Formatting and
+lint match CI. The previous commit's CI failure was formatting-only and is fixed
+in this follow-up. These are local evidence, not live SMTP/provider verification.

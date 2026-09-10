@@ -923,7 +923,7 @@ class ProductService:
             email_verified=not self.settings.require_email_verification,
         )
         if self.settings.require_email_verification:
-            self.request_account_email(email, purpose="verify")
+            # Transport sends the challenge after releasing expensive KDF admission.
             return {"verification_required": "true"}
         return self.create_session(user_id)
 
@@ -1001,7 +1001,8 @@ class ProductService:
             if not candidate:
                 raise ProductError(
                     "invalid_account_link",
-                    "This link expired or was already used. Request a new one.", 400,
+                    "This link expired or was already used. Request a new one.",
+                    400,
                 )
             if not verify_password(password, candidate["password_hash"]):
                 raise ProductError(
@@ -1024,10 +1025,14 @@ class ProductService:
                     400,
                 )
             if purpose == "verify":
-                if (user["password_hash"] != verified_hash
-                        or user["session_generation"] != verified_generation):
+                if (
+                    user["password_hash"] != verified_hash
+                    or user["session_generation"] != verified_generation
+                ):
                     raise ProductError(
-                        "invalid_account_link", "Account credentials changed. Request a new link.", 400
+                        "invalid_account_link",
+                        "Account credentials changed. Request a new link.",
+                        400,
                     )
                 conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
                 conn.execute(

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import os
+from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -186,16 +187,37 @@ def _is_auth_attempt(path: str, method: str) -> bool:
     return method == "POST" and path.startswith("/api/auth/") and path != "/api/auth/logout"
 
 
+async def _run_admitted(operation: Awaitable[Any], semaphore: asyncio.Semaphore) -> Any:
+    """Hold an acquired slot until work finishes, even if its caller disconnects."""
+    task = asyncio.ensure_future(operation)
+
+    def finish(completed: asyncio.Future) -> None:
+        semaphore.release()
+        # Retrieve failures even when the request stopped awaiting the task.
+        if not completed.cancelled():
+            completed.exception()
+
+    task.add_done_callback(finish)
+    return await asyncio.shield(task)
+
+
 class ConcurrencyLimitMiddleware:
     """Reject excess process-local KDF and file-processing work before allocation."""
 
-    def __init__(self, app: ASGIApp, *, auth_limit: int, expensive_limit: int):
+    def __init__(self, app: ASGIApp, *, auth_semaphore: asyncio.Semaphore, expensive_limit: int):
         self.app = app
-        self.auth = asyncio.Semaphore(auth_limit)
+        self.auth = auth_semaphore
+        self.email = asyncio.Semaphore(1)
         self.expensive = asyncio.Semaphore(expensive_limit)
 
     @staticmethod
     def _group(path: str, method: str) -> str | None:
+        if method == "POST" and path in {
+            "/api/auth/register",
+            "/api/auth/request-verification",
+            "/api/auth/forgot-password",
+        }:
+            return "email"
         if _is_auth_attempt(path, method):
             return "auth"
         if path in {"/api/uploads", "/api/v1/extractions"} or (
@@ -210,7 +232,7 @@ class ConcurrencyLimitMiddleware:
             await self.app(scope, receive, send)
             return
         group = self._group(str(scope.get("path", "")), str(scope.get("method", "GET")))
-        semaphore = self.auth if group == "auth" else self.expensive if group else None
+        semaphore = {"auth": self.auth, "email": self.email, "expensive": self.expensive}.get(group)
         if semaphore is None:
             await self.app(scope, receive, send)
             return
@@ -231,10 +253,7 @@ class ConcurrencyLimitMiddleware:
             )
             await response(scope, receive, send)
             return
-        try:
-            await self.app(scope, receive, send)
-        finally:
-            semaphore.release()
+        await _run_admitted(self.app(scope, receive, send), semaphore)
 
 
 class StrictRequest(BaseModel):
@@ -382,9 +401,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         upload_limit=settings.max_upload_bytes,
         result_limit=settings.result_request_bytes,
     )
+    auth_semaphore = asyncio.Semaphore(settings.max_concurrent_auth_requests)
     app.add_middleware(
         ConcurrencyLimitMiddleware,
-        auth_limit=settings.max_concurrent_auth_requests,
+        auth_semaphore=auth_semaphore,
         expensive_limit=settings.max_concurrent_expensive_requests,
     )
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -634,9 +654,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/auth/register", status_code=201)
-    def register(payload: Credentials, response: Response):
-        values = service.register(payload.email, payload.password)
+    async def register(payload: Credentials, response: Response):
+        # Registration shares KDF admission with sign-in, but releases it before
+        # synchronous SMTP work. The outer email slot bounds the whole request.
+        try:
+            await asyncio.wait_for(auth_semaphore.acquire(), timeout=0.05)
+        except TimeoutError as exc:
+            raise ProductError(
+                "auth_capacity_reached", "Authentication is busy; retry shortly", 503
+            ) from exc
+        values = await _run_admitted(
+            run_in_threadpool(service.register, payload.email, payload.password), auth_semaphore
+        )
         if values.get("verification_required"):
+            await run_in_threadpool(service.request_account_email, payload.email, purpose="verify")
             return {"ok": True, "verification_required": True}
         _cookies(response, values, settings)
         return {"ok": True}

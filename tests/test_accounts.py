@@ -379,13 +379,19 @@ def test_verification_hashing_releases_writer_and_fences_credential_change(tmp_p
         "unrender.product.mail.send_account_email", lambda *args: deliveries.append(args)
     )
     service = service_for(
-        tmp_path, require_email_verification=True, smtp_host="smtp.example.com",
-        smtp_username="user", smtp_password="test-only-secret",
-        email_from="hello@example.com", initial_credits=0,
+        tmp_path,
+        require_email_verification=True,
+        smtp_host="smtp.example.com",
+        smtp_username="user",
+        smtp_password="test-only-secret",
+        email_from="hello@example.com",
+        initial_credits=0,
     )
     service.register("race@example.com", PASSWORD)
+    service.request_account_email("race@example.com", purpose="verify")
     token = deliveries[-1][-1]
     from unrender.product import service as service_module
+
     original_verify = service_module.verify_password
 
     def verify_with_concurrent_change(password, encoded):
@@ -403,3 +409,86 @@ def test_verification_hashing_releases_writer_and_fences_credential_change(tmp_p
     assert caught.value.code == "invalid_account_link"
     with service.database.connect() as conn:
         assert conn.execute("SELECT email_verified FROM users").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("mail_path", ["register", "request-verification", "forgot-password"])
+def test_slow_account_email_does_not_block_login(tmp_path, monkeypatch, mail_path):
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_mail(*args):
+        entered.set()
+        assert release.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr("unrender.product.mail.send_account_email", slow_mail)
+    app = create_app(replace(email_settings(tmp_path), max_concurrent_auth_requests=1))
+    with TestClient(app) as client:
+        app.state.service.provision_user("login@example.com", PASSWORD)
+        if mail_path != "register":
+            app.state.service.register("mail@example.com", PASSWORD)
+        outcomes = []
+
+        def send_mail():
+            outcomes.append(
+                client.post(
+                    f"/api/auth/{mail_path}",
+                    json={
+                        "email": "mail@example.com",
+                        **({"password": PASSWORD} if mail_path == "register" else {}),
+                    },
+                ).status_code
+            )
+
+        thread = threading.Thread(target=send_mail)
+        thread.start()
+        try:
+            assert entered.wait(timeout=5)
+            blocked_mail = client.post(
+                "/api/auth/forgot-password", json={"email": "another@example.com"}
+            )
+            assert blocked_mail.status_code == 503
+            assert blocked_mail.json()["error"]["code"] == "email_capacity_reached"
+            login = client.post(
+                "/api/auth/login", json={"email": "login@example.com", "password": PASSWORD}
+            )
+            assert login.status_code == 200
+        finally:
+            release.set()
+            thread.join(timeout=5)
+        assert outcomes == [201 if mail_path == "register" else 200]
+
+
+def test_cancelled_request_retains_admission_until_thread_finishes():
+    import asyncio
+    import threading
+
+    from starlette.concurrency import run_in_threadpool
+
+    from unrender.product.web import _run_admitted
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def work():
+        entered.set()
+        assert release.wait(timeout=5)
+
+    async def scenario():
+        slots = asyncio.Semaphore(1)
+        await slots.acquire()
+        request = asyncio.create_task(_run_admitted(run_in_threadpool(work), slots))
+        assert await asyncio.to_thread(entered.wait, 5)
+        request.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            assert slots.locked()
+        finally:
+            release.set()
+        await asyncio.wait_for(slots.acquire(), timeout=5)
+        slots.release()
+
+    asyncio.run(scenario())

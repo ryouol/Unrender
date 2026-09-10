@@ -379,3 +379,18 @@ approved chart and source hash, and regenerated CSV, JSON and XLSX with its audi
 sheet. No GPU call or live-data modification was used for this restore drill.
 Evidence: `outputs/local-verification/offhost-backup/production-report.json`.
 Alert delivery and measured recovery objectives remain open.
+
+48. **Fixed CI security-lint failure — runtime assertion in backup status handling**
+    (`unrender/product/scheduled_backup.py:153`). GitHub CI rejected the runtime
+    assertion under S101, a check omitted from the earlier local validation.
+    Commit e497a18 replaces it with an explicit RuntimeError check. Security lint,
+    formatting, mypy and all 13 focused backup tests pass locally. Earlier local
+    Ruff success did not establish success of the full CI security-lint step.
+
+Proxy review found that Render's current guidance recommends X-Forwarded-For,
+but its [older feedback thread](https://feedback.render.com/features/p/send-the-correct-xforwardedfor)
+contains conflicting observations about client-supplied prefixes. Its current
+[private-network documentation](https://render.com/docs/private-network) also
+confirms that services in the same workspace and region share private ingress.
+No unconditional forwarded-header trust was added. Header rewriting and direct
+ingress still need hosted verification before changing rate-limit attribution.

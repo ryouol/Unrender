@@ -99,8 +99,10 @@ preprocessing was not silently changed during deployment.
   and using the app-owned data subdirectory.
 - Hosted authentication/inference/exports passed. Coordinated backup and isolated
   restore retained the approved job and source, with SQLite integrity checks; a
-  private recovery archive was copied off-host to the operator machine. These
-  are manual checks, not scheduled recovery coverage.
+  private recovery archive was copied off-host to the operator machine. Runtime
+  bf5da14 additionally enabled daily copies to the private Modal backup volume;
+  its first automatic archive passed independent download, checksum and isolated
+  restore of the approved chart, source and all three export formats.
 - The first in-flight restart test exposed a post-startup lease-recovery gap.
   The deployed fix and regression recover leases expiring after startup. Hosted
   retest passed: one charged attempt, no redispatch, terminal failure, and approved
@@ -109,8 +111,10 @@ preprocessing was not silently changed during deployment.
 - Trusted proxy client-IP attribution remains open: live access logs show Render
   private proxy addresses. Do not blindly trust forwarded headers. Verify header
   rewriting and the private/direct ingress boundary before public signup.
-- Configure scheduled coordinated off-host backups and alert delivery. A disk
-  snapshot alone does not meet the app's database/file consistency contract.
+- Configure backup-age and service alert delivery. Scheduled coordinated off-host
+  copies are enabled and the first restore drill passed; measured recovery
+  objectives remain open. A disk snapshot alone does not meet the app's
+  database/file consistency contract.
 - Complete the base-image advisory assessment's deployment assumptions, provider
   timeout/cancellation coverage beyond the tested restart path, and intended-input
   numerical/correction-time evaluation.

@@ -65,6 +65,7 @@ INFER_DIRECT_DEPENDENCIES = {
     "pillow": "12.3.0",
     "pydantic": "2.13.5",
     "torch": "2.9.1",
+    "torchvision": "0.24.1",
     "transformers": "4.57.6",
 }
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")

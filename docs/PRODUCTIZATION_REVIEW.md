@@ -369,5 +369,13 @@ nine focused public/static tests passed.
 Backup validation: 210 tests passed, 1 skipped; Ruff and mypy across 17 product
 files passed. A real Modal v1 test volume accepted the backup, bounded readback
 matched its SHA-256, and isolated restore passed SQLite integrity plus account
-and source checks. The disposable test volume was deleted. Production scheduling
-is not yet enabled at this point in the record.
+and source checks. The disposable test volume was deleted.
+
+Production runtime `bf5da14` enabled the daily scheduler on September 10. Its first
+409,600-byte archive reached the private `unrender-production-backups` volume,
+passed readback SHA-256, and emitted `scheduled_backup_succeeded`. An independent
+download and isolated restore passed SQLite integrity/foreign keys, preserved the
+approved chart and source hash, and regenerated CSV, JSON and XLSX with its audit
+sheet. No GPU call or live-data modification was used for this restore drill.
+Evidence: `outputs/local-verification/offhost-backup/production-report.json`.
+Alert delivery and measured recovery objectives remain open.

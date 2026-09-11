@@ -111,7 +111,10 @@ preprocessing was not silently changed during deployment.
 - Trusted proxy client-IP attribution remains open: live access logs show Render
   private proxy addresses. Do not blindly trust forwarded headers. Verify header
   rewriting and the private/direct ingress boundary before public signup.
-- Configure backup-age and service alert delivery. Scheduled coordinated off-host
+- Render service failure alerts now have an explicit UNRENDER-only override and
+  Email destination; two historical failure notices were verified in the operator
+  inbox. Custom backup-age, queue, provider and ledger alerts remain open.
+  Scheduled coordinated off-host
   copies are enabled and the first restore drill passed; measured recovery
   objectives remain open. A disk snapshot alone does not meet the app's
   database/file consistency contract.

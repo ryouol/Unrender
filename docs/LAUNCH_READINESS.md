@@ -41,7 +41,8 @@ Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** need
 | Customer privacy/terms | BLOCKED | Drafts exist; owner identity, contact, processor list, jurisdiction, retention, and deletion SLA require counsel approval |
 | Production domain/TLS | PASS | https://unrender.onrender.com is live; hosted sign-in uses Secure HttpOnly cookies. Custom domain is optional. Proxy client-IP attribution remains open. |
 | Billing | BLOCKED | Test-mode code exists; owner must create/approve test Price and validate purchase/refund support before any live design |
-| Observability and alert delivery | BLOCKED | Privacy-safe provider lifecycle logs are implemented and tested; the deployment platform, queue/ledger/capacity metrics, and alert destinations remain owner gates |
+| Platform failure notifications | PASS WITH LIMITS | UNRENDER has an explicit Render failure-only override with Email delivery. Two earlier deployment-failure notices were verified in the operator inbox; supported platform events include unhealthy services and disk use above 80%. Other projects/defaults were unchanged. Each event type has not been independently induced. |
+| Application monitoring and alert delivery | BLOCKED | Privacy-safe provider lifecycle logs are implemented and tested. Queue-age, provider-failure/latency, ledger and backup-age alert delivery remain open; Render platform notifications do not cover these custom conditions. |
 | Public paid launch | BLOCKED | Invited pilot hosting is authorized and live. Customer billing is off; public paid launch still depends on remaining gates. |
 | Horizontal scaling | DEFERRED | Single-node beta is explicit; Postgres/object storage/queue migration is documented |
 | Enterprise features | DEFERRED | SSO, organizations, RBAC, SLAs, and compliance are not part of v0.2 |

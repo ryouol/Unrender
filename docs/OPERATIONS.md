@@ -48,9 +48,24 @@ Alert on:
 - storage over 80% capacity;
 - repeated origin, CSRF, API-key, or webhook-signature failures;
 - provider latency/error increase;
-- backup age over 24 hours.
+- backup age over 48 hours (the daily schedule plus retry grace).
 
-Provider success/failure and latency can be derived from the structured lifecycle records. Queue-age, ledger reconciliation, capacity, and backup-age dashboards still require platform queries/exporters and remain owner blockers.
+Provider success/failure and latency can be derived from the structured lifecycle records. Queue-age, ledger reconciliation, and backup-age dashboards still require queries/exporters and alert delivery.
+
+The UNRENDER Render service has an explicit **Only failure notifications** override;
+workspace defaults and other services were not changed. The existing destination
+is Email. Delivery evidence: the operator inbox contains the two UNRENDER deploy
+failure notices from September 10 at 21:53:44 and 21:56:02 UTC. These are historical
+failure receipts, not a newly induced outage or proof of every alert type.
+
+[Render's supported platform notifications](https://render.com/docs/notifications)
+include failed builds/deploys, unhealthy running services and persistent-disk use
+above 80%. This covers platform health/capacity events without application SMTP.
+It does not cover a stale coordinated backup, slow queue, ledger mismatch or
+individual extraction failures. Keep those custom monitoring gaps open until
+their delivery paths are implemented and tested. Recheck the service override
+after service recreation; the current Blueprint specification does not document
+a notification-policy field.
 
 ## Backup and restore
 

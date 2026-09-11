@@ -26,6 +26,44 @@ names in this manifest are conceptual names without a printed legend, so their
 name-F1 is not an appropriate success criterion. The operational checks use point
 labels/values, title, axes, units, and the printed multi-series legend.
 
+## September 10 production run
+
+Runtime `e497a18` on Render used the pinned Modal model recorded in
+`release/launch-eval-results/pilot-v1/meta.json`. All three attempts reached review
+without retry. The stored, uncorrected provider receipts match the application
+results and can be rescored offline. Three extraction credits were consumed;
+actual dollar cost and cold/warm GPU timings were not measured.
+
+| Fixture | Exact values recovered | Observed upload-to-result time |
+|---|---:|---:|
+| Labelled bar | 4 / 4 | 92.10 s |
+| Unlabelled line | 5 / 5 | 67.72 s |
+| Unlabelled grouped bar | 6 / 6 | 193.21 s |
+
+All 15 values matched exactly, with no missing or extra points and zero numerical
+MAE. The existing scorer agrees at both 5% and 2% tolerance. Printed titles, axes,
+units and the grouped-bar legend also match. The grouped-bar case took over three
+minutes, a material usability concern. This result covers only three crisp,
+positive-value synthetic charts and must not become a customer accuracy claim.
+
+`server-receipts.json` records the three jobs' timestamps and single-attempt state.
+These corroborate server execution, but do not reconstruct the client-side upload
+and polling intervals. The latency table is the run observer's measurement.
+“Chart exact” in the research scorer means type and numeric cells; it does not
+mean full JSON equality (the two single-series names were returned as null).
+
+Re-score without inference (create the output directory first):
+
+```sh
+mkdir -p outputs/local-verification/launch-eval
+.venv/bin/python -m unrender.eval.score \
+  --predictions release/launch-eval-results/pilot-v1/predictions.jsonl \
+  --out outputs/local-verification/launch-eval/offline-scores.json
+```
+
+The three jobs remain unapproved in the production account, identified by their
+filenames. No human correction timing has been recorded.
+
 ## Human correction-time protocol
 
 Human correction time is not measured by the automated run. Do not substitute an

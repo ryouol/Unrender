@@ -408,3 +408,12 @@ ingress still need hosted verification before changing rate-limit attribution.
     values, categories, axes, legend, dimensions and source hashes. The set uses
     the research renderer and is explicitly synthetic operational evidence, not
     representative accuracy or human correction-time evidence.
+
+The final saved-output review found no numerical inconsistencies: 15 values match
+exactly, with no extra points or series. It noted two null single-series names
+(already reflected in name F1) and that client timing observations cannot be
+reconstructed from the initial artifact alone. The report distinguishes numeric
+exactness from JSON equality and adds separate read-only server timing/attempt
+receipts; it does not claim independent reconstruction of client timings. All
+three production attempts reached review without retry, and human correction
+time remains unmeasured. CI passed on fixture commit `653e8af`.

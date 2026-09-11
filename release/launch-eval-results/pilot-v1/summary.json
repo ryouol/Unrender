@@ -1,0 +1,55 @@
+{
+  "scope": "Three owned synthetic operational fixtures; not a customer benchmark",
+  "successful_jobs": 3,
+  "total_jobs": 3,
+  "attempts": 3,
+  "credits_consumed": 3,
+  "dollar_cost": null,
+  "human_correction_seconds": null,
+  "human_correction_status": "not measured",
+  "latency_basis": "Client-observed upload to terminal, including three-second polling; not GPU duration or verified cold/warm timing",
+  "aggregate": {
+    "n": 3,
+    "schema_valid_rate": 1.0,
+    "chart_type_acc": 1.0,
+    "cell_accuracy": 1.0,
+    "cell_accuracy_exact": 1.0,
+    "pie_proportion_accuracy": 0.0,
+    "chart_exact_rate": 1.0,
+    "title_acc": 1.0,
+    "x_label_acc": 1.0,
+    "y_label_acc": 1.0,
+    "series_name_f1": 0.3333333333333333,
+    "mae": 0.0,
+    "median_rel_err": 0.0,
+    "total_points": 15,
+    "exact_points": 15,
+    "proxy_points": 0
+  },
+  "cases": [
+    {
+      "id": "labelled-bar",
+      "upload_to_terminal_seconds": 92.1,
+      "correct_points": 4,
+      "expected_points": 4,
+      "predicted_points": 4,
+      "status": "review"
+    },
+    {
+      "id": "unlabelled-line",
+      "upload_to_terminal_seconds": 67.72,
+      "correct_points": 5,
+      "expected_points": 5,
+      "predicted_points": 5,
+      "status": "review"
+    },
+    {
+      "id": "unlabelled-grouped-bar",
+      "upload_to_terminal_seconds": 193.21,
+      "correct_points": 6,
+      "expected_points": 6,
+      "predicted_points": 6,
+      "status": "review"
+    }
+  ]
+}

@@ -44,11 +44,15 @@
             <p id="auth-description">Sign in to your workspace.</p>
           </div>
           <form id="login-form">
+            <a class="button button-secondary google-auth-button" id="google-signin" href="/auth/google/start" hidden><img src="/static/icons/google-g.png" width="20" height="20" alt="">Continue with Google</a>
+            <p class="auth-divider" id="google-signin-divider" hidden>or use email</p>
             <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@domain.com" required></label>
             <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="Your password" required></label>
             <button class="button button-primary" type="submit">Sign in</button>
           </form>
           <form id="register-form" hidden>
+            <a class="button button-secondary google-auth-button" id="google-signup" href="/auth/google/start" hidden><img src="/static/icons/google-g.png" width="20" height="20" alt="">Continue with Google</a>
+            <p class="auth-divider" id="google-signup-divider" hidden>or use email</p>
             <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@domain.com" required></label>
             <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Create a password" aria-describedby="password-hint" required><span class="label-hint" id="password-hint">Use at least 12 characters.</span></label>
             <p class="form-notice" id="signup-access-note"></p>

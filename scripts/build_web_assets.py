@@ -1,17 +1,15 @@
-"""Build small public-web derivatives from the existing chart fixture, not tenant files."""
+"""Build favicon derivatives from the approved brand master, never tenant files."""
 
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 STATIC = Path(__file__).resolve().parents[1] / "unrender" / "product" / "static"
 
 
 def main() -> None:
     icons = STATIC / "icons"
-    icons.mkdir(exist_ok=True)
-    with Image.open(STATIC / "demo" / "budget-quarter.webp") as source:
-        square = ImageOps.pad(source.convert("RGB"), (512, 512), color="#f4f3ee")
+    with Image.open(icons / "brand-mark.png") as source:
         for name, size in (
             ("favicon-16.png", 16),
             ("favicon-32.png", 32),
@@ -19,13 +17,10 @@ def main() -> None:
             ("icon-192.png", 192),
             ("icon-512.png", 512),
         ):
-            square.resize((size, size), Image.Resampling.LANCZOS).save(icons / name, optimize=True)
-        square.save(icons / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
-        width = min(240, source.width)
-        source.resize((width, round(source.height * width / source.width))).save(
-            STATIC / "demo" / "budget-quarter-small.webp",
-            quality=82,
-            method=6,
+            source.resize((size, size), Image.Resampling.LANCZOS).save(icons / name, optimize=True)
+        source.resize((256, 256), Image.Resampling.LANCZOS).save(
+            icons / "favicon.ico",
+            sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
         )
 
 

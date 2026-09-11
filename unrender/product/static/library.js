@@ -1,9 +1,65 @@
-const library = { projects: [], filter: "all", project: "", search: "", page: 0, layout: "grid", dialog: null };
+const library = { projects: [], projectsRequest: 0, filter: "all", project: "", search: "", page: 0, layout: "grid", dialog: null };
 const LIBRARY_PAGE_SIZE = 24;
+
+function libraryIsVisible() {
+  return Boolean(state.account) && (!byId("library-view").hidden || !byId("projects-view").hidden);
+}
+
+function scheduleLibraryRefresh(delay = 10000) {
+  if (!libraryIsVisible()) return;
+  stopPolling();
+  if (document.visibilityState === "visible" && state.jobs.some((job) => ["queued", "running"].includes(job.status))) {
+    state.pollTimer = window.setTimeout(() => refreshLibrary(), delay);
+  }
+}
+
+async function refreshLibrary() {
+  if (!libraryIsVisible() || document.visibilityState !== "visible") return;
+  if (library.refreshRequest) return library.refreshRequest;
+  const epoch = state.authEpoch;
+  const view = state.viewEpoch;
+  const request = Promise.all([loadJobs(), loadProjects(), refreshAccount({ timeoutMs: 30000 })])
+    .catch((error) => {
+      if (epoch === state.authEpoch && view === state.viewEpoch) showToast(error);
+    }).finally(() => {
+      if (library.refreshRequest !== request) return;
+      library.refreshRequest = null;
+      if (epoch === state.authEpoch) scheduleLibraryRefresh();
+    });
+  library.refreshRequest = request;
+  return request;
+}
 
 function chartName(job) { return job.display_name || job.source_name; }
 
+function libraryApi(path, options = {}) { return api(path, { ...options, timeoutMs: 30000 }); }
+
+async function refreshAfterChange(message) {
+  const view = state.viewEpoch;
+  try { await Promise.all([loadJobs(), loadProjects()]); }
+  catch (error) {
+    if (isStaleRequest(error)) throw error;
+    if (view !== state.viewEpoch) throw staleAuthError();
+    showToast(`${message}. The change is saved, but the list could not refresh. Reload to see the latest view.`);
+    return;
+  }
+  if (view !== state.viewEpoch) throw staleAuthError();
+  showToast(message);
+}
+
+function applyChartMetadata(job) {
+  state.jobs = state.jobs.map((item) => item.id === job.id ? { ...item, ...job } : item);
+  if (state.currentJob?.id === job.id) {
+    state.currentJob.display_name = job.display_name;
+    state.currentJob.project_id = job.project_id;
+    byId("review-filename").textContent = chartName(state.currentJob);
+  }
+  renderJobList();
+}
+
 function resetLibrary() {
+  resetLibraryPreviews();
+  library.refreshRequest = null;
   library.projects = [];
   library.filter = "all";
   library.project = "";
@@ -13,10 +69,7 @@ function resetLibrary() {
   byId("project-filter").replaceChildren();
   byId("project-list").replaceChildren();
   closeLibraryDialog(true);
-  if (byId("settings-dialog").open) byId("settings-dialog").close();
-  byId("connect-google-form").reset();
-  byId("connect-google-form").inert = false;
-  byId("connect-google-form").removeAttribute("aria-busy");
+
 }
 
 function libraryNode(tag, text, className = "") {
@@ -29,7 +82,14 @@ function libraryNode(tag, text, className = "") {
 function libraryMenu(label, actions) {
   const menu = document.createElement("details");
   menu.className = "action-menu library-menu";
-  const summary = libraryNode("summary", "More");
+  const summary = libraryNode("summary", "");
+  const icon = document.createElement("img");
+  icon.src = "/static/icons/dots-three.svg";
+  icon.alt = "";
+  icon.width = 22;
+  icon.height = 22;
+  icon.className = "ui-icon";
+  summary.append(icon);
   summary.setAttribute("aria-label", label);
   const content = libraryNode("div", "", "action-menu-content");
   for (const [title, action, danger] of actions) {
@@ -43,7 +103,9 @@ function libraryMenu(label, actions) {
 }
 
 async function loadProjects() {
-  const result = await api("/api/projects");
+  const request = ++library.projectsRequest;
+  const result = await libraryApi("/api/projects");
+  if (request !== library.projectsRequest) return;
   library.projects = result.items;
   if (library.project && !library.projects.some((project) => project.id === library.project)) library.project = "";
   const select = byId("project-filter");
@@ -74,22 +136,19 @@ function renderLibrary() {
   }
   const list = byId("job-list");
   list.classList.toggle("is-list", library.layout === "list");
-  list.replaceChildren();
+  const mounted = new Map([...list.children].map((card) => [card.dataset.chartKey, card]));
+  const cards = [];
   for (const job of jobs.slice(library.page * LIBRARY_PAGE_SIZE, (library.page + 1) * LIBRARY_PAGE_SIZE)) {
+    const key = JSON.stringify([job.id, job.updated_at, job.status, chartName(job), job.project_id]);
+    if (mounted.has(key)) { cards.push(mounted.get(key)); continue; }
     const article = libraryNode("article", "", "chart-item");
+    article.dataset.chartKey = key;
     const open = document.createElement("button");
     open.type = "button";
     open.className = "chart-open";
     open.setAttribute("aria-label", `Open ${chartName(job)}`);
     open.addEventListener("click", () => openJob(job.id));
-    const preview = libraryNode("div", "", "chart-preview");
-    const image = document.createElement("img");
-    image.src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
-    image.alt = "";
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.addEventListener("error", () => { preview.replaceChildren(libraryNode("span", "Preview unavailable")); });
-    preview.append(image);
+    const preview = createLibraryPreview(job, article);
     const name = libraryNode("strong", chartName(job), "chart-name");
     const meta = libraryNode("span", "", "chart-meta");
     const status = libraryNode("span", statusLabel(job.status), `status-${job.status}`);
@@ -102,8 +161,10 @@ function renderLibrary() {
       ["Move to project", () => moveChart(job)],
       ["Delete chart", () => deleteLibraryChart(job), true],
     ]));
-    list.append(article);
+    cards.push(article);
   }
+  list.replaceChildren(...cards);
+  syncLibraryPreviews(cards);
   byId("library-no-results").hidden = jobs.length > 0 || state.jobs.length === 0;
   byId("empty-view").hidden = state.jobs.length > 0 || byId("library-view").hidden;
   byId("library-pagination").hidden = pages === 1;
@@ -120,6 +181,7 @@ function showLibrary() {
   clearSelectedChart();
   showMainView("library-view");
   document.title = "My charts — Unrender";
+  void refreshLibrary();
 }
 
 async function showProjects() {
@@ -128,11 +190,12 @@ async function showProjects() {
   const view = beginViewSelection();
   try {
     await loadProjects();
-    if (view.epoch !== state.viewEpoch) return;
-    state.currentJob = null;
+    if (view.epoch !== state.viewEpoch || !discardEditorChanges()) return;
+    clearSelectedChart();
     showMainView("projects-view");
     renderProjects();
     document.title = "Projects — Unrender";
+    scheduleLibraryRefresh();
   } catch (error) { showToast(error); }
 }
 
@@ -207,7 +270,7 @@ function openLibraryDialog({ title, note, fields = [], submit = "Save", danger =
 async function submitLibraryDialog(event) {
   event.preventDefault();
   const current = library.dialog;
-  if (!current || current.pending || !byId("library-dialog-form").reportValidity()) return;
+  if (!current || current.pending || current.uncertain || !byId("library-dialog-form").reportValidity()) return;
   current.pending = true;
   clearError("library-dialog-error");
   byId("library-dialog-submit").disabled = true;
@@ -219,11 +282,16 @@ async function submitLibraryDialog(event) {
     current.resolve(true);
     closeLibraryDialog(true);
   } catch (error) {
-    if (current === library.dialog) showError("library-dialog-error", error);
+    if (current === library.dialog) {
+      current.uncertain = Boolean(error.uncertainMutation);
+      showError("library-dialog-error", current.uncertain
+        ? "We could not confirm whether this change completed. Close and refresh your workspace before retrying."
+        : error);
+    }
   } finally {
     if (current === library.dialog) {
       current.pending = false;
-      byId("library-dialog-submit").disabled = false;
+      byId("library-dialog-submit").disabled = Boolean(current.uncertain);
       byId("library-dialog-close").disabled = false;
       byId("library-dialog-form").removeAttribute("aria-busy");
     }
@@ -235,52 +303,55 @@ function editProject(project = null) {
     title: project ? "Rename project" : "Create project", note: "A private collection of related charts.",
     fields: [dialogField("Project name", "project_name", { value: project?.name || "" })],
     action: async (data) => {
-      await api(project ? `/api/projects/${routeSegment(project.id)}` : "/api/projects", {
+      const changed = await libraryApi(project ? `/api/projects/${routeSegment(project.id)}` : "/api/projects", {
         method: project ? "PATCH" : "POST", body: { name: String(data.get("project_name")).trim() },
       });
-      await loadProjects();
-      showToast(project ? "Project renamed" : "Project created");
+      library.projects = [changed, ...library.projects.filter((item) => item.id !== changed.id)];
+      await refreshAfterChange(project ? "Project renamed" : "Project created");
     },
   });
 }
 
 async function deleteProject(project) {
+  const view = state.viewEpoch;
   try {
-    const latest = await api(`/api/projects/${routeSegment(project.id)}`);
+    const latest = await libraryApi(`/api/projects/${routeSegment(project.id)}`);
+    if (view !== state.viewEpoch) return;
     return await openLibraryDialog({
-      title: `Delete ${latest.name}?`, note: `This project contains ${latest.chart_count} charts. Choose whether to keep them in My charts or permanently remove their sources, results, and history.`,
-      fields: [dialogField("Charts in this project", "mode", { options: [["keep_charts", "Keep charts in My charts"], ["delete_charts", `Permanently delete all ${latest.chart_count} charts`]] })],
+      title: `Delete ${latest.name}?`, note: `This project contains ${latest.chart_count} ${latest.chart_count === 1 ? "chart" : "charts"}. Choose whether to keep the charts in My charts or permanently remove their sources, results, and history.`,
+      fields: [dialogField("Charts in this project", "mode", { value: "keep_charts", options: [["keep_charts", "Keep charts in My charts"], ["delete_charts", `Permanently delete ${latest.chart_count} ${latest.chart_count === 1 ? "chart" : "charts"}`]] })],
       submit: "Delete project", danger: true,
       action: async (data) => {
-        const result = await api(`/api/projects/${routeSegment(project.id)}?mode=${routeSegment(data.get("mode"))}&expected_chart_count=${latest.chart_count}`, { method: "DELETE" });
-        await Promise.all([loadJobs(), loadProjects()]);
+        const result = await libraryApi(`/api/projects/${routeSegment(project.id)}?mode=${routeSegment(data.get("mode"))}&expected_chart_count=${latest.chart_count}`, { method: "DELETE" });
+        library.projects = library.projects.filter((item) => item.id !== project.id);
+        if (data.get("mode") === "delete_charts") state.jobs = state.jobs.filter((item) => item.project_id !== project.id);
+        else state.jobs = state.jobs.map((item) => item.project_id === project.id ? { ...item, project_id: null } : item);
         renderProjects();
-        showToast(result.status === "deletion_queued" ? "Project removed. File cleanup will retry automatically." : "Project deleted");
+        await refreshAfterChange(result.status === "deletion_queued" ? "Project removed. File cleanup will retry automatically." : "Project deleted");
       },
     });
   } catch (error) { showToast(error); }
 }
 
 function renameChart(job) {
-  if (!discardEditorChanges()) return;
   return openLibraryDialog({ title: "Rename chart", note: "The original source filename stays in the audit record.", fields: [dialogField("Chart name", "name", { value: chartName(job) })], action: async (data) => {
-    await api(`/api/jobs/${routeSegment(job.id)}`, { method: "PATCH", body: { display_name: String(data.get("name")).trim() } });
-    await loadJobs();
-    if (state.currentJob?.id === job.id) await openJob(job.id);
-    showToast("Chart renamed");
+    const changed = await libraryApi(`/api/jobs/${routeSegment(job.id)}`, { method: "PATCH", body: { display_name: String(data.get("name")).trim() } });
+    applyChartMetadata(changed);
+    await refreshAfterChange("Chart renamed");
   } });
 }
 
 async function moveChart(job) {
-  if (!discardEditorChanges()) return;
+  const view = state.viewEpoch;
   try {
     await loadProjects();
+    if (view !== state.viewEpoch) return;
     return await openLibraryDialog({ title: "Move to project", note: chartName(job), fields: [dialogField("Project", "project", {
       value: job.project_id || "", options: [["", "No project"], ...library.projects.map((project) => [project.id, project.name])],
     })], action: async (data) => {
-      await api(`/api/jobs/${routeSegment(job.id)}`, { method: "PATCH", body: { project_id: data.get("project") || null } });
-      await Promise.all([loadJobs(), loadProjects()]);
-      showToast("Chart moved");
+      const changed = await libraryApi(`/api/jobs/${routeSegment(job.id)}`, { method: "PATCH", body: { project_id: data.get("project") || null } });
+      applyChartMetadata(changed);
+      await refreshAfterChange("Chart moved");
     } });
   } catch (error) { showToast(error); }
 }
@@ -293,7 +364,7 @@ function deleteLibraryChart(job) {
   return openLibraryDialog({ title: `Delete ${chartName(job)}?`, note: "This permanently removes the chart, corrections, and review history. A shared original upload is kept while another chart still uses it. This cannot be undone.", submit: "Delete chart", danger: true, action: async () => {
     const epoch = state.authEpoch;
     const previousView = state.viewEpoch;
-    const result = await api(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
+    const result = await libraryApi(`/api/jobs/${routeSegment(job.id)}`, { method: "DELETE" });
     if (epoch !== state.authEpoch || previousView !== state.viewEpoch) throw staleAuthError();
     state.jobs = state.jobs.filter((item) => item.id !== job.id);
     if (state.currentJob?.id === job.id) {
@@ -301,9 +372,8 @@ function deleteLibraryChart(job) {
       showLibrary();
     }
     const currentView = state.viewEpoch;
-    await Promise.all([loadJobs(), loadProjects()]);
+    await refreshAfterChange(result?.status === "deletion_queued" ? "Chart removed. File cleanup will retry automatically." : "Chart deleted");
     if (epoch !== state.authEpoch || currentView !== state.viewEpoch) throw staleAuthError();
-    showToast(result?.status === "deletion_queued" ? "Chart removed. File cleanup will retry automatically." : "Chart deleted");
   } });
 }
 
@@ -311,7 +381,7 @@ async function discardUpload() {
   if (!state.upload) { showLibrary(); return; }
   const upload = state.upload;
   await openLibraryDialog({ title: "Discard this upload?", note: "The prepared upload will be removed. Charts already extracted from it are kept.", submit: "Discard upload", danger: true, action: async () => {
-    await api(`/api/uploads/${routeSegment(upload.id)}`, { method: "DELETE" });
+    await libraryApi(`/api/uploads/${routeSegment(upload.id)}`, { method: "DELETE" });
     if (state.upload === upload) {
       state.upload = null;
       byId("upload-preview").removeAttribute("src");

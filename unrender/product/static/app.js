@@ -3,6 +3,7 @@ const state = {
   googleCompletionPending: false,
   jobs: [],
   jobsInitialized: false,
+  jobsRequest: 0,
   currentJob: null,
   upload: null,
   uploadPage: 0,
@@ -89,26 +90,45 @@ async function api(path, options = {}) {
   const requestOptions = { ...options };
   delete requestOptions.authEpoch;
   delete requestOptions.authRecord;
+  delete requestOptions.timeoutMs;
+  delete requestOptions.responseType;
+  const parentSignal = requestOptions.signal || state.authController.signal;
+  const timed = options.timeoutMs ? new AbortController() : null;
+  const cancel = () => timed?.abort();
+  if (timed) parentSignal.addEventListener("abort", cancel, { once: true });
+  if (parentSignal.aborted) cancel();
+  let expired = false;
+  const timer = timed ? window.setTimeout(() => { expired = true; timed.abort(); }, options.timeoutMs) : null;
   let response;
+  let payload;
   try {
     response = await fetch(path, {
       ...requestOptions,
       method,
       headers,
       body,
-      signal: requestOptions.signal || state.authController.signal,
+      signal: timed?.signal || parentSignal,
     });
+    if (!authContextMatches(epoch, authRecord)) throw staleAuthError();
+    const contentType = response.headers.get("content-type") || "";
+    payload = contentType.includes("application/json") ? await response.json()
+      : options.responseType === "blob" && response.ok ? await response.blob() : null;
   } catch (error) {
-    if (!authContextMatches(epoch, authRecord) || error?.name === "AbortError") {
+    if (!authContextMatches(epoch, authRecord) || parentSignal.aborted) {
       throw staleAuthError();
     }
+    if (expired) {
+      const timeout = new Error(method === "GET" ? "The request timed out. Please try again." : "We could not confirm whether this change completed. Close this dialog and refresh your workspace before retrying.");
+      timeout.code = "request_timeout";
+      timeout.uncertainMutation = method !== "GET";
+      throw timeout;
+    }
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) error.uncertainMutation = true;
     throw error;
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+    if (timed) parentSignal.removeEventListener("abort", cancel);
   }
-  if (!authContextMatches(epoch, authRecord)) {
-    throw staleAuthError();
-  }
-  const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json") ? await response.json() : null;
   if (!authContextMatches(epoch, authRecord)) {
     throw staleAuthError("A previous account response was discarded");
   }
@@ -580,51 +600,33 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   state.account = null;
   state.jobs = [];
   resetLibrary();
+  resetSettings();
   state.jobsInitialized = false;
-  state.currentJob = null;
+  clearSelectedChart();
   state.upload = null;
   state.uploadPage = 0;
   state.crop = null;
   state.cropStart = null;
-  state.editorRows = [];
-  state.editorSeries = [];
-  state.editorPage = 0;
-  state.editorDirty = false;
-  setHidden("export-completion", true);
-  byId("editor-change-note").textContent = "";
   if (clearSubmission) clearDurableJobSubmission();
   state.jobSubmissionPending = false;
   state.principalMarker = null;
   state.pollDelay = 1500;
   byId("job-list").replaceChildren();
-  byId("job-actions").replaceChildren();
-  byId("audit-list").replaceChildren();
-  byId("version-list").replaceChildren();
-  byId("result-table").replaceChildren();
-  byId("series-editor-list").replaceChildren();
-  byId("chart-type-input").replaceChildren();
   byId("api-key-list").replaceChildren();
   byId("api-key-form").reset();
-  byId("source-zoom").value = "1";
-  byId("job-source-image").className = "";
-  byId("job-source-image").style.width = "";
   byId("login-form").reset();
   byId("register-form").reset();
   byId("generate-key-button").hidden = false;
   byId("generate-key-button").disabled = false;
   if (byId("api-key-dialog").open) byId("api-key-dialog").close();
   for (const id of [
-    "job-status", "job-title", "job-meta", "source-page-label", "edit-state",
     "page-counter", "credit-count", "account-email", "result-loading",
     "editor-page-summary",
   ]) {
     byId(id).textContent = "";
   }
-  for (const id of ["job-source-image", "upload-preview"]) byId(id).removeAttribute("src");
+  byId("upload-preview").removeAttribute("src");
   byId("file-input").value = "";
-  byId("result-form").reset();
-  byId("result-form").inert = false;
-  byId("result-form").removeAttribute("aria-busy");
   byId("dropzone").removeAttribute("aria-busy");
   byId("file-input").disabled = false;
   for (const id of ["open-sample-button", "run-sample-button", "queue-job-button", "buy-credits-button"]) {
@@ -638,7 +640,6 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   ]) byId(id).value = String(value);
   byId("crop-selection").hidden = true;
   byId("crop-selection").removeAttribute("style");
-  byId("review-notice").hidden = true;
   byId("result-loading").hidden = true;
   byId("toggle-audit-button").textContent = "Show activity";
   byId("toggle-versions-button").textContent = "Show versions";
@@ -648,10 +649,7 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
     byId(id).textContent = "";
     byId(id).hidden = true;
   }
-  setHidden("result-form", true);
   setHidden("page-review", true);
-  setHidden("audit-list", true);
-  setHidden("version-list", true);
 }
 
 function routeTo(path) {
@@ -677,6 +675,8 @@ function applyPublicConfig() {
   if (config.max_upload_bytes && config.max_image_pixels && config.max_pdf_pages) {
     byId("upload-limits").textContent = `PNG, JPEG, WebP, or PDF up to ${config.max_upload_bytes / (1024 * 1024)} MB · Images up to ${config.max_image_pixels / 1000000} MP · PDFs up to ${config.max_pdf_pages} pages`;
   }
+  for (const id of ["google-signin", "google-signup", "google-signin-divider", "google-signup-divider"]) byId(id).hidden = !config.google_available;
+  updateGoogleLoginGate();
   const registrationOpen = state.publicConfig.registration_open;
   byId("account-help-links").hidden = false;
   byId("resend-verification-link").hidden = !state.publicConfig.email_available;
@@ -735,7 +735,9 @@ function showMainView(name) {
   byId("empty-view").hidden = name !== "library-view" || state.jobs.length > 0;
   byId("library-button").setAttribute("aria-current", name === "projects-view" ? "false" : "page");
   byId("projects-button").setAttribute("aria-current", name === "projects-view" ? "page" : "false");
+  if (document.body.dataset.view !== name) window.scrollTo?.({ top: 0, behavior: "instant" });
   document.body.dataset.view = name;
+  setLibraryPreviewsActive(name === "library-view");
   if (name === "library-view") renderLibrary();
 }
 
@@ -810,7 +812,7 @@ function handleExternalAuthChange(event) {
 
 function handleAuthLifecycleBoundary() {
   const canonical = syncAuthRecordFromStorage({ wipe: true });
-  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal();
+  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal().then(() => refreshLibrary());
 }
 
 function installAuthCoordination() {
@@ -844,13 +846,14 @@ async function boot() {
     state.publicConfig = { registration_open: false, sample_available: false };
   }
   applyPublicConfig();
-  let googleError = googleReturnError(entryQuery.get("google"));
+  const googleError = googleReturnError(entryQuery.get("google"));
+  let completionError = null;
   try { await completeGoogleLogin(entryPath); }
-  catch (error) { googleError = error; }
+  catch (error) { completionError = error; }
   finally { state.googleCompletionPending = false; }
-  if (googleError) {
+  if (completionError) {
     showPublic({ clearCsrf: false });
-    showError("auth-error", googleError);
+    showError("auth-error", completionError);
     return;
   }
   const canonical = syncAuthRecordFromStorage({ wipe: false });
@@ -861,9 +864,12 @@ async function boot() {
   }
   try {
     await reconcilePrincipal();
-    if (!state.account) showPublic({ clearCsrf: false });
-    else if (entryQuery.get("settings") === "account") {
+    if (!state.account) {
+      showPublic({ clearCsrf: false });
+      if (googleError) showError("auth-error", googleError);
+    } else if (entryQuery.get("settings") === "account") {
       openSettings();
+      if (googleError) showError("settings-error", googleError);
       if (entryQuery.get("connected") === "1") showToast("Google is now connected to this account.");
       if (entryQuery.get("reauthenticated") === "1") showToast("Identity verified. You can now confirm account deletion in Settings.");
     }
@@ -1070,16 +1076,18 @@ async function logout() {
 
 async function loadJobs() {
   const authEpoch = state.authEpoch;
+  const request = ++state.jobsRequest;
   const jobs = [];
   let cursor = null;
   do {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-    const payload = await api(`/api/jobs${query}`, { authEpoch });
+    const payload = await api(`/api/jobs${query}`, { authEpoch, timeoutMs: 30000 });
     if (authEpoch !== state.authEpoch) throw staleAuthError();
     jobs.push(...payload.items);
     cursor = payload.next_cursor;
   } while (cursor);
   if (authEpoch !== state.authEpoch) throw staleAuthError();
+  if (request !== state.jobsRequest) return;
   state.jobs = jobs;
   state.jobsInitialized = true;
   renderJobList();
@@ -1364,6 +1372,7 @@ async function openJob(jobId, { throwOnError = false } = {}) {
   if (state.editorDirty && state.currentJob?.id === jobId) return state.currentJob;
   if (!discardEditorChanges()) return null;
   stopPolling();
+  setLibraryPreviewsActive(false);
   const view = beginViewSelection();
   const authEpoch = state.authEpoch;
   if (state.currentJob?.id !== jobId) {
@@ -1373,12 +1382,17 @@ async function openJob(jobId, { throwOnError = false } = {}) {
   try {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
-    const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal });
+    const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal, timeoutMs: 30000 });
+    await waitForLibraryPreview();
     if (view.epoch !== state.viewEpoch) throw staleAuthError();
     state.currentJob = job;
+    state.jobs = state.jobs.map((item) => item.id === job.id ? {
+      ...item, status: job.status, updated_at: job.updated_at,
+      display_name: job.display_name, project_id: job.project_id,
+    } : item);
     if (previousStatus && previousStatus !== state.currentJob.status) {
       state.pollDelay = 1500;
-      await Promise.all([loadJobs(), refreshAccount()]);
+      await Promise.all([loadJobs(), refreshAccount({ timeoutMs: 30000 })]);
       if (view.epoch !== state.viewEpoch) throw staleAuthError();
     }
     else renderJobList();
@@ -1400,7 +1414,13 @@ async function openJob(jobId, { throwOnError = false } = {}) {
     }
     return null;
   } finally {
-    if (authEpoch === state.authEpoch && view.epoch === state.viewEpoch) setHidden("workspace-loading", true);
+    if (authEpoch === state.authEpoch && view.epoch === state.viewEpoch) {
+      setHidden("workspace-loading", true);
+      if (!byId("library-view").hidden) {
+        setLibraryPreviewsActive(true);
+        renderLibrary();
+      }
+    }
   }
 }
 
@@ -1448,7 +1468,16 @@ function renderJob() {
   byId("result-loading").textContent = job.error?.message || job.progress_stage;
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
-  const currentStep = job.status === "approved" ? "export" : resultReady ? "review" : "extract";
+  renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
+  if (resultReady) renderEditor(job.result);
+  renderJobActions();
+  setHidden("audit-list", true);
+  setHidden("version-list", true);
+  byId("toggle-audit-button").textContent = "Show activity";
+  byId("toggle-versions-button").textContent = "Show versions";
+}
+
+function renderWorkflowSteps(currentStep) {
   let completed = true;
   for (const step of byId("workflow-steps").querySelectorAll("[data-step]")) {
     const current = step.dataset.step === currentStep;
@@ -1458,12 +1487,6 @@ function renderJob() {
     if (current) step.setAttribute("aria-current", "step");
     else step.removeAttribute("aria-current");
   }
-  if (resultReady) renderEditor(job.result);
-  renderJobActions();
-  setHidden("audit-list", true);
-  setHidden("version-list", true);
-  byId("toggle-audit-button").textContent = "Show activity";
-  byId("toggle-versions-button").textContent = "Show versions";
 }
 
 function renderJobActions() {
@@ -1519,7 +1542,14 @@ function markEditorDirty(event) {
   byId("editor-change-note").textContent = "Unsaved changes";
   byId("edit-state").textContent = "Needs review";
   setHidden("export-completion", true);
-  if (state.currentJob) renderJobActions();
+  if (state.currentJob) {
+    byId("job-status").textContent = "Unsaved changes";
+    byId("job-title").textContent = "Review data";
+    byId("job-meta").textContent = `Last saved · ${formatDate(state.currentJob.updated_at)}`;
+    setHidden("review-notice", false);
+    renderWorkflowSteps("review");
+    renderJobActions();
+  }
 }
 
 function discardEditorChanges() {
@@ -1640,6 +1670,8 @@ function clearSelectedChart() {
   byId("result-form").removeAttribute("aria-busy");
   byId("job-source-image").removeAttribute("src");
   byId("job-source-image").style.width = "";
+  byId("job-source-image").className = "";
+  byId("source-zoom").value = "1";
   for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
   for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
   for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);

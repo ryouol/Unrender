@@ -1,5 +1,5 @@
 function openSettings() {
-  if (!state.account || !discardEditorChanges()) return;
+  if (!state.account) return;
   const account = state.account;
   byId("signin-methods-note").textContent = account.google_connected
     ? (account.has_password ? "Google and password sign-in are connected to this account." : "Sign in with your connected Google account. Google manages account recovery.")
@@ -16,10 +16,18 @@ function closeSettings() {
   if (byId("settings-dialog").open) byId("settings-dialog").close();
 }
 
+function resetSettings() {
+  closeSettings();
+  byId("connect-google-form").inert = false;
+  byId("connect-google-form").removeAttribute("aria-busy");
+  for (const id of ["signin-methods-note", "settings-retention", "settings-error"]) byId(id).textContent = "";
+}
+
 async function connectGoogle(event) {
   event.preventDefault();
   const form = event.currentTarget;
   if (form.getAttribute("aria-busy") === "true") return;
+  if (!discardEditorChanges()) return;
   const password = new FormData(form).get("password");
   const epoch = state.authEpoch;
   form.reset();
@@ -27,7 +35,7 @@ async function connectGoogle(event) {
   form.inert = true;
   clearError("settings-error");
   try {
-    const result = await api("/api/auth/google/link", { method: "POST", body: { password } });
+    const result = await libraryApi("/api/auth/google/link", { method: "POST", body: { password } });
     const url = new URL(result.url);
     if (url.protocol !== "https:" || url.hostname !== "accounts.google.com") throw new Error("Google sign-in returned an unexpected destination.");
     window.location.assign(url.href);
@@ -53,8 +61,8 @@ function deleteAccount() {
   fields.push(dialogField("Type DELETE to confirm", "confirmation"));
   return openLibraryDialog({ title: "Delete your account?", note: "All charts, projects, review history, API keys, and account access will be permanently removed. This cannot be undone. Running extractions must finish or be cancelled first. Private backups expire under the backup retention policy.", fields, submit: "Permanently delete account", danger: true, action: async (data) => {
     if (data.get("confirmation") !== "DELETE") throw new Error("Type DELETE exactly to confirm.");
-    if (account.has_password) await api("/api/auth/reauthenticate", { method: "POST", body: { password: data.get("password") } });
-    const result = await api("/api/auth/delete-account", { method: "POST", body: { confirmation: "DELETE" } });
+    if (account.has_password) await libraryApi("/api/auth/reauthenticate", { method: "POST", body: { password: data.get("password") } });
+    const result = await libraryApi("/api/auth/delete-account", { method: "POST", body: { confirmation: "DELETE" } });
     quarantineAuth("signed-out", { clearCsrf: true });
     await publishAuthChange("session-ended");
     showToast(result?.status === "deletion_queued" ? "Account removed. Private file cleanup will retry automatically." : "Your account and workspace have been deleted.");

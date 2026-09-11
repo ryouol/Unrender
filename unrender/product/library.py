@@ -122,7 +122,10 @@ class ChartLibrary:
                 event_type="chart_metadata_changed",
                 details={"fields": sorted(changes)},
             )
-            return public_job(conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+            return public_job(
+                conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone(),
+                include_result=False,
+            )
 
     def delete_project(
         self,

@@ -282,11 +282,11 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
     }
     remote_calls: list[tuple[object, ...]] = []
 
-    def remote_call(*args: object) -> dict[str, object]:
+    async def remote_call(*args: object) -> dict[str, object]:
         remote_calls.append(args)
         return response
 
-    remote = SimpleNamespace(remote=remote_call)
+    remote = SimpleNamespace(remote=SimpleNamespace(aio=remote_call))
     modal = SimpleNamespace(
         Function=SimpleNamespace(from_name=lambda *_: remote),
     )
@@ -1712,6 +1712,7 @@ def test_test_mode_checkout_and_signed_webhook_flow(
 
 def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
     tmp_path: Path,
+    fixed_rate_window,
 ) -> None:
     app = create_app(
         settings_for(
@@ -1719,6 +1720,7 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
             seed_demo_account=False,
             rate_limit_per_minute=2,
             auth_rate_limit_per_minute=2,
+            global_auth_rate_limit_per_minute=2,
         )
     )
     payload = {"email": "known@example.com", "password": "wrong password"}
@@ -1731,7 +1733,7 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
         )
         second = client.post(
             "/api/auth/login",
-            json=payload,
+            json={**payload, "email": "unknown@example.com"},
             headers={
                 "Cookie": "unrender_session=attacker-b",
                 "X-Forwarded-For": "198.51.100.2",
@@ -1739,24 +1741,90 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
         )
         blocked = client.post(
             "/api/auth/login",
-            json=payload,
+            json={**payload, "email": "another@example.com"},
             headers={"Authorization": "Bearer attacker-c", "X-Forwarded-For": "198.51.100.3"},
         )
     assert first.status_code == second.status_code == 401
     assert blocked.status_code == 429
     with app.state.service.database.connect() as conn:
         buckets = conn.execute("SELECT bucket_key,request_count FROM rate_limits").fetchall()
-    assert len(buckets) == 1
-    assert int(buckets[0]["request_count"]) == 3
-    assert "attacker" not in str(buckets[0]["bucket_key"])
+    counts = {row["bucket_key"]: row["request_count"] for row in buckets}
+    assert counts["global:auth"] == 3
+    assert len(counts) == 3  # Two admitted account identifiers, never raw credentials.
+    assert all("attacker" not in key and "@" not in key for key in counts)
 
 
-def test_live_health_is_cheap_while_readiness_is_admission_limited(tmp_path: Path) -> None:
-    app = create_app(settings_for(tmp_path, rate_limit_per_minute=2))
+def test_live_health_is_cheap_while_readiness_is_admission_limited(
+    tmp_path: Path, fixed_rate_window
+) -> None:
+    app = create_app(settings_for(tmp_path, global_rate_limit_per_minute=2))
     with TestClient(app) as client:
         assert client.get("/health/ready").status_code == 200
         assert client.get("/health/ready").status_code == 200
         assert client.get("/health/ready").status_code == 429
+        assert client.get("/health/live").status_code == 200
+
+
+def test_tenant_quota_is_independent_behind_shared_proxy_and_shared_across_sessions(
+    tmp_path: Path,
+    fixed_rate_window,
+) -> None:
+    app = create_app(settings_for(tmp_path, seed_demo_account=False, rate_limit_per_minute=2))
+    with TestClient(app) as client:
+        service = app.state.service
+        owner = service.provision_user("owner@example.com", "owner password is long enough")
+        other = service.provision_user("other@example.com", "other password is long enough")
+        first = service.create_session(owner)
+        second = service.create_session(owner)
+        other_session = service.create_session(other)
+        client.cookies.set("unrender_session", first["session"])
+        assert client.get("/api/me").status_code == 200
+        assert client.get("/api/me").status_code == 200
+        client.cookies.set("unrender_session", second["session"])
+        assert client.get("/api/me", headers={"X-Forwarded-For": "198.51.100.9"}).status_code == 429
+        client.cookies.set("unrender_session", other_session["session"])
+        assert client.get("/api/me").status_code == 200
+        for name in ("first key", "second key"):
+            key = service.create_api_key(user_id=owner, name=name)
+            assert (
+                client.get(
+                    "/api/v1/extractions/missing", headers={"Authorization": "Bearer " + key["key"]}
+                ).status_code
+                == 429
+            )
+        assert client.get("/api/me").status_code == 200
+
+
+@pytest.mark.parametrize("failure", ["csrf", "json", "bearer"])
+def test_global_capacity_covers_rejected_requests_with_valid_session(
+    tmp_path: Path,
+    failure: str,
+    fixed_rate_window,
+) -> None:
+    app = create_app(
+        settings_for(tmp_path, seed_demo_account=False, global_rate_limit_per_minute=2)
+    )
+    with TestClient(app) as client:
+        service = app.state.service
+        user_id = service.provision_user("owner@example.com", "owner password is long enough")
+        session = service.create_session(user_id)
+        client.cookies.set("unrender_session", session["session"])
+
+        def rejected():
+            if failure == "csrf":
+                return client.post("/api/jobs", json={"upload_id": "missing", "page_index": 0})
+            if failure == "json":
+                return client.post(
+                    "/api/jobs", content="{", headers={"Content-Type": "application/json"}
+                )
+            return client.get(
+                "/api/v1/extractions/missing", headers={"Authorization": "Bearer invalid"}
+            )
+
+        expected = {"csrf": 403, "json": 422, "bearer": 401}[failure]
+        assert rejected().status_code == expected
+        assert rejected().status_code == expected
+        assert rejected().status_code == 429
         assert client.get("/health/live").status_code == 200
 
 
@@ -2696,9 +2764,19 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
 ) -> None:
     resolved: list[tuple[str, str]] = []
 
+    hydrated = []
+
+    async def hydrate():
+        hydrated.append(True)
+
+    async def forbidden(*args):
+        raise AssertionError("spent")
+
     def from_name(app_name: str, function_name: str) -> SimpleNamespace:
         resolved.append((app_name, function_name))
-        return SimpleNamespace(remote=lambda *_: (_ for _ in ()).throw(AssertionError("spent")))
+        return SimpleNamespace(
+            remote=SimpleNamespace(aio=forbidden), hydrate=SimpleNamespace(aio=hydrate)
+        )
 
     monkeypatch.setitem(
         sys.modules,
@@ -2712,7 +2790,8 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
     )
     extractor = ModalExtractor(settings)
     assert extractor.canary_contract()
-    assert resolved == [("unrender", "infer_one")]
+    assert resolved == [("unrender-production", "infer_one")]
+    assert hydrated == [True]
 
     response = {
         "json": json.loads(
@@ -2721,12 +2800,16 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
         "raw": "case-normalized",
         "provider_release": "a" * 64,
     }
+
+    async def remote_response(*args):
+        return response
+
     monkeypatch.setitem(
         sys.modules,
         "modal",
         SimpleNamespace(
             Function=SimpleNamespace(
-                from_name=lambda *_: SimpleNamespace(remote=lambda *_: response)
+                from_name=lambda *_: SimpleNamespace(remote=SimpleNamespace(aio=remote_response))
             )
         ),
     )
@@ -3656,3 +3739,729 @@ def test_browser_privacy_editor_and_two_tab_regressions(script: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_modal_deadline_drains_worker_without_refund_or_redispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    cancelled = threading.Event()
+    calls: list[bytes] = []
+
+    async def remote(image: bytes, *_: object) -> None:
+        calls.append(image)
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(
+            Function=SimpleNamespace(
+                from_name=lambda *_: SimpleNamespace(remote=SimpleNamespace(aio=remote))
+            )
+        ),
+    )
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        extractor_backend="modal",
+        provider_timeout_seconds=1,
+    )
+    service.extractor = ModalExtractor(service.settings)
+    user_id = customer_id(service)
+    job = _paid_job(service, user_id, color="purple")
+    worker = JobWorker(service, poll_seconds=0.01)
+    worker.start()
+    try:
+        assert started.wait(timeout=5)
+        assert worker.stop(timeout=5)
+    finally:
+        worker.stop(timeout=5)
+    assert cancelled.is_set()
+    result = service.get_job(user_id=user_id, job_id=str(job["id"]))
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "provider_timeout"
+    assert service.account(user_id)["credits"] == 0
+    assert service.recover_interrupted_jobs() == 0
+    assert not service.process_one("after-restart")
+    assert len(calls) == 1
+    with service.database.connect() as conn:
+        assert (
+            conn.execute(
+                "SELECT provider_dispatched FROM jobs WHERE id=?", (job["id"],)
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_modal_canary_bounds_lazy_resolution_without_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hydrate() -> None:
+        await asyncio.Event().wait()
+
+    def remote(*_: object) -> None:
+        pytest.fail("Canary must not invoke inference")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "modal",
+        SimpleNamespace(
+            Function=SimpleNamespace(
+                from_name=lambda *_: SimpleNamespace(
+                    hydrate=SimpleNamespace(aio=hydrate), remote=SimpleNamespace(aio=remote)
+                )
+            )
+        ),
+    )
+    extractor = ModalExtractor(settings_for(tmp_path, provider_timeout_seconds=1))
+    with pytest.raises(ExtractionError) as error:
+        extractor.canary_contract()
+    assert error.value.code == "provider_contract_unavailable"
+
+
+@pytest.mark.parametrize("deadline", [0, 241])
+def test_provider_deadline_rejects_unbounded_configuration(tmp_path: Path, deadline: int) -> None:
+    with pytest.raises(ValueError, match="PROVIDER_TIMEOUT_SECONDS"):
+        settings_for(tmp_path, provider_timeout_seconds=deadline).validate()
+
+
+def test_concurrent_logins_can_share_a_legacy_password_upgrade(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    password = "legacy password is long enough"
+    user_id = service.provision_user("legacy@example.com", password)
+    salt = b"legacy-salt-1234"
+    derived = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
+    legacy = "scrypt$16384$8$1$" + base64.urlsafe_b64encode(salt).decode()
+    legacy += "$" + base64.urlsafe_b64encode(derived).decode()
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?", (legacy, user_id))
+    barrier = threading.Barrier(2)
+    original = service_module.verify_password
+
+    def overlapping_verification(value, encoded):
+        result = original(value, encoded)
+        if encoded == legacy:
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(service_module, "verify_password", overlapping_verification)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(service.authenticate, "legacy@example.com", password) for _ in range(2)
+        ]
+        sessions = [future.result(timeout=10) for future in futures]
+    assert len({session["session"] for session in sessions}) == 2
+    assert all(service.session_user(session["session"]) for session in sessions)
+
+
+def test_worker_recovers_lease_that_expires_after_startup_without_redispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(
+        tmp_path,
+        seed_demo_account=False,
+        initial_credits=1,
+        worker_lease_seconds=10,
+        worker_heartbeat_seconds=1,
+    )
+    user_id = customer_id(service)
+    job = _paid_job(service, user_id, color="purple")
+    claim = service.claim_next_job("terminated-worker")
+    assert claim is not None and service._begin_provider_dispatch(claim)
+    service.initialize()
+    assert service.get_job(user_id=user_id, job_id=str(job["id"]))["status"] == "running"
+
+    polled = threading.Event()
+    original_process = service.process_one
+    provider_calls: list[bytes] = []
+
+    def observe_poll(*args: Any, **kwargs: Any) -> bool:
+        result = original_process(*args, **kwargs)
+        polled.set()
+        return result
+
+    def unexpected_provider(image: bytes) -> ExtractionOutput:
+        provider_calls.append(image)
+        raise AssertionError("Dispatched work must not be invoked again")
+
+    monkeypatch.setattr(service, "process_one", observe_poll)
+    service.extractor = SimpleNamespace(extract=unexpected_provider)
+    worker = JobWorker(service, poll_seconds=0.01)
+    worker.start()
+    try:
+        assert polled.wait(timeout=5)
+        with service.database.transaction(immediate=True) as conn:
+            conn.execute(
+                "UPDATE jobs SET lease_expires_at=? WHERE id=?",
+                (timestamp(utcnow() - timedelta(seconds=1)), job["id"]),
+            )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            current = service.get_job(user_id=user_id, job_id=str(job["id"]))
+            if current["status"] == "failed":
+                break
+            time.sleep(0.02)
+        assert current["status"] == "failed"
+        assert current["error"]["code"] == "worker_lease_expired_after_dispatch"
+        assert service.account(user_id)["credits"] == 0
+        assert provider_calls == []
+        with service.database.connect() as conn:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM provider_attempts WHERE job_id=?", (job["id"],)
+                ).fetchone()[0]
+                == 1
+            )
+    finally:
+        assert worker.stop(timeout=5)
+
+
+def test_server_entrypoint_emits_private_structured_lifecycle_logs() -> None:
+    script = """
+import logging
+import logging.config
+import uvicorn
+from unrender.product.cli import main
+
+def run(*args, **kwargs):
+    logging.config.dictConfig(kwargs['log_config'])
+    logger = logging.getLogger('unrender.product')
+    logger.info('provider_call_succeeded', extra={
+        'job_id': 'test-job', 'provider': 'modal', 'duration_ms': 123,
+        'source_filename': 'private-chart.png', 'password': 'private-password',
+    })
+    try:
+        raise ValueError('private exception detail')
+    except ValueError:
+        logger.exception('job_processing_failed', extra={'job_id': 'test-job'})
+
+uvicorn.run = run
+main()
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(records) == 2
+    assert records[0]["event"] == "provider_call_succeeded"
+    assert records[0]["provider"] == "modal"
+    assert records[0]["duration_ms"] == 123
+    assert records[1]["event"] == "job_processing_failed"
+    assert records[1]["exception_type"] == "ValueError"
+    assert all(record["job_id"] == "test-job" for record in records)
+    assert "private" not in result.stdout + result.stderr
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_invitation_activation_reissue_and_persistence(tmp_path: Path) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+    link = service.invite_user("invited@example.com", credits=2)
+    token = link.split("token=", 1)[1]
+    with service.database.connect() as conn:
+        row = conn.execute("SELECT * FROM users").fetchone()
+        challenge = conn.execute("SELECT * FROM account_challenges").fetchone()
+    assert row["email_verified"] == 0
+    assert challenge["token_hash"] != token
+    assert row["credit_balance"] == 2
+    with pytest.raises(ProductError):
+        service.authenticate("invited@example.com", "a password never configured")
+    with pytest.raises(ProductError):
+        service.complete_account_email(token, purpose="reset", password="short")
+    replacement = service.operator_account_link("invited@example.com").split("token=", 1)[1]
+    with pytest.raises(ProductError, match="expired or was already used"):
+        service.complete_account_email(token, purpose="reset", password="a long chosen password")
+    service.complete_account_email(replacement, purpose="reset", password="a long chosen password")
+    session = service.authenticate("invited@example.com", "a long chosen password")
+    assert service.session_user(session["session"])["id"] == row["id"]
+    with pytest.raises(ProductError, match="expired or was already used"):
+        service.complete_account_email(
+            replacement, purpose="reset", password="a long chosen password"
+        )
+    restarted = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+    assert restarted.session_user(session["session"])["id"] == row["id"]
+    assert restarted.account(row["id"])["credits"] == 2
+    recovery = restarted.operator_account_link("invited@example.com").split("token=", 1)[1]
+    assert restarted.session_user(session["session"]) is not None
+    restarted.complete_account_email(
+        recovery, purpose="reset", password="a different chosen password"
+    )
+    assert restarted.session_user(session["session"]) is None
+    restarted.authenticate("invited@example.com", "a different chosen password")
+
+
+def test_invitation_creation_rolls_back_if_challenge_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+
+    def fail(*args: object) -> None:
+        raise RuntimeError("storage failure")
+
+    monkeypatch.setattr(service, "_store_account_challenge", fail)
+    with pytest.raises(RuntimeError, match="storage failure"):
+        service.invite_user("invited@example.com", credits=2)
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM credit_ledger").fetchone()[0] == 0
+
+
+def test_admin_invitation_writes_private_link_without_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "operator-data"
+    destination = tmp_path / "invitation.txt"
+    monkeypatch.setenv("UNRENDER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("UNRENDER_ENV", "test")
+    monkeypatch.setenv("UNRENDER_BASE_URL", "http://testserver")
+    monkeypatch.setenv("UNRENDER_SEED_DEMO", "false")
+    monkeypatch.setenv("UNRENDER_ALLOW_REGISTRATION", "false")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["unrender-admin", "invite-user", "invited@example.com", "--destination", str(destination)],
+    )
+    admin.main()
+    link = destination.read_text().strip()
+    assert link.startswith("http://testserver/account?mode=invite#account=reset&token=")
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert link not in capsys.readouterr().out
+    monkeypatch.setattr(
+        "sys.argv",
+        ["unrender-admin", "invite-user", "other@example.com", "--destination", str(destination)],
+    )
+    with pytest.raises(SystemExit, match="File exists"):
+        admin.main()
+    assert destination.read_text().strip() == link
+    with Database(data_dir / "unrender.sqlite3").connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+
+
+def test_invitation_publication_failure_preserves_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = service_for(tmp_path, allow_registration=False, seed_demo_account=False)
+
+    def fail(link: str) -> None:
+        raise OSError("disk full")
+
+    with pytest.raises(OSError, match="disk full"):
+        service.invite_user("invited@example.com", credits=2, publish=fail)
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    token = service.invite_user("invited@example.com").split("token=", 1)[1]
+    with pytest.raises(OSError, match="disk full"):
+        service.operator_account_link("invited@example.com", publish=fail)
+    service.complete_account_email(token, purpose="reset", password="a long chosen password")
+    service.authenticate("invited@example.com", "a long chosen password")
+
+
+class _BackupVolume:
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.uploads = 0
+        self.corrupt_reads = False
+
+    def listdir(self, _: str) -> list[SimpleNamespace]:
+        return [SimpleNamespace(path=name) for name in self.files]
+
+    @contextmanager
+    def batch_upload(self) -> Iterator[_BackupVolume]:
+        yield self
+
+    def put_file(self, source: Path, destination: str, *, mode: int) -> None:
+        assert mode == 0o600
+        self.uploads += 1
+        self.files[destination.lstrip("/")] = source.read_bytes()
+
+    def _read_file_into_fileobj(self, name: str, output: Any, *, concurrency: int) -> int:
+        assert concurrency == 1
+        return int(output.write(b"corrupted" if self.corrupt_reads else self.files[name]))
+
+    def remove_file(self, name: str) -> None:
+        del self.files[name]
+
+
+def test_scheduled_backup_restores_accounts_and_sources(tmp_path: Path) -> None:
+    import tarfile
+
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    user = customer_id(service)
+    service.prepare_upload(user_id=user, filename="owned.png", content=png_bytes())
+    volume = _BackupVolume()
+    status = upload_backup(service.settings, volume)
+    archive = volume.files[str(status["archive"])]
+    assert hashlib.sha256(archive).hexdigest() == status["sha256"]
+    extracted = tmp_path / "extracted"
+    with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+        source.extractall(extracted, filter="data")
+    restored = restore_backup(extracted / "snapshot", tmp_path / "restored")
+    with Database(restored / "unrender.sqlite3").connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        upload = conn.execute("SELECT storage_path FROM uploads").fetchone()
+        assert Path(upload[0]).read_bytes() == png_bytes()
+
+
+def test_scheduled_backup_verifies_before_pruning_and_resumes(tmp_path: Path) -> None:
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    volume = _BackupVolume()
+    digest = hashlib.sha256(b"old").hexdigest()
+    old_names = {f"backup-{1000000000 + index}-{digest}.tar" for index in range(7)}
+    volume.files.update({name: b"old" for name in old_names})
+    volume.files["unrelated.txt"] = b"preserve"
+    volume.corrupt_reads = True
+    with pytest.raises(RuntimeError, match="verification failed"):
+        upload_backup(service.settings, volume)
+    assert old_names.issubset(volume.files)
+    assert volume.uploads == 1
+    volume.corrupt_reads = False
+    status = upload_backup(service.settings, volume)
+    assert status["archive"] in volume.files
+    assert volume.uploads == 1
+    assert len(volume.files) == 8  # seven archives plus unrelated content
+    assert volume.files["unrelated.txt"] == b"preserve"
+
+
+def test_scheduled_backup_refuses_unbounded_volume_growth(tmp_path: Path) -> None:
+    from unrender.product.scheduled_backup import upload_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    volume = _BackupVolume()
+    digest = hashlib.sha256(b"old").hexdigest()
+    volume.files.update({f"backup-{1000000000 + i}-{digest}.tar": b"old" for i in range(9)})
+    with pytest.raises(RuntimeError, match="operator cleanup"):
+        upload_backup(service.settings, volume)
+    assert volume.uploads == 0
+    assert len(volume.files) == 9
+
+
+def test_scheduled_backup_remembers_success_across_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modal
+
+    from unrender.product.scheduled_backup import ScheduledBackup
+
+    service = service_for(tmp_path, seed_demo_account=False, backup_volume_name="unrender-test")
+    volume = _BackupVolume()
+    monkeypatch.setattr(modal.Volume, "from_name", lambda name: volume)
+    runner = ScheduledBackup(service.settings)
+    assert runner.due()
+    runner.run_once()
+    assert not ScheduledBackup(service.settings).due()
+    assert stat.S_IMODE(runner.status_path.stat().st_mode) == 0o600
+    runner.status_path.write_text(json.dumps({"last_success": time.time() - 86401}))
+    assert ScheduledBackup(service.settings).due()
+    runner.status_path.write_text("broken json")
+    assert ScheduledBackup(service.settings).due()
+
+
+def test_automatic_backup_waits_for_inference_to_be_idle(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False)
+    user = customer_id(service)
+    job = _paid_job(service, user)
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE jobs SET status='running' WHERE id=?", (job["id"],))
+    with pytest.raises(BackupError, match="extraction is running"):
+        create_backup(service.settings, tmp_path / "backup", require_idle=True)
+    assert not (tmp_path / "backup").exists()
+
+
+def test_backup_status_failure_does_not_replace_daily_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modal
+
+    from unrender.product import scheduled_backup
+
+    service = service_for(tmp_path, seed_demo_account=False, backup_volume_name="unrender-test")
+    volume = _BackupVolume()
+    monkeypatch.setattr(modal.Volume, "from_name", lambda name: volume)
+    runner = scheduled_backup.ScheduledBackup(service.settings)
+    original_replace = os.replace
+
+    def fail_status(source: Any, destination: Any) -> None:
+        if Path(destination) == runner.status_path:
+            raise OSError("status volume full")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(scheduled_backup.os, "replace", fail_status)
+    result = runner.run_once()
+    assert result["status_persisted"] is False
+    assert not runner.due()
+    scheduled_backup.ScheduledBackup(service.settings).run_once()
+    assert volume.uploads == 1
+    assert len(volume.files) == 1
+
+
+def test_scheduled_backup_deadline_kills_and_reaps_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unrender.product import scheduled_backup
+
+    class StalledProcess:
+        returncode = None
+        killed = False
+        calls = 0
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, None]:
+            self.calls += 1
+            if self.calls == 1:
+                assert timeout == 600
+                raise subprocess.TimeoutExpired("backup", timeout)
+            self.returncode = -9
+            return "", None
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = StalledProcess()
+    directories = []
+
+    def start_process(*args: Any, **kwargs: Any) -> StalledProcess:
+        directory = Path(kwargs["env"]["TMPDIR"])
+        assert directory.is_dir()
+        (directory / "partial-backup").write_bytes(b"partial")
+        directories.append(directory)
+        return process
+
+    monkeypatch.setattr(scheduled_backup.subprocess, "Popen", start_process)
+    runner = scheduled_backup.ScheduledBackup(settings_for(tmp_path))
+    with pytest.raises(subprocess.TimeoutExpired):
+        runner._run_isolated()
+    assert process.killed
+    assert process.calls == 2
+    assert runner._process is None
+    assert directories and not directories[0].exists()
+
+
+def test_backup_limits_before_copy_and_download_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unrender.product import scheduled_backup
+
+    service = service_for(tmp_path, seed_demo_account=False)
+    with pytest.raises(BackupError, match="byte limit"):
+        create_backup(service.settings, tmp_path / "backup", max_snapshot_bytes=1)
+    assert not (tmp_path / "backup").exists()
+    monkeypatch.setattr(scheduled_backup, "_MAX_ARCHIVE_BYTES", 16)
+    buffer = io.BytesIO()
+    with pytest.raises(RuntimeError, match="archive limit"):
+        scheduled_backup._BoundedDownload(buffer).write(b"x" * 17)
+    assert buffer.getvalue() == b""
+
+
+def test_backup_maintenance_returns_retryable_response(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path, backup_volume_name="unrender-test")
+    app = create_app(settings)
+    with TestClient(app) as client:
+        with Database(settings.database_path).operational_lock(exclusive=True):
+            for path in ["/", "/static/app.js", "/health/ready"]:
+                assert client.get(path).status_code == 503
+            response = client.get("/api/public-config")
+            assert response.status_code == 503
+            assert response.json()["error"]["code"] == "maintenance_busy"
+            assert response.headers["Retry-After"] == "10"
+            assert client.get("/health/live").status_code == 200
+        assert client.get("/api/public-config").status_code == 200
+
+
+def test_backup_upload_budget_is_isolated_and_limits_sdk_segments() -> None:
+    from modal._utils import blob_utils
+
+    parent_budget = blob_utils.MULTIPART_INFLIGHT_BYTES_MAX
+    probe = """
+import asyncio, json
+from unrender.product.scheduled_backup import _configure_upload_budget
+from modal._utils import blob_utils
+_configure_upload_budget()
+assert 4 * blob_utils.DEFAULT_SEGMENT_CHUNK_SIZE == 64 * 1024**2
+async def check():
+    budget = blob_utils._ByteBudget.from_system_memory()
+    active = 0
+    peak = 0
+    async def part():
+        nonlocal active, peak
+        async with budget.acquire(64 * 1024**2):
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+    await asyncio.gather(*(part() for _ in range(4)))
+    assert peak == 1
+    print(json.dumps({"peak_parts": peak, "budget_bytes": budget._total}))
+asyncio.run(check())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True, timeout=20
+    )
+    assert json.loads(result.stdout) == {"peak_parts": 1, "budget_bytes": 64 * 1024**2}
+    assert parent_budget == blob_utils.MULTIPART_INFLIGHT_BYTES_MAX
+
+
+def test_backup_cannot_enter_between_probe_and_rate_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = settings_for(tmp_path, backup_volume_name="unrender-test")
+    app = create_app(settings)
+    original = ProductService.rate_limit
+    checked = []
+
+    def admission(self: ProductService, *args: Any, **kwargs: Any) -> bool:
+        with (
+            pytest.raises(TimeoutError),
+            Database(settings.database_path).operational_lock(exclusive=True, timeout_seconds=0),
+        ):
+            pass
+        checked.append(True)
+        return original(self, *args, **kwargs)
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(ProductService, "rate_limit", admission)
+        assert client.get("/api/public-config").status_code == 200
+        assert checked
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "none",
+        "queue",
+        "reprocessed",
+        "running_stuck",
+        "running_fresh",
+        "failure",
+        "slow",
+        "ledger",
+        "backup",
+    ],
+)
+def test_operational_probe_detects_conditions_without_exposing_tenant_data(tmp_path, problem):
+    from unrender.product.operations import OperationsProbe
+
+    settings = settings_for(tmp_path, backup_volume_name="private-backups")
+    app = create_app(settings)
+    with TestClient(app) as client:
+        service = app.state.service
+        user_id = customer_id(service, email="private-person@example.com")
+        upload = service.prepare_upload(
+            user_id=user_id, filename="private-chart.png", content=png_bytes()
+        )
+        job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+        now = utcnow()
+        old = timestamp(now - timedelta(minutes=11))
+        if problem.startswith("running_"):
+            claim = service.claim_next_job()
+            assert claim is not None
+            assert service.heartbeat_claim(claim)
+        with service.database.transaction(immediate=True) as conn:
+            if problem == "running_stuck":
+                conn.execute(
+                    "UPDATE audit_events SET created_at=? WHERE job_id=? "
+                    "AND event_type='job_started'",
+                    (old, job["id"]),
+                )
+            if problem in ("queue", "reprocessed", "running_fresh"):
+                conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (old, job["id"]))
+            if problem == "queue":
+                conn.execute("UPDATE jobs SET updated_at=? WHERE id=?", (old, job["id"]))
+            if problem in ("failure", "slow"):
+                for attempt in range(3 if problem == "failure" else 1):
+                    conn.execute(
+                        "INSERT INTO provider_attempts(job_id,user_id,attempt,lease_generation,"
+                        "dispatched_at,outcome,completed_at) VALUES (?,?,?,?,?,?,?)",
+                        (
+                            job["id"],
+                            user_id,
+                            attempt + 1,
+                            1,
+                            timestamp(now - timedelta(seconds=200 if problem == "slow" else 10)),
+                            "failed" if problem == "failure" else "succeeded",
+                            timestamp(now),
+                        ),
+                    )
+            if problem == "ledger":
+                conn.execute(
+                    "UPDATE users SET credit_balance=credit_balance+1 WHERE id=?", (user_id,)
+                )
+        backup_time = (
+            (now - timedelta(hours=49)).timestamp() if problem == "backup" else now.timestamp()
+        )
+        (settings.data_dir / "backup-status.json").write_text(
+            json.dumps({"last_success": backup_time})
+        )
+        response = client.get("/health/operations")
+        assert response.status_code == (
+            200 if problem in ("none", "reprocessed", "running_fresh") else 503
+        )
+        assert response.json()["status"] == ("ok" if response.status_code == 200 else "attention")
+        assert (
+            "private" not in response.text
+            and user_id not in response.text
+            and job["id"] not in response.text
+        )
+        # Operational degradation must not become a restart signal.
+        assert client.get("/health/ready").status_code == 200
+        assert all(type(value) is bool for value in OperationsProbe(settings).check().values())
+
+
+def test_operational_probe_cache_and_unavailable_database_are_bounded(tmp_path, monkeypatch):
+    from unrender.product import operations
+
+    service = service_for(tmp_path)
+    clock = [100.0]
+    monkeypatch.setattr(operations, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    probe = operations.OperationsProbe(service.settings)
+    healthy = probe.check()
+    assert all(healthy.values())
+    # Removing the database forces the next real read to fail without creating it.
+    service.settings.database_path.unlink()
+    assert probe.check() == healthy
+    clock[0] += 61
+    assert probe.check() == {"probe_available": False}
+    assert not service.settings.database_path.exists()
+
+
+@pytest.mark.parametrize("failures", [0, 1, 3])
+def test_operation_check_retries_then_exits_for_platform_notification(
+    monkeypatch, capsys, failures
+):
+    import urllib.error
+
+    from unrender.product import operations_check
+
+    calls = []
+    sleeps = []
+
+    class Response(io.BytesIO):
+        status = 200
+
+    def request(url, timeout):
+        assert url == "https://unrender.onrender.com/health/operations"
+        assert timeout == 10
+        calls.append(url)
+        if len(calls) <= failures:
+            raise urllib.error.HTTPError(url, 503, "attention", {}, None)
+        return Response(b'{"status":"ok"}')
+
+    monkeypatch.setattr(operations_check.urllib.request, "urlopen", request)
+    monkeypatch.setattr(operations_check, "time", SimpleNamespace(sleep=sleeps.append))
+    if failures == 3:
+        with pytest.raises(SystemExit) as error:
+            operations_check.main()
+        assert error.value.code == 1
+        assert len(calls) == 3 and sleeps == [30, 30]
+        assert "failed" in capsys.readouterr().err
+    else:
+        operations_check.main()
+        assert len(calls) == failures + 1 and sleeps == [30] * failures
+        assert "passed" in capsys.readouterr().out

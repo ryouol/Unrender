@@ -1,0 +1,10 @@
+{
+  "provider": "modal",
+  "model": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:9435fb6f0b24",
+  "runtime": "e497a18955233f699326bf4c256ab1c991599889",
+  "manifest_sha256": "0d37b575cfbcd1028779b2d781292238f5f59fe3ed45602bba284daba685b8fa",
+  "scope": "Three owned synthetic operational fixtures; not a customer benchmark",
+  "limitation": "Uses the research training renderer; renderer-independent inputs untested",
+  "source": "Uncorrected raw_result stored by the production service; read-only receipt collection",
+  "date_local": "2026-09-10 America/Toronto"
+}

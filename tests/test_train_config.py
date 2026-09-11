@@ -223,7 +223,7 @@ def test_production_modal_deployment_exports_exact_infer_one_contract():
         isinstance(decorator, ast.Call)
         and isinstance(decorator.func, ast.Attribute)
         and isinstance(decorator.func.value, ast.Name)
-        and decorator.func.value.id == "app"
+        and decorator.func.value.id == "production_app"
         and decorator.func.attr == "function"
         for decorator in function.decorator_list
     )
@@ -332,3 +332,220 @@ def test_load_records_type_weights(tmp_path):
         type_weights={"multi_line": 3.0},
     )
     assert len(recs) == 4  # multi_line x3 + bar x1
+
+
+def test_private_modal_release_is_content_verified(tmp_path, monkeypatch):
+    import modal_train
+
+    monkeypatch.setattr(modal_train, "INFER_V", str(tmp_path))
+    temporary = tmp_path / "releases" / "temporary"
+    temporary.mkdir(parents=True)
+    model = temporary / "config.json"
+    model.write_text('{"model_type":"qwen3_vl"}')
+    digest = modal_train._snapshot_digest(temporary)
+    model.chmod(0o400)
+    temporary.chmod(0o500)
+    target = temporary.rename(temporary.parent / digest)
+    try:
+        assert modal_train._production_model_snapshot(
+            "modal-volume/unrender-inference-cache", digest, digest
+        ) == str(target)
+        with pytest.raises(ValueError, match="matching digest"):
+            modal_train._production_model_snapshot(
+                "modal-volume/unrender-inference-cache", "a" * 64, digest
+            )
+        model = target / "config.json"
+        model.chmod(0o600)
+        model.write_text("tampered")
+        model.chmod(0o400)
+        with pytest.raises(ValueError, match="drifted"):
+            modal_train._production_model_snapshot(
+                "modal-volume/unrender-inference-cache", digest, digest
+            )
+    finally:
+        target.chmod(0o700)
+        (target / "config.json").chmod(0o600)
+
+
+def test_production_settings_require_exact_modal_release_digest(tmp_path):
+    from dataclasses import replace
+
+    from unrender.product.config import Settings
+
+    digest = "a" * 64
+    settings = Settings(
+        data_dir=tmp_path,
+        environment="production",
+        base_url="https://example.com",
+        extractor_backend="modal",
+        allow_registration=False,
+        seed_demo_account=False,
+        modal_model_path="modal-volume/unrender-inference-cache",
+        modal_model_revision=digest,
+        modal_model_digest=digest,
+        modal_provider_release="b" * 64,
+    )
+    settings.validate()
+    for revision in ["latest", "a" * 40, "c" * 64, "../escape"]:
+        with pytest.raises(ValueError, match="matching SHA-256"):
+            replace(settings, modal_model_revision=revision).validate()
+
+
+def test_render_origin_uses_platform_url_with_explicit_override(monkeypatch):
+    from unrender.product.config import Settings
+
+    monkeypatch.delenv("UNRENDER_BASE_URL", raising=False)
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://assigned-service.onrender.com/")
+    assert Settings.from_env().base_url == "https://assigned-service.onrender.com"
+    monkeypatch.setenv("UNRENDER_BASE_URL", "https://custom.example/")
+    assert Settings.from_env().base_url == "https://custom.example"
+
+
+def test_inference_import_does_not_require_evaluation_dependencies():
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['rapidfuzz'] = None; "
+            "from unrender.eval import providers; "
+            "assert callable(providers.hf_vlm_provider); "
+            "assert 'unrender.eval.metrics' not in sys.modules",
+        ],
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_inference_timings_preserve_response_and_hide_customer_data(monkeypatch, capsys, fails):
+    import importlib.metadata
+
+    import modal_train
+    from unrender.eval import providers
+
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: modal_train.INFER_DIRECT_DEPENDENCIES.get(name, "test"),
+    )
+    monkeypatch.setattr(modal_train, "_production_model_snapshot", lambda *args: "private-model")
+    monkeypatch.setattr(modal_train, "_provider_release_digest", lambda **kwargs: "release-pin")
+    raw = (
+        '{"chart_type":"bar","title":"private chart",'
+        '"series":[{"name":"s","points":[{"x":"a","y":2}]}]}'
+    )
+
+    def provider(path, prompt, model, *, timings):
+        assert Path(path).read_bytes() == b"private image"
+        if fails:
+            raise ValueError("private exception detail")
+        timings["generate_decode_seconds"] = 1.25
+        return raw
+
+    monkeypatch.setattr(providers, "hf_vlm_provider", provider)
+    call = modal_train.infer_one.local
+    if fails:
+        with pytest.raises(ValueError, match="private exception detail"):
+            call(b"private image", "private repository", "revision", "digest")
+    else:
+        response = call(b"private image", "private repository", "revision", "digest")
+        assert response["raw"] == raw
+        assert response["provider_release"] == "release-pin"
+        assert set(response) == {"raw", "json", "csv", "parse_errors", "provider_release"}
+    output = capsys.readouterr().out
+    event = json.loads(output)
+    assert event["event"] == "inference_timings"
+    assert event["succeeded"] is not fails
+    assert event["total_seconds"] >= 0
+    assert "snapshot_verification_seconds" in event["stages"]
+    assert "private" not in output
+
+    for log_error in (BrokenPipeError, ValueError):
+
+        def broken_log(*args, error=log_error, **kwargs):
+            raise error("log sink unavailable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("builtins.print", broken_log)
+            if fails:
+                with pytest.raises(ValueError, match="private exception detail"):
+                    call(b"private image", "private repository", "revision", "digest")
+            else:
+                assert (
+                    call(b"private image", "private repository", "revision", "digest") == response
+                )
+
+
+def test_hf_timing_does_not_change_generation_or_cached_output(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import numpy as np
+    from PIL import Image
+
+    from unrender.eval import providers
+
+    calls = []
+    loads = []
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    class Processor:
+        def apply_chat_template(self, messages, **kwargs):
+            return "prompt"
+
+        def __call__(self, **kwargs):
+            return Inputs(input_ids=np.array([[1, 2]]))
+
+        def decode(self, tokens, **kwargs):
+            assert list(tokens) == [3, 4]
+            return "unchanged output"
+
+    class Model:
+        device = "cpu"
+
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return np.array([[1, 2, 3, 4]])
+
+    def load_processor(*args, **kwargs):
+        loads.append("processor")
+        return Processor()
+
+    def load_model(*args, **kwargs):
+        loads.append("model")
+        return Model()
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(no_grad=nullcontext))
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoProcessor=SimpleNamespace(from_pretrained=load_processor),
+            AutoModelForImageTextToText=SimpleNamespace(from_pretrained=load_model),
+        ),
+    )
+    monkeypatch.setattr(providers, "_HF_CACHE", {})
+    monkeypatch.setattr(providers, "HF_GEN_CONFIG", {})
+    monkeypatch.setattr(providers, "HF_MODEL_CONFIG", {})
+    source = tmp_path / "source.png"
+    Image.new("RGB", (2, 2)).save(source)
+    for collector in ({}, None, {}):
+        assert (
+            providers.hf_vlm_provider(source, "private prompt", "model", timings=collector)
+            == "unchanged output"
+        )
+        if collector is not None:
+            assert set(collector) == {
+                "imports_seconds",
+                "model_load_seconds",
+                "preprocess_seconds",
+                "generate_decode_seconds",
+            }
+            assert all(value >= 0 for value in collector.values())
+    assert loads == ["processor", "model"]
+    assert all(call["max_new_tokens"] == 4096 and call["do_sample"] is False for call in calls)

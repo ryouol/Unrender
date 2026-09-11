@@ -53,6 +53,7 @@ from pathlib import Path
 import modal
 
 app = modal.App("unrender")
+production_app = modal.App("unrender-production")
 
 # Production inference is deliberately separate from the mutable research image.
 # This contract changes automatically when any reviewed provider/schema source
@@ -64,6 +65,7 @@ INFER_DIRECT_DEPENDENCIES = {
     "pillow": "12.3.0",
     "pydantic": "2.13.5",
     "torch": "2.9.1",
+    "torchvision": "0.24.1",
     "transformers": "4.57.6",
 }
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -75,6 +77,7 @@ def _inference_source_digest() -> str:
     root = Path(__file__).resolve().parent
     paths = (
         Path("modal_train.py"),
+        Path("unrender/eval/__init__.py"),
         Path("unrender/eval/providers.py"),
         Path("unrender/prompts.py"),
         Path("unrender/schema/chart_schema.py"),
@@ -359,6 +362,12 @@ def _verify_materialization(snapshot: Path, expected_digest: str) -> None:
 def _production_model_snapshot(model_path: str, revision: str, expected_digest: str) -> str:
     """Materialize one verified Hub commit into a private read-only content address."""
 
+    if model_path == "modal-volume/unrender-inference-cache":
+        if not _DIGEST.fullmatch(expected_digest.casefold()) or revision != expected_digest:
+            raise ValueError("Modal releases require an exact SHA-256 revision and matching digest")
+        snapshot = Path(INFER_V) / "releases" / expected_digest
+        _verify_materialization(snapshot, expected_digest)
+        return str(snapshot)
     if not _MODEL_REPOSITORY.fullmatch(model_path):
         raise ValueError("Production inference requires an owner/model Hub repository")
     if not _MODEL_COMMIT.fullmatch(revision.casefold()):
@@ -756,19 +765,27 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     VOL.commit()
 
 
-@app.function(
+@production_app.function(
     image=infer_image,
     volumes={INFER_V: INFER_VOL},
-    secrets=[modal.Secret.from_name("hf-token")],
+    secrets=(
+        [modal.Secret.from_name(os.environ["UNRENDER_HF_SECRET"])]
+        if os.environ.get("UNRENDER_HF_SECRET")
+        else []
+    ),
     gpu=GPU,
     cpu=4.0,
     memory=32768,
-    timeout=1200,
+    timeout=240,
+    max_containers=1,
+    scaledown_window=2,
+    retries=0,
 )
 def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: str):
     """Production boundary: exact Hub commit + verified weights + source release."""
     import importlib.metadata
     import tempfile
+    import time
 
     from unrender.eval import providers as _providers
     from unrender.eval.providers import hf_vlm_provider
@@ -776,37 +793,58 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
     from unrender.schema.json_to_csv import chart_to_csv
     from unrender.schema.validate import parse_chart_json
 
-    runtime_packages = set(INFER_DIRECT_DEPENDENCIES) | {"numpy", "safetensors", "tokenizers"}
-    runtime_versions = {
-        package: importlib.metadata.version(package) for package in sorted(runtime_packages)
-    }
-    for package, expected in INFER_DIRECT_DEPENDENCIES.items():
-        if runtime_versions[package] != expected:
-            raise RuntimeError(f"Inference dependency drift: {package}")
-    snapshot = _production_model_snapshot(model_path, revision, model_digest)
-    provider_release = _provider_release_digest(
-        runtime_versions=runtime_versions,
-        model_path=model_path,
-        revision=revision,
-        model_digest=model_digest,
-        prompt_sha256=hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
-    )
+    started = time.perf_counter()
+    timings = {}
+    succeeded = False
+    try:
+        runtime_packages = set(INFER_DIRECT_DEPENDENCIES) | {"numpy", "safetensors", "tokenizers"}
+        runtime_versions = {
+            package: importlib.metadata.version(package) for package in sorted(runtime_packages)
+        }
+        for package, expected in INFER_DIRECT_DEPENDENCIES.items():
+            if runtime_versions[package] != expected:
+                raise RuntimeError(f"Inference dependency drift: {package}")
+        verification_started = time.perf_counter()
+        snapshot = _production_model_snapshot(model_path, revision, model_digest)
+        timings["snapshot_verification_seconds"] = time.perf_counter() - verification_started
+        provider_release = _provider_release_digest(
+            runtime_versions=runtime_versions,
+            model_path=model_path,
+            revision=revision,
+            model_digest=model_digest,
+            prompt_sha256=hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
+        )
 
-    _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
-    _providers.HF_MODEL_CONFIG.clear()
+        _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
+        _providers.HF_MODEL_CONFIG.clear()
 
-    with tempfile.NamedTemporaryFile(suffix=".png") as f:
-        f.write(image_bytes)
-        f.flush()
-        raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot)
-    pred, errs = parse_chart_json(raw)
-    return {
-        "raw": raw,
-        "json": pred.model_dump() if pred else None,
-        "csv": chart_to_csv(pred) if pred else None,
-        "parse_errors": errs,
-        "provider_release": provider_release,
-    }
+        with tempfile.NamedTemporaryFile(suffix=".png") as f:
+            f.write(image_bytes)
+            f.flush()
+            raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot, timings=timings)
+        pred, errs = parse_chart_json(raw)
+        result = {
+            "raw": raw,
+            "json": pred.model_dump() if pred else None,
+            "csv": chart_to_csv(pred) if pred else None,
+            "parse_errors": errs,
+            "provider_release": provider_release,
+        }
+        succeeded = True
+        return result
+    finally:
+        with suppress(OSError, ValueError):
+            print(
+                json.dumps(
+                    {
+                        "event": "inference_timings",
+                        "succeeded": succeeded,
+                        "total_seconds": time.perf_counter() - started,
+                        "stages": timings,
+                    }
+                ),
+                flush=True,
+            )
 
 
 @app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1200)

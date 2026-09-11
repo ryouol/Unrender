@@ -38,7 +38,14 @@ class Settings:
     worker_lease_seconds: int = 45
     worker_heartbeat_seconds: int = 10
     worker_shutdown_timeout_seconds: int = 30
+    backup_volume_name: str = ""
     allow_registration: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    email_from: str = ""
+    require_email_verification: bool = False
     seed_demo_account: bool = True
     session_ttl_hours: int = 24 * 7
     upload_ttl_hours: int = 24
@@ -52,6 +59,7 @@ class Settings:
     max_jobs_per_user: int = 1_000
     max_upload_bytes_per_minute: int = 40 * 1024 * 1024
     rate_limit_per_minute: int = 120
+    global_rate_limit_per_minute: int = 600
     max_result_versions_per_job: int = 25
     max_history_bytes_per_user: int = 16 * 1024 * 1024
     max_result_json_bytes: int = 1_000_000
@@ -76,12 +84,14 @@ class Settings:
     idempotency_tombstone_days: int = 365
     max_idempotency_records_per_user: int = 10_000
     auth_rate_limit_per_minute: int = 10
+    global_auth_rate_limit_per_minute: int = 30
     max_concurrent_auth_requests: int = 2
     max_concurrent_expensive_requests: int = 4
     provider_failure_limit_per_user_hour: int = 5
     provider_failure_limit_global_hour: int = 50
     reconciliation_grace_seconds: int = 300
-    modal_app_name: str = "unrender"
+    provider_timeout_seconds: int = 240
+    modal_app_name: str = "unrender-production"
     modal_function_name: str = "infer_one"
     modal_model_path: str = "runs/qwen3vl4b-table-fair/merged"
     modal_model_revision: str = ""
@@ -92,6 +102,12 @@ class Settings:
     stripe_price_id: str = ""
     credit_pack_size: int = 100
     initial_credits: int = 3
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(
+            self.smtp_host and self.smtp_username and self.smtp_password and self.email_from
+        )
 
     @property
     def database_path(self) -> Path:
@@ -122,6 +138,10 @@ class Settings:
         return self.max_result_json_bytes + 64 * 1024
 
     def validate(self) -> None:
+        if self.backup_volume_name and not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", self.backup_volume_name
+        ):
+            raise ValueError("UNRENDER_BACKUP_VOLUME must be a valid Modal volume name")
         if self.environment not in {"development", "test", "production"}:
             raise ValueError("UNRENDER_ENV must be development, test, or production")
         if self.extractor_backend not in {"replay", "modal"}:
@@ -144,8 +164,14 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
-            if self.allow_registration:
-                raise ValueError("UNRENDER_ALLOW_REGISTRATION must be false in production")
+            if self.allow_registration and (
+                not self.require_email_verification or not self.email_configured
+            ):
+                raise ValueError(
+                    "UNRENDER_ALLOW_REGISTRATION in production requires verified email delivery"
+                )
+            if self.allow_registration and self.initial_credits != 0:
+                raise ValueError("Public production registration must start with zero credits")
             if not self.worker_enabled:
                 raise ValueError("UNRENDER_WORKER_ENABLED must be true in production")
             if self.modal_function_name != "infer_one":
@@ -154,7 +180,15 @@ class Settings:
                 raise ValueError(
                     "UNRENDER_MODAL_MODEL must be an immutable model repository in production"
                 )
-            if not _MODEL_COMMIT.fullmatch(self.modal_model_revision.casefold()):
+            if self.modal_model_path == "modal-volume/unrender-inference-cache":
+                if (
+                    not _PROVIDER_RELEASE.fullmatch(self.modal_model_revision)
+                    or self.modal_model_revision != self.modal_model_digest
+                ):
+                    raise ValueError(
+                        "Modal volume releases require a matching SHA-256 revision and digest"
+                    )
+            elif not _MODEL_COMMIT.fullmatch(self.modal_model_revision.casefold()):
                 raise ValueError(
                     "UNRENDER_MODAL_REVISION must be a full 40-character commit in production"
                 )
@@ -168,6 +202,14 @@ class Settings:
                     "UNRENDER_MODAL_PROVIDER_RELEASE must be a 64-character release digest "
                     "in production"
                 )
+        if not 1 <= self.provider_timeout_seconds <= 240:
+            raise ValueError("UNRENDER_PROVIDER_TIMEOUT_SECONDS must be between 1 and 240")
+        if self.require_email_verification and not self.email_configured:
+            raise ValueError("Email verification requires configured SMTP delivery")
+        if self.smtp_port not in {465, 587}:
+            raise ValueError("SMTP must use TLS on port 465 or STARTTLS on port 587")
+        if any("\r" in value or "\n" in value for value in (self.smtp_host, self.email_from)):
+            raise ValueError("Email configuration contains invalid characters")
         if self.max_upload_bytes <= 0 or self.max_pdf_pages <= 0:
             raise ValueError("Upload limits must be positive")
         if self.max_image_pixels <= 0 or self.rate_limit_per_minute <= 0:
@@ -228,6 +270,8 @@ class Settings:
             raise ValueError("Per-job audit limit cannot exceed the tenant audit limit")
         admission_limits = (
             self.auth_rate_limit_per_minute,
+            self.global_rate_limit_per_minute,
+            self.global_auth_rate_limit_per_minute,
             self.max_concurrent_auth_requests,
             self.max_concurrent_expensive_requests,
             self.provider_failure_limit_per_user_hour,
@@ -272,7 +316,11 @@ class Settings:
         settings = cls(
             data_dir=Path(raw_dir).expanduser().resolve(),
             environment=os.getenv("UNRENDER_ENV", "development").strip().lower(),
-            base_url=os.getenv("UNRENDER_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
+            base_url=(
+                os.getenv("UNRENDER_BASE_URL")
+                or os.getenv("RENDER_EXTERNAL_URL")
+                or "http://127.0.0.1:8000"
+            ).rstrip("/"),
             extractor_backend=os.getenv("UNRENDER_EXTRACTOR", "replay").strip().lower(),
             worker_enabled=_bool("UNRENDER_WORKER_ENABLED", True),
             max_recovery_attempts=_int("UNRENDER_MAX_RECOVERY_ATTEMPTS", 1),
@@ -280,6 +328,12 @@ class Settings:
             worker_heartbeat_seconds=_int("UNRENDER_WORKER_HEARTBEAT_SECONDS", 10),
             worker_shutdown_timeout_seconds=_int("UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 30),
             allow_registration=_bool("UNRENDER_ALLOW_REGISTRATION", True),
+            smtp_host=os.getenv("UNRENDER_SMTP_HOST", ""),
+            smtp_port=_int("UNRENDER_SMTP_PORT", 587),
+            smtp_username=os.getenv("UNRENDER_SMTP_USERNAME", ""),
+            smtp_password=os.getenv("UNRENDER_SMTP_PASSWORD", ""),
+            email_from=os.getenv("UNRENDER_EMAIL_FROM", ""),
+            require_email_verification=_bool("UNRENDER_REQUIRE_EMAIL_VERIFICATION", False),
             seed_demo_account=_bool("UNRENDER_SEED_DEMO", True),
             session_ttl_hours=_int("UNRENDER_SESSION_TTL_HOURS", 24 * 7),
             upload_ttl_hours=_int("UNRENDER_UPLOAD_TTL_HOURS", 24),
@@ -329,6 +383,10 @@ class Settings:
                 "UNRENDER_MAX_IDEMPOTENCY_RECORDS_PER_USER", 10_000
             ),
             auth_rate_limit_per_minute=_int("UNRENDER_AUTH_RATE_LIMIT_PER_MINUTE", 10),
+            global_rate_limit_per_minute=_int("UNRENDER_GLOBAL_RATE_LIMIT_PER_MINUTE", 600),
+            global_auth_rate_limit_per_minute=_int(
+                "UNRENDER_GLOBAL_AUTH_RATE_LIMIT_PER_MINUTE", 30
+            ),
             max_concurrent_auth_requests=_int("UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS", 2),
             max_concurrent_expensive_requests=_int("UNRENDER_MAX_CONCURRENT_EXPENSIVE_REQUESTS", 4),
             provider_failure_limit_per_user_hour=_int(
@@ -338,7 +396,9 @@ class Settings:
                 "UNRENDER_PROVIDER_FAILURE_LIMIT_GLOBAL_HOUR", 50
             ),
             reconciliation_grace_seconds=_int("UNRENDER_RECONCILIATION_GRACE_SECONDS", 300),
-            modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender"),
+            provider_timeout_seconds=_int("UNRENDER_PROVIDER_TIMEOUT_SECONDS", 240),
+            backup_volume_name=os.getenv("UNRENDER_BACKUP_VOLUME", ""),
+            modal_app_name=os.getenv("UNRENDER_MODAL_APP", "unrender-production"),
             modal_function_name=os.getenv("UNRENDER_MODAL_FUNCTION", "infer_one"),
             modal_model_path=os.getenv("UNRENDER_MODAL_MODEL", "runs/qwen3vl4b-table-fair/merged"),
             modal_model_revision=os.getenv("UNRENDER_MODAL_REVISION", "").casefold(),

@@ -1,0 +1,29 @@
+{
+  "scope": "Read-only production job timestamps; distinct from client-observed upload-to-result time",
+  "jobs": [
+    {
+      "status": "review",
+      "attempt": 1,
+      "created_at": "2026-09-10T23:58:35.110277Z",
+      "provider_dispatched_at": "2026-09-10T23:58:35.261534Z",
+      "updated_at": "2026-09-11T00:00:04.765318Z",
+      "fixture_id": "labelled-bar"
+    },
+    {
+      "status": "review",
+      "attempt": 1,
+      "created_at": "2026-09-11T00:00:07.203918Z",
+      "provider_dispatched_at": "2026-09-11T00:00:07.473811Z",
+      "updated_at": "2026-09-11T00:01:12.050479Z",
+      "fixture_id": "unlabelled-line"
+    },
+    {
+      "status": "review",
+      "attempt": 1,
+      "created_at": "2026-09-11T00:01:14.900666Z",
+      "provider_dispatched_at": "2026-09-11T00:01:15.183084Z",
+      "updated_at": "2026-09-11T00:04:26.714971Z",
+      "fixture_id": "unlabelled-grouped-bar"
+    }
+  ]
+}

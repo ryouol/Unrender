@@ -103,11 +103,12 @@ vm.runInContext(
   `${source}
 renderJobList = () => {};
 renderJob = () => {};
-showMainView = () => {};
+globalThis.__mainViewCalls = [];
+showMainView = (name) => globalThis.__mainViewCalls.push(name);
 globalThis.__unrenderTest = {
   api, clearApiKeySecret, closeKeyDialog, createKey, downloadExport, editorRows,
   loadApiKeys, logout, queueCurrentUpload, resetPrivateState, showPublic, state,
-  syncAuthRecordFromStorage, readDurableAuthRecord, publishAuthChange,
+  syncAuthRecordFromStorage, readDurableAuthRecord, publishAuthChange, reconcilePrincipal,
   EDITOR_PAGE_SIZE, EDITOR_MOUNTED_CELL_LIMIT,
 };`,
   context,
@@ -453,3 +454,61 @@ assert.ok(Date.now() - started < 1000);
 assert.ok(
   (50 * 2) + (test.EDITOR_PAGE_SIZE * 9) + 7 + 5 <= test.EDITOR_MOUNTED_CELL_LIMIT,
 );
+
+// Returning from a file picker must not discard a first-time customer's upload.
+installAuthenticatedRecord("upload-principal");
+test.state.principalMarker = "upload-principal";
+test.state.jobs = [];
+test.state.jobsInitialized = true;
+test.state.upload = { id: "pending-upload" };
+const viewsBeforeFocus = context.__mainViewCalls.length;
+const focusRequests = [];
+context.fetch = async (path) => {
+  focusRequests.push(path);
+  return {
+    ok: true, status: 200, headers: { get: () => "application/json" },
+    json: async () => path === "/api/me"
+      ? { id: "upload-user", principal_marker: "upload-principal", credits: 3 }
+      : { items: [] },
+  };
+};
+await test.reconcilePrincipal();
+assert.deepEqual(focusRequests, ["/api/me"]);
+assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);
+assert.equal(test.state.upload.id, "pending-upload");
+
+// A failed initial list fetch retries on focus without replacing an upload.
+test.state.jobsInitialized = false;
+let listAttempts = 0;
+context.fetch = async (path) => {
+  if (path.startsWith("/api/jobs") && ++listAttempts === 1) throw new Error("temporary network failure");
+  return {
+    ok: true, status: 200, headers: { get: () => "application/json" },
+    json: async () => path === "/api/me"
+      ? { id: "upload-user", principal_marker: "upload-principal", credits: 3 }
+      : { items: [] },
+  };
+};
+await test.reconcilePrincipal();
+assert.equal(test.state.jobsInitialized, false);
+await test.reconcilePrincipal();
+assert.equal(listAttempts, 2);
+assert.equal(test.state.jobsInitialized, true);
+assert.equal(test.state.upload.id, "pending-upload");
+assert.equal(context.__mainViewCalls.length, viewsBeforeFocus);
+
+
+// A delayed anonymous session check must not erase a user's sign-in input.
+storageValues.clear();
+test.state.authRecord = null;
+test.state.principalMarker = null;
+const anonymousEpoch = test.state.authEpoch;
+document.getElementById("login-form").value = "typed sign-in fields";
+context.fetch = async () => ({
+  ok: false, status: 401, headers: { get: () => "application/json" },
+  json: async () => ({ error: { message: "Authentication required" } }),
+});
+await assert.rejects(test.api("/api/me"), (error) => error.status === 401);
+assert.equal(test.state.authEpoch, anonymousEpoch);
+assert.equal(document.getElementById("login-form").value, "typed sign-in fields");
+assert.equal(test.readDurableAuthRecord(), null);

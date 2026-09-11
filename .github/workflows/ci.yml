@@ -30,16 +30,19 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Product lint
         run: |
-          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
-          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
+          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_accounts.py tests/test_public_site.py tests/test_release_policy.py tests/test_train_config.py
+          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_accounts.py tests/test_public_site.py tests/test_release_policy.py tests/test_train_config.py
           ruff check --select S unrender/product
       - name: Product types
         run: mypy unrender/product
       - name: Frontend syntax
         run: |
           node --check unrender/product/static/app.js
+          node --check unrender/product/static/account.js
+          node --check unrender/product/static/site.js
           node tests/browser_auth_epoch.mjs
           node tests/browser_two_tab.mjs
+          node tests/browser_account.mjs
       - name: Runtime dependency audit
         run: |
           pip-audit -r requirements-app.lock
@@ -70,6 +73,7 @@ jobs:
           push: false
           load: true
           tags: unrender:ci
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke production runtime dependencies
@@ -98,4 +102,8 @@ jobs:
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' unrender-production-smoke)" = healthy
           docker exec unrender-production-smoke python -c "import modal; from unrender.product.web import create_app; assert callable(create_app)"
+          docker exec unrender-production-smoke sh -c 'command -v timeout && command -v unrender-operations-check'
+          docker exec unrender-production-smoke python -c "import json, urllib.request; req = urllib.request.Request('http://127.0.0.1:8000/health/operations', headers={'Host': 'unrender.example'}); assert json.load(urllib.request.urlopen(req, timeout=3))['status'] == 'ok'"
           docker exec unrender-production-smoke sh -c 'test "$(id -u)" = 10001'
+          docker exec --user root unrender-production-smoke sh -ec \
+            'privileged=$(find /usr -xdev -type f -perm /6000 -print); test -z "$privileged"'

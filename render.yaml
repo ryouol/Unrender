@@ -1,0 +1,83 @@
+# One service owns the SQLite database, private files, and embedded worker.
+services:
+  - type: web
+    name: unrender
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: off
+    healthCheckPath: /health/ready
+    disk:
+      name: unrender-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: UNRENDER_ENV
+        value: production
+      # Uses Render-provided RENDER_EXTERNAL_URL; set UNRENDER_BASE_URL for a custom domain.
+      - key: UNRENDER_DATA_DIR
+        value: /data/unrender
+      - key: UNRENDER_BACKUP_VOLUME
+        value: unrender-production-backups
+      # Leave disk room for SQLite, temporary copies and free-space reserves.
+      - key: UNRENDER_MAX_STORAGE_BYTES_GLOBAL
+        value: "524288000"
+      - key: UNRENDER_MAX_USER_STORAGE_BYTES
+        value: "52428800"
+      - key: UNRENDER_MAX_UPLOAD_BYTES
+        value: "10485760"
+      - key: UNRENDER_MAX_IMAGE_PIXELS
+        value: "4000000"
+      - key: UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS
+        value: "1"
+      - key: UNRENDER_GLOBAL_RATE_LIMIT_PER_MINUTE
+        value: "600"
+      - key: UNRENDER_GLOBAL_AUTH_RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: UNRENDER_MAX_CONCURRENT_EXPENSIVE_REQUESTS
+        value: "1"
+      - key: UNRENDER_EXTRACTOR
+        value: modal
+      - key: UNRENDER_WORKER_ENABLED
+        value: "true"
+      - key: UNRENDER_ALLOW_REGISTRATION
+        value: "false"
+      - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
+        value: "false"
+      - key: UNRENDER_INITIAL_CREDITS
+        value: "0"
+      - key: UNRENDER_SEED_DEMO
+        value: "false"
+      - key: UNRENDER_PROVIDER_TIMEOUT_SECONDS
+        value: "240"
+      - key: UNRENDER_MODAL_APP
+        value: unrender-production
+      - key: UNRENDER_MODAL_FUNCTION
+        value: infer_one
+      - key: UNRENDER_MODAL_MODEL
+        value: "modal-volume/unrender-inference-cache"
+      - key: UNRENDER_MODAL_REVISION
+        value: "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e"
+      - key: UNRENDER_MODAL_MODEL_DIGEST
+        value: "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e"
+      - key: UNRENDER_MODAL_PROVIDER_RELEASE
+        value: "e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787"
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        value: ""
+      - key: STRIPE_WEBHOOK_SECRET
+        value: ""
+      - key: STRIPE_PRICE_ID
+        value: ""
+
+  # CPU-only monitoring; failure notifications use Render's existing email channel.
+  - type: cron
+    name: unrender-monitor
+    runtime: docker
+    plan: starter
+    schedule: "17 * * * *"
+    autoDeployTrigger: off
+    dockerCommand: timeout --kill-after=5s 100s unrender-operations-check

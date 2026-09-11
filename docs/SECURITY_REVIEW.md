@@ -331,11 +331,11 @@ one-to-one map in `docs/REMEDIATION_EVIDENCE.md`; the security consequences are:
 - Rule ID: FASTAPI-ABUSE-001
 - Severity: Low
 - Location: `unrender/product/web.py:189-224`; `unrender/product/service.py:1101-1119`, `rate_limit`
-- Evidence: all non-liveness traffic consumes a digest of the ASGI client address and authenticated routes additionally consume a digest of durable database user ID, but SQLite counters are not shared across replicas.
-- Impact: horizontal replicas would enforce inconsistent abuse limits; pre-auth IP attribution still depends on the trusted edge.
-- Fix: select a deployment platform, enforce per-IP/account limits at its trusted edge, and move shared limits to a managed store before horizontal scaling.
+- Evidence: non-liveness traffic consumes fixed global capacity buckets; authenticated routes additionally consume a digest of durable database user ID, and login/register share a normalized account-identifier quota before password work. SQLite counters are not shared across replicas.
+- Impact: horizontal replicas would enforce inconsistent abuse limits; global exhaustion can affect all accounts, and an attacker can exhaust a short account throttle.
+- Fix: move shared limits to a managed store before horizontal scaling. Edge abuse controls remain complementary; the app does not use forwarding headers for admission.
 - Mitigation: the documented controlled beta is one node; upload bytes and stored volume have separate tenant bounds.
-- False positive notes: direct deployments preserve client IP; trusted-proxy behavior is platform-specific and intentionally not guessed in app code.
+- False positive notes: hosted probes verified that public XFF prefixes survive and private inter-service traffic can forge forwarding headers. REQUEST_LIMITS.md records why admission no longer relies on those addresses.
 
 ## External gates
 

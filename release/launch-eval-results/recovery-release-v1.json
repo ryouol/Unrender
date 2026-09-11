@@ -1,0 +1,63 @@
+{
+  "scope": "Hosted recovery of existing zero-credit operator test account; no email or inference",
+  "runtime_commit": "35f49f688cddd25cdb02acfd9fb30f4f9bdf79f6",
+  "new_inference_calls": 0,
+  "password_reset": true,
+  "prior_session_revoked": true,
+  "consumed_token_rejected": true,
+  "same_account_and_credits": true,
+  "new_password_sign_in": true,
+  "private_test_credentials_updated": true,
+  "health": {
+    "status": "ready",
+    "extractor": "modal",
+    "worker": "running"
+  },
+  "operations": {
+    "status": "ok",
+    "checks": {
+      "queue_timely": true,
+      "provider_failures_below_threshold": true,
+      "provider_latency_below_threshold": true,
+      "credit_ledger_consistent": true,
+      "backup_recent": true,
+      "worker_available": true
+    }
+  },
+  "status": "passed",
+  "observed_at": "2026-09-11T02:00:22.169576+00:00",
+  "ci_run": 34552450793,
+  "web_deploy": "dep-dahm06cs728c73ck22p0",
+  "ci_tests": {
+    "passed": 240,
+    "skipped": 1
+  },
+  "owner_account_checks": {
+    "runtime_commit": "35f49f688cddd25cdb02acfd9fb30f4f9bdf79f6",
+    "scope": "Existing owner account and approved exports; no inference",
+    "sign_in": true,
+    "secure_httponly_session_cookie": true,
+    "existing_extraction_credits": 1,
+    "approved_chart_preserved": true,
+    "exports": {
+      "csv": true,
+      "json": true,
+      "xlsx": true
+    },
+    "xlsx_audit_sheet": true,
+    "observed_at": "2026-09-11T02:01:45.952107+00:00",
+    "new_inference_calls": 0
+  },
+  "remote_checks": {
+    "database_integrity": true,
+    "foreign_keys": true,
+    "provider_pin_preserved": true,
+    "backup_status_preserved": true,
+    "approved_chart_preserved": true
+  },
+  "limitations": [
+    "The activation/recovery flow was exercised through hosted HTTP and the operator CLI, not a new browser form run.",
+    "Public self-registration and SMTP remain disabled and were not enabled by this check.",
+    "No new extraction or model-quality test ran; existing inference evidence remains separate."
+  ]
+}

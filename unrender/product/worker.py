@@ -60,8 +60,13 @@ class JobWorker:
 
     def _run(self) -> None:
         next_cleanup = 0.0
+        next_recovery = 0.0
         while not self._stop.is_set():
             try:
+                now = time.monotonic()
+                if now >= next_recovery:
+                    self.service.recover_interrupted_jobs()
+                    next_recovery = now + self.service.settings.worker_heartbeat_seconds
                 did_work = self.service.process_one(self.owner, self._stop)
                 now = time.monotonic()
                 if now >= next_cleanup:

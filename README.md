@@ -41,6 +41,14 @@ The same demo runs in a container:
 docker compose up --build
 ```
 
+## Production accounts and Render
+
+See [`docs/RENDER_MODAL_LAUNCH.md`](docs/RENDER_MODAL_LAUNCH.md) for the Render + Modal
+configuration, hosted verification, and remaining public-release gates. The invited
+pilot is live at https://unrender.onrender.com. Public signup and email are off.
+Enabling public signup later requires verified email and zero welcome credits;
+password recovery revokes sessions and API keys while retaining saved work.
+
 ## Configure real extraction
 
 The current production adapter calls the existing `modal_train.py::infer_one` deployment boundary. Set these values through your deployment secret manager:
@@ -48,12 +56,12 @@ The current production adapter calls the existing `modal_train.py::infer_one` de
 ```dotenv
 UNRENDER_ENV=production
 UNRENDER_BASE_URL=https://unrender.example.com
-UNRENDER_DATA_DIR=/data
+UNRENDER_DATA_DIR=/data/unrender
 UNRENDER_EXTRACTOR=modal
 UNRENDER_WORKER_ENABLED=true
 UNRENDER_SEED_DEMO=false
 UNRENDER_ALLOW_REGISTRATION=false
-UNRENDER_MODAL_APP=unrender
+UNRENDER_MODAL_APP=unrender-production
 UNRENDER_MODAL_FUNCTION=infer_one
 UNRENDER_MODAL_MODEL=owner/approved-unrender-model
 UNRENDER_MODAL_REVISION=<full 40-character model commit>
@@ -61,7 +69,7 @@ UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
 UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, resolves only the named Hub commit, copies it through descriptor-verified paths into a private read-only content address, verifies the complete snapshot digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration without verified email or with automatic credits, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, loads a published private Modal release or the named Hub commit, verifies its complete read-only snapshot against the pinned digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender-production/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 

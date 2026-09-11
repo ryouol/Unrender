@@ -1,0 +1,22 @@
+{
+  "scope": "One direct Modal canary on the owned labelled-bar fixture; not a customer benchmark or Render end-to-end latency",
+  "source_commit": "3fe24015afea849e736587d9f5b88a314e44ed0d",
+  "provider_release": "e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787",
+  "fixture": "release/launch-eval-v1/labelled-bar.png",
+  "client_elapsed_seconds": 92.523,
+  "values_exact": true,
+  "log_timestamp": "2026-09-10T20:33:15-04:00",
+  "inference_timings": {
+    "event": "inference_timings",
+    "succeeded": true,
+    "total_seconds": 86.307492508,
+    "stages": {
+      "snapshot_verification_seconds": 31.857745211,
+      "imports_seconds": 10.431452910000004,
+      "model_load_seconds": 4.761277159999999,
+      "preprocess_seconds": 0.089996352,
+      "generate_decode_seconds": 39.12752878
+    }
+  },
+  "limits": "Host wall-clock stages; asynchronous GPU work can cross boundaries. Single call, no dollar cost measurement. Client total includes work outside function timing."
+}

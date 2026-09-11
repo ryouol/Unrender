@@ -22,8 +22,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN groupadd --gid 10001 unrender \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin unrender \
-    && mkdir -p /data \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /bin/sh unrender \
+    && mkdir -p /data /home/unrender/.ssh \
+    && chown unrender:unrender /home/unrender/.ssh \
+    && chmod 0700 /home/unrender/.ssh \
     && chown unrender:unrender /data \
     && chmod 0700 /data
 
@@ -36,7 +38,10 @@ RUN set -eu; \
     [ "$#" -eq 1 ]; \
     [ -f "$1" ]; \
     python -m pip install --no-cache-dir --no-deps "$1"; \
-    rm -r /tmp/unrender-wheel
+    rm -r /tmp/unrender-wheel; \
+    python -m pip check; \
+    python -m pip uninstall --yes pip setuptools; \
+    find /usr -xdev -type f -perm /6000 -exec chmod a-s {} +
 
 USER unrender
 EXPOSE 8000

@@ -6,6 +6,7 @@ and calls the existing, evaluated ``infer_one`` function.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import io
@@ -77,47 +78,58 @@ class ModalExtractor:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def canary_contract(self) -> bool:
-        """Resolve the deployed function contract without invoking billable inference."""
+    async def _invoke(self, image_bytes: bytes | None = None) -> Any:
+        import modal
 
-        try:
-            import modal
-
+        # Includes lazy function lookup, upload, scheduling, and result retrieval.
+        async with asyncio.timeout(self.settings.provider_timeout_seconds):
             function = modal.Function.from_name(
                 self.settings.modal_app_name,
                 self.settings.modal_function_name,
             )
-        except Exception as exc:
-            raise ExtractionError(
-                "provider_contract_unavailable",
-                "The configured Modal application/function contract could not be resolved.",
-            ) from exc
-        if not callable(getattr(function, "remote", None)):
-            raise ExtractionError(
-                "provider_contract_invalid",
-                "The configured Modal function does not expose the expected remote contract.",
-            )
-        return True
-
-    def extract(self, image_bytes: bytes) -> ExtractionOutput:
-        try:
-            import modal
-
-            function = modal.Function.from_name(
-                self.settings.modal_app_name,
-                self.settings.modal_function_name,
-            )
-            payload: dict[str, Any] = function.remote(
+            if image_bytes is None:
+                await function.hydrate.aio()
+                return callable(getattr(function.remote, "aio", None))
+            return await function.remote.aio(
                 image_bytes,
                 self.settings.modal_model_path,
                 self.settings.modal_model_revision,
                 self.settings.modal_model_digest,
             )
-        except Exception as exc:  # provider errors are normalized for the worker
+
+    def canary_contract(self) -> bool:
+        """Resolve the deployed function without invoking billable inference."""
+        try:
+            valid = asyncio.run(self._invoke())
+        except Exception as exc:
+            raise ExtractionError(
+                "provider_contract_unavailable",
+                "The configured Modal application/function contract could not be resolved.",
+            ) from exc
+        if not valid:
+            raise ExtractionError(
+                "provider_contract_invalid",
+                "The inference provider does not expose the expected async remote contract.",
+            )
+        return True
+
+    def extract(self, image_bytes: bytes) -> ExtractionOutput:
+        try:
+            payload = asyncio.run(self._invoke(image_bytes))
+        except TimeoutError as exc:
+            # A cancelled local await does not prove remote execution was cancelled.
+            # The durable worker keeps this dispatched attempt spent and terminal.
+            raise ExtractionError(
+                "provider_timeout",
+                "Extraction exceeded its time limit. The attempt may have used GPU time.",
+            ) from exc
+        except Exception as exc:
             raise ExtractionError(
                 "provider_unavailable",
                 "The extraction worker could not reach the configured inference provider.",
             ) from exc
+        if not isinstance(payload, dict):
+            raise ExtractionError("model_output_invalid", "The model returned an invalid response.")
         expected_release = self.settings.modal_provider_release
         actual_release = str(payload.get("provider_release", "")).casefold()
         if expected_release and not hmac.compare_digest(

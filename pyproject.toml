@@ -71,6 +71,7 @@ dev = [
 unrender-serve = "unrender.product.cli:main"
 unrender-admin = "unrender.product.admin:main"
 unrender-healthcheck = "unrender.product.healthcheck:main"
+unrender-operations-check = "unrender.product.operations_check:main"
 
 [tool.setuptools.packages.find]
 include = ["unrender*"]
@@ -86,6 +87,8 @@ include = ["unrender*"]
     "static/*.html",
     "static/*.css",
     "static/*.js",
+    "static/*.webmanifest",
+    "static/icons/*",
     "static/demo/*",
     "static/fonts/*",
 ]

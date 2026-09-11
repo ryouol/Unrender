@@ -38,7 +38,7 @@
           <p class="evidence-note">The sample is a saved verification fixture. It exercises the real review and export workflow without using paid GPU inference.</p>
         </div>
         <figure class="source-example">
-          <img src="/static/demo/budget-quarter.webp" alt="Horizontal bar chart titled Budget by Quarter">
+          <img src="/static/demo/budget-quarter.webp" srcset="/static/demo/budget-quarter-small.webp 240w, /static/demo/budget-quarter.webp 374w" sizes="(max-width: 980px) 90vw, 45vw" width="374" height="273" decoding="async" alt="Horizontal bar chart titled Budget by Quarter">
           <figcaption>
             <span>Source stays visible</span>
             <span>Edits are versioned</span>
@@ -65,6 +65,8 @@
             <p id="logout-status">Account-wide sign-out could not be confirmed.</p>
             <button class="button button-secondary" id="retry-logout-button" type="button">Retry sign out everywhere</button>
           </div>
+          <p id="account-help-links" hidden><a href="/account">Forgot password?</a> · <a href="/account?mode=verify">Resend verification email</a></p>
+          <p id="auth-notice" role="status" hidden></p>
           <p class="form-error" id="auth-error" role="alert" hidden></p>
         </section>
       </section>
@@ -88,6 +90,8 @@
           <section class="empty-state" id="empty-view">
             <p class="eyebrow">Start with one chart</p>
             <h2>Keep the source and the table together.</h2>
+            <p id="workspace-access-note" role="status" hidden></p>
+            <p id="retention-note"></p>
             <p>Choose an image or PDF page. Crop to one chart when needed. Extraction runs as a durable job and waits for your approval.</p>
             <div class="empty-actions">
               <button class="button button-primary" id="empty-upload-button" type="button">Upload a chart</button>
@@ -105,8 +109,8 @@
             </div>
             <label class="dropzone" id="dropzone">
               <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
-              <strong>Choose an image or PDF</strong>
-              <span>PNG, JPEG, WebP, or PDF up to 20 MB</span>
+              <strong>Drop an image or PDF here, or click to choose</strong>
+              <span id="upload-limits">PNG, JPEG, WebP, or PDF</span>
             </label>
             <div class="upload-error" id="upload-error" role="alert" hidden></div>
             <div class="page-review" id="page-review" hidden>
@@ -154,7 +158,8 @@
             <div class="review-layout">
               <section class="source-pane" aria-labelledby="source-heading">
                 <div class="pane-heading"><h3 id="source-heading">Source</h3><span id="source-page-label"></span></div>
-                <div class="source-canvas"><img id="job-source-image" alt="Source chart selected for extraction"></div>
+                <label class="source-zoom-control">Source magnification<select id="source-zoom"><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label>
+                <div class="source-canvas" tabindex="0" aria-label="Source chart; scroll to inspect when magnified"><img id="job-source-image" alt="Source chart selected for extraction"></div>
               </section>
               <section class="result-pane" aria-labelledby="result-heading">
                 <div class="pane-heading"><h3 id="result-heading">Editable table</h3><span id="edit-state"></span></div>

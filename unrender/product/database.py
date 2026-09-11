@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 SCHEMA = """
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
+    email_verified INTEGER NOT NULL DEFAULT 1 CHECK (email_verified IN (0,1)),
     password_hash TEXT NOT NULL,
     account_kind TEXT NOT NULL DEFAULT 'customer'
         CHECK (account_kind IN ('customer','demo')),
@@ -28,6 +29,16 @@ CREATE TABLE IF NOT EXISTS users (
     session_generation INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0),
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS account_challenges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('verify','reset')),
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_challenges_user_idx ON account_challenges(user_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -316,6 +327,8 @@ class Database:
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
         storage_reservations = self._columns(conn, "storage_reservations")
+        if "email_verified" in self._columns(conn, "users"):
+            return 9
         if "owner_token" in storage_reservations:
             return 8
         if "result_reservation_bytes" in jobs:
@@ -365,6 +378,8 @@ class Database:
                 self._migrate_v6_to_v7(conn)
             elif version == 7:
                 self._migrate_v7_to_v8(conn)
+            elif version == 8:
+                self._migrate_v8_to_v9(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -373,6 +388,15 @@ class Database:
                 )
         self._ensure_v6_shape(conn)
         _execute_script(conn, SCHEMA)
+
+    def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
+        self._add_column(
+            conn,
+            "users",
+            "email_verified",
+            "INTEGER NOT NULL DEFAULT 1 CHECK (email_verified IN (0,1))",
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=9")
 
     def _ensure_v6_shape(self, conn: sqlite3.Connection) -> None:
         """Repair the only pre-release v6 shape that existed before audit rollups were final."""

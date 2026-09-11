@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import base64
 import random
-from typing import Callable, Dict, Optional
+import time
+from collections.abc import Callable
 
 # Each lab's flagship at eval time — using the strongest model is what makes the
 # comparison unimpeachable. Model IDs move fast; pass --model to override (e.g.
@@ -26,7 +27,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-fable-5",
     "openai": "gpt-5.5",
     "gemini": "gemini-3.1-pro",
-    "hf": "Qwen/Qwen3-VL-4B-Instruct",        # open baseline / your fine-tune (runs on the GPU box)
+    "hf": "Qwen/Qwen3-VL-4B-Instruct",  # open baseline / your fine-tune (runs on the GPU box)
     "perfect": "oracle",
     "noisy": "oracle-noisy",
 }
@@ -42,7 +43,7 @@ def _b64(image_path: str) -> str:
 # Token usage from the most recent real provider call — observability only, read
 # by run_baselines for the cost projection. Does NOT affect the request sent, the
 # prompt, the parsing, or the scoring.
-LAST_USAGE: Dict = {}
+LAST_USAGE: dict = {}
 
 
 def _set_usage(input_tokens, output_tokens):
@@ -54,10 +55,18 @@ def openai_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     from openai import OpenAI
 
     client = OpenAI()
-    messages = [{"role": "user", "content": [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64(image_path)}"}},
-    ]}]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{_b64(image_path)}"},
+                },
+            ],
+        }
+    ]
     try:
         resp = client.chat.completions.create(model=model, messages=messages, max_tokens=4096)
     except Exception as e:
@@ -79,13 +88,22 @@ def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None) -> str
     msg = client.messages.create(
         model=model,
         max_tokens=4096,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": _b64(image_path)}},
-                {"type": "text", "text": prompt},
-            ],
-        }],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": _b64(image_path),
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
     )
     u = getattr(msg, "usage", None)
     _set_usage(getattr(u, "input_tokens", None), getattr(u, "output_tokens", None))
@@ -117,7 +135,7 @@ def gemini_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
 
 # Cache for the local HF model so we load weights once, not per image. Keyed by
 # (model, revision) so a pinned base and an unpinned one never alias each other.
-_HF_CACHE: Dict[tuple, tuple] = {}
+_HF_CACHE: dict[tuple, tuple] = {}
 
 # Load-time config for the local HF provider (currently a pinned Hub `revision`),
 # set by run_baselines before the loop. Separate from HF_GEN_CONFIG because it
@@ -125,27 +143,31 @@ _HF_CACHE: Dict[tuple, tuple] = {}
 # A pinned revision matters for the base-model control: the LoRA was trained on
 # the Unsloth mirror, so its base must be pinned to the matching processor, not an
 # unpinned Hub HEAD that can drift.
-HF_MODEL_CONFIG: Dict = {}
+HF_MODEL_CONFIG: dict = {}
 
 # Decoding config for the local HF provider, set by run_baselines from CLI flags
 # (or modal_train) so the decoder sweep can vary decoding WITHOUT touching this
 # call site. Empty dict => greedy (do_sample=False, 4096 cap), the control arm.
 # Recognized keys: repetition_penalty, max_new_tokens, do_sample, temperature,
 # top_p, no_repeat_ngram_size. Only hf_vlm_provider reads it.
-HF_GEN_CONFIG: Dict = {}
+HF_GEN_CONFIG: dict = {}
 
 
-def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
+def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     """Local open-model baseline (base Qwen-VL, your fine-tune, etc.).
 
     Runs where torch + transformers + CUDA and the model are available — i.e.
     the rented GPU box, not your Mac. Finalize the exact model class in Phase 3;
     this uses the standard transformers image-text-to-text pattern.
     """
+    started = time.perf_counter()
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
     from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
 
+    imported = time.perf_counter()
+    if timings is not None:
+        timings["imports_seconds"] = imported - started
     rev = HF_MODEL_CONFIG.get("revision")
     key = (model, rev)
     if key not in _HF_CACHE:
@@ -160,27 +182,45 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
         )
         _HF_CACHE[key] = (proc, net)
     proc, net = _HF_CACHE[key]
+    loaded = time.perf_counter()
+    if timings is not None:
+        timings["model_load_seconds"] = loaded - imported
 
-    messages = [{"role": "user", "content": [
-        {"type": "image", "image": image_path}, {"type": "text", "text": prompt}]}]
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "image", "image": image_path}, {"type": "text", "text": prompt}],
+        }
+    ]
     text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = proc(text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt").to(net.device)
+    inputs = proc(
+        text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt"
+    ).to(net.device)
     # 4096 matches the max_tokens the frontier providers get — a dense hard
     # chart's JSON can exceed 1024 tokens, and a tighter cap here would truncate
     # (and unfairly penalize) only the local model. HF_GEN_CONFIG (set by the
     # caller) overrides for the decoder sweep; an empty config is greedy decoding.
-    gen_kwargs = {"max_new_tokens": HF_GEN_CONFIG.get("max_new_tokens") or 4096,
-                  "do_sample": bool(HF_GEN_CONFIG.get("do_sample", False))}
+    gen_kwargs = {
+        "max_new_tokens": HF_GEN_CONFIG.get("max_new_tokens") or 4096,
+        "do_sample": bool(HF_GEN_CONFIG.get("do_sample", False)),
+    }
     for k in ("repetition_penalty", "temperature", "top_p", "no_repeat_ngram_size"):
         if HF_GEN_CONFIG.get(k):
             gen_kwargs[k] = HF_GEN_CONFIG[k]
+    preprocessed = time.perf_counter()
+    if timings is not None:
+        timings["preprocess_seconds"] = preprocessed - loaded
     with torch.no_grad():
         out = net.generate(**inputs, **gen_kwargs)
-    trimmed = out[0][inputs["input_ids"].shape[1]:]
-    return proc.decode(trimmed, skip_special_tokens=True)
+    trimmed = out[0][inputs["input_ids"].shape[1] :]
+    decoded = proc.decode(trimmed, skip_special_tokens=True)
+    if timings is not None:
+        timings["generate_decode_seconds"] = time.perf_counter() - preprocessed
+    return decoded
 
 
 # --- Mock providers for verifying the scorer (no API, no cost) ---------------
+
 
 def perfect_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     """Returns the ground truth verbatim — should score ~100%."""
@@ -203,7 +243,7 @@ def noisy_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
     return canonical_json(d)
 
 
-PROVIDERS: Dict[str, Callable] = {
+PROVIDERS: dict[str, Callable] = {
     "openai": openai_provider,
     "anthropic": anthropic_provider,
     "gemini": gemini_provider,

@@ -68,3 +68,12 @@ services:
         value: ""
       - key: STRIPE_PRICE_ID
         value: ""
+
+  # CPU-only monitoring; failure notifications use Render's existing email channel.
+  - type: cron
+    name: unrender-monitor
+    runtime: docker
+    plan: starter
+    schedule: "17 * * * *"
+    autoDeployTrigger: off
+    dockerCommand: timeout --kill-after=5s 100s unrender-operations-check

@@ -35,6 +35,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
+from unrender.product.operations import OperationsProbe
 from unrender.product.public_site import document, error_document, sitemap
 from unrender.product.scheduled_backup import ScheduledBackup
 from unrender.product.service import ProductError, ProductService
@@ -374,6 +375,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     worker = JobWorker(service)
     backups = ScheduledBackup(settings)
+    operations = OperationsProbe(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -697,6 +699,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "extractor": settings.extractor_backend,
             "worker": "running" if worker.is_accepting else "disabled",
         }
+
+    @app.get("/health/operations")
+    def operations_health():
+        checks = operations.check()
+        checks["worker_available"] = not settings.worker_enabled or worker.is_accepting
+        healthy = all(checks.values())
+        return JSONResponse(
+            {"status": "ok" if healthy else "attention", "checks": checks},
+            status_code=200 if healthy else 503,
+        )
 
     @app.post("/api/auth/register", status_code=201)
     async def register(payload: Credentials, response: Response):

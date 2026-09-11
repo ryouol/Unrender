@@ -52,6 +52,31 @@ Alert on:
 
 Provider success/failure and latency can be derived from the structured lifecycle records. Queue-age, ledger reconciliation, and backup-age dashboards still require queries/exporters and alert delivery.
 
+The prepared `/health/operations` endpoint is separate from `/health/ready` and
+does not control restarts. It emits fixed boolean checks without tenant data:
+queued/current running attempts older than five minutes, at least three provider
+failures in the last hour, any provider completion longer than 180 seconds in the
+last hour, credit balance versus retained ledger deltas, and a successful backup
+less than 48 hours old. A missing or invalid backup status fails when backups are
+configured. Running attempts use their immutable start audit, not a heartbeat.
+Missing current-attempt start evidence also requires attention.
+
+Reads share a one-minute cache, a nonblocking lock and a two-second SQLite VM
+budget. Contention, unavailable storage or a failed scan returns attention.
+`render.yaml` defines an hourly `unrender-monitor` cron at minute 17 UTC using
+`timeout --kill-after=5s 100s unrender-operations-check`. It retries twice, 30 seconds
+apart, then exits nonzero so Render can send a failure notification. The cron has
+a $1/month minimum and requires no app/Modal credentials or customer email setup.
+The probe URL is the current `https://unrender.onrender.com` origin; change it when
+moving to a custom domain or another deployment. Hourly cadence plus caching can
+delay detection by about an hour and can miss an incident that starts and ends
+between checks. Planned maintenance can cause a notification.
+
+This monitor is prepared in code; creating the hosted cron, verifying its normal
+run and testing notification delivery remain deployment gates. The 15-minute job
+failure-rate dashboard and repeated authentication/signature-failure alerts above
+remain separate work; the fixed provider thresholds do not implement them.
+
 The UNRENDER Render service has an explicit **Only failure notifications** override;
 workspace defaults and other services were not changed. The existing destination
 is Email. Delivery evidence: the operator inbox contains the two UNRENDER deploy

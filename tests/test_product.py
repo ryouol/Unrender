@@ -4261,3 +4261,139 @@ def test_backup_cannot_enter_between_probe_and_rate_admission(
         monkeypatch.setattr(ProductService, "rate_limit", admission)
         assert client.get("/api/public-config").status_code == 200
         assert checked
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "none",
+        "queue",
+        "reprocessed",
+        "running_stuck",
+        "running_fresh",
+        "failure",
+        "slow",
+        "ledger",
+        "backup",
+    ],
+)
+def test_operational_probe_detects_conditions_without_exposing_tenant_data(tmp_path, problem):
+    from unrender.product.operations import OperationsProbe
+
+    settings = settings_for(tmp_path, backup_volume_name="private-backups")
+    app = create_app(settings)
+    with TestClient(app) as client:
+        service = app.state.service
+        user_id = customer_id(service, email="private-person@example.com")
+        upload = service.prepare_upload(
+            user_id=user_id, filename="private-chart.png", content=png_bytes()
+        )
+        job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
+        now = utcnow()
+        old = timestamp(now - timedelta(minutes=11))
+        if problem.startswith("running_"):
+            claim = service.claim_next_job()
+            assert claim is not None
+            assert service.heartbeat_claim(claim)
+        with service.database.transaction(immediate=True) as conn:
+            if problem == "running_stuck":
+                conn.execute(
+                    "UPDATE audit_events SET created_at=? WHERE job_id=? "
+                    "AND event_type='job_started'",
+                    (old, job["id"]),
+                )
+            if problem in ("queue", "reprocessed", "running_fresh"):
+                conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (old, job["id"]))
+            if problem == "queue":
+                conn.execute("UPDATE jobs SET updated_at=? WHERE id=?", (old, job["id"]))
+            if problem in ("failure", "slow"):
+                for attempt in range(3 if problem == "failure" else 1):
+                    conn.execute(
+                        "INSERT INTO provider_attempts(job_id,user_id,attempt,lease_generation,"
+                        "dispatched_at,outcome,completed_at) VALUES (?,?,?,?,?,?,?)",
+                        (
+                            job["id"],
+                            user_id,
+                            attempt + 1,
+                            1,
+                            timestamp(now - timedelta(seconds=200 if problem == "slow" else 10)),
+                            "failed" if problem == "failure" else "succeeded",
+                            timestamp(now),
+                        ),
+                    )
+            if problem == "ledger":
+                conn.execute(
+                    "UPDATE users SET credit_balance=credit_balance+1 WHERE id=?", (user_id,)
+                )
+        backup_time = (
+            (now - timedelta(hours=49)).timestamp() if problem == "backup" else now.timestamp()
+        )
+        (settings.data_dir / "backup-status.json").write_text(
+            json.dumps({"last_success": backup_time})
+        )
+        response = client.get("/health/operations")
+        assert response.status_code == (
+            200 if problem in ("none", "reprocessed", "running_fresh") else 503
+        )
+        assert response.json()["status"] == ("ok" if response.status_code == 200 else "attention")
+        assert (
+            "private" not in response.text
+            and user_id not in response.text
+            and job["id"] not in response.text
+        )
+        # Operational degradation must not become a restart signal.
+        assert client.get("/health/ready").status_code == 200
+        assert all(type(value) is bool for value in OperationsProbe(settings).check().values())
+
+
+def test_operational_probe_cache_and_unavailable_database_are_bounded(tmp_path, monkeypatch):
+    from unrender.product import operations
+
+    service = service_for(tmp_path)
+    clock = [100.0]
+    monkeypatch.setattr(operations, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    probe = operations.OperationsProbe(service.settings)
+    healthy = probe.check()
+    assert all(healthy.values())
+    # Removing the database forces the next real read to fail without creating it.
+    service.settings.database_path.unlink()
+    assert probe.check() == healthy
+    clock[0] += 61
+    assert probe.check() == {"probe_available": False}
+    assert not service.settings.database_path.exists()
+
+
+@pytest.mark.parametrize("failures", [0, 1, 3])
+def test_operation_check_retries_then_exits_for_platform_notification(
+    monkeypatch, capsys, failures
+):
+    import urllib.error
+
+    from unrender.product import operations_check
+
+    calls = []
+    sleeps = []
+
+    class Response(io.BytesIO):
+        status = 200
+
+    def request(url, timeout):
+        assert url == "https://unrender.onrender.com/health/operations"
+        assert timeout == 10
+        calls.append(url)
+        if len(calls) <= failures:
+            raise urllib.error.HTTPError(url, 503, "attention", {}, None)
+        return Response(b'{"status":"ok"}')
+
+    monkeypatch.setattr(operations_check.urllib.request, "urlopen", request)
+    monkeypatch.setattr(operations_check, "time", SimpleNamespace(sleep=sleeps.append))
+    if failures == 3:
+        with pytest.raises(SystemExit) as error:
+            operations_check.main()
+        assert error.value.code == 1
+        assert len(calls) == 3 and sleeps == [30, 30]
+        assert "failed" in capsys.readouterr().err
+    else:
+        operations_check.main()
+        assert len(calls) == failures + 1 and sleeps == [30] * failures
+        assert "passed" in capsys.readouterr().out

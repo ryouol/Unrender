@@ -444,3 +444,28 @@ the final focused provider suite passed 24 tests after sink-failure coverage was
 expanded. Modal's local-execution warnings are expected because tests replace
 the mounted-volume and GPU dependencies. Existing Starlette/httpx deprecation
 remains. Deployment and live per-stage measurements are separate pending work.
+
+54. **Fixed P2 — per-socket timeouts did not cap monitor runtime**
+    (`unrender/product/operations_check.py:15` at review). Efficiency review found
+    that a slowly streaming response could outlast the intended retry budget.
+    The Render cron command now enforces a 100-second process deadline followed
+    by a five-second kill grace, independently of socket inactivity timeouts.
+55. **Fixed P2 — heartbeats concealed stuck source preparation**
+    (`unrender/product/operations.py:50` at review). Reuse and quality reviewers
+    independently found that a live heartbeat could keep a pre-dispatch job
+    apparently young forever. Running jobs now use the matching attempt and
+    execution generation's immutable `job_started` audit timestamp when dispatch
+    has not occurred. Tests cover a stale attempt with a fresh heartbeat, a fresh
+    run of an old chart, and requeued work.
+56. **Current-deployment limitation — monitor origin is fixed**
+    (`unrender/product/operations_check.py:12`). Breaking-change review noted that
+    a later custom domain or independent Blueprint deployment would need the
+    probe URL updated. The current origin matches production; this is documented
+    in OPERATIONS.md and is not a claim of multi-deployment configuration support.
+
+The final breaking, testing, context and change-size passes found no further
+actionable issues. Operations validation: 226 tests passed / 1 skipped, including
+13 focused monitor cases; mypy, Ruff/security lint and Blueprint validation passed.
+The image CI now checks the packaged command and operational route. Hosting and
+alert-delivery evidence are still pending; no new service or GPU call was created
+while preparing this change.

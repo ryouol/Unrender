@@ -101,7 +101,7 @@ decoding, integrity-check or scaling setting changed during this inspection.
 
 ### Timing instrumentation prepared after the investigation
 
-The next provider source emits one `inference_timings` JSON log per completed or
+The timing release emits one `inference_timings` JSON log per completed or
 failed function invocation. It records total wall time, completed stage durations
 for snapshot verification, imports, model/processor loading, preprocessing, and
 generation plus decoding. Stage durations use a monotonic host clock; asynchronous
@@ -113,9 +113,30 @@ accuracy or schema validity.
 The event contains no image, prompt, prediction, model path, account identifier,
 or exception text. A broken or closed log stream cannot replace the inference
 result or exception. CPU regression tests preserve the response contract, greedy
-generation settings and model cache reuse. This source change requires a new
-provider release pin and coordinated Modal/Render deployment before collecting
-live stage timings; the existing pilot receipts describe the previous release.
+generation settings and model cache reuse. The coordinated deployment and new
+provider release pin are recorded below; the original three-chart pilot receipts
+describe the previous release.
+
+### First live stage measurement
+
+The coordinated rollout deployed provider source `3fe2401` with release digest
+`e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787`.
+One direct Modal call on the frozen labelled-bar image returned all four values
+exactly. Its client timer was 92.523 seconds; the function timer was 86.307 seconds.
+The saved event in `release/launch-eval-results/stage-timing-v1.json` measured:
+
+| Completed stage | Host wall time |
+|---|---:|
+| Snapshot verification | 31.858 s |
+| Library imports | 10.431 s |
+| Model and processor loading | 4.761 s |
+| Preprocessing | 0.090 s |
+| Generation and decoding | 39.128 s |
+
+Verification and generation are the largest measured stages in this call.
+Optimization must preserve verified model bytes and reviewed output; these
+measurements do not justify dropping integrity checks or reducing the output
+token cap. This is one call, not a distribution of performance or measured cost.
 
 ## Human correction-time protocol
 

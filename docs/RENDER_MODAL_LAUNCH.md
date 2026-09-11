@@ -14,9 +14,9 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Disk: `dsk-dahid9uq1p3s73dmjts0`, 1 GB mounted at `/data`.
 - Application data: `/data/unrender`, private mode 0700, owned by UID 10001.
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
-- Automatic deploys and PR previews are off. Failure notifications inherit the
-  workspace's failure-only setting. No other project's configuration changed.
-- Live runtime code: `914c55c`.
+- Automatic deploys and PR previews are off. Failure notifications use the
+  service's explicit failure-only override. No other project's configuration changed.
+- Live runtime code: `606a0d3`; deployment `dep-dahkq9h594qs73fe1aag`.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -73,6 +73,23 @@ module selects the separate research app. Approved provider release:
 All release pins are in `render.yaml`. The dedicated Modal API token is stored
 in Render's private environment. Never copy credentials into git, reports, or
 Roy-OS. Render supplies the HTTPS origin through `RENDER_EXTERNAL_URL`.
+
+The timing release was deployed under maintenance after confirming no queued or
+running jobs. One direct Modal canary recovered all four labelled-bar values
+exactly in 92.523 seconds; the source commit was `3fe2401`. The matching pin was
+verified in the running Render process before public access resumed. A masked
+environment-field edit initially retained the old value despite a save notice;
+revealing this non-secret digest, editing it, and reading it back corrected the
+setting. Treat the live process value as deployment evidence, not the save notice.
+
+Readiness, SQLite integrity/foreign keys, an existing approved job and persisted
+backup status survived the update. The stage timing receipt is
+`release/launch-eval-results/stage-timing-v1.json`; it is a direct-provider canary,
+not a new end-to-end customer benchmark. The full CI suite passed on `3fe2401`.
+After maintenance ended, public HTTPS sign-in, account retrieval and all three
+exports of the existing approved chart passed, including the XLSX audit sheet.
+Roy's account retained one extraction credit; the direct operator canary did not
+consume an application credit. It did use one billed Modal inference attempt.
 
 Direct real inference took 91.29 seconds on the first observed call and 51.84
 seconds on an immediate repeat. A local production-configured HTTP workflow with

@@ -141,7 +141,8 @@ def test_new_shell_assets_are_served_locally(tmp_path: Path) -> None:
             "/static/landing.css",
             "/static/theme.js",
             "/static/icons/icon-192.png",
-            "/static/demo/revenue-example.png",
+            "/static/artwork/unfold-hero-1600.webp",
+            "/static/artwork/unfold-hero-dark-1600.webp",
         }.issubset(assets)
         for asset in assets:
             response = client.get(asset)
@@ -150,7 +151,7 @@ def test_new_shell_assets_are_served_locally(tmp_path: Path) -> None:
             assert not response.headers["content-type"].startswith("text/html"), asset
 
 
-def test_browser_landing_example_requires_saved_approval_and_stays_local() -> None:
+def test_browser_landing_stays_static_and_respects_motion_preferences() -> None:
     static_dir = Path(__file__).resolve().parents[1] / "unrender/product/static"
     for filename in ("theme.js", "landing.js"):
         subprocess.run(

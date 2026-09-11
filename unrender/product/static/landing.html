@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Extract data from a chart image or PDF. Review every value beside the source, make corrections, and export your work.">
-  <title>Unrender — from chart to spreadsheet</title>
+  <meta name="description" content="Turn chart images into editable data. Review every value beside the source, make corrections, and export with a record.">
+  <title>Unrender — unlock the numbers, keep the evidence</title>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/landing.css">
   <script src="/static/landing.js" defer></script>
@@ -12,87 +12,52 @@
 <body class="landing-page">
   <a class="skip-link" href="#main">Skip to main content</a>
   <header class="landing-header">
-    <a class="landing-brand" href="/" aria-label="Unrender home"><img src="/static/icons/icon-192.png" width="32" height="32" alt=""><span>Unrender</span></a>
-    <nav class="landing-nav" aria-label="Main navigation">
-      <a href="#how-it-works">How it works</a>
-      <a href="#example">Examples</a>
+    <a class="landing-brand" href="/" aria-label="Unrender home"><img class="landing-brand-light" src="/static/icons/icon-192.png" width="38" height="38" alt=""><img class="landing-brand-dark" src="/static/icons/brand-mark-dark.png" width="38" height="38" alt=""><span>unrender</span></a>
+    <nav class="landing-nav" aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#formats">Formats</a></nav>
+    <div class="landing-header-actions">
       <a class="landing-sign-in" href="/login">Sign in</a>
-    </nav>
-    <label class="landing-appearance"><span class="visually-hidden">Appearance</span><select data-theme-picker aria-label="Appearance"><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></label>
-    <button class="landing-menu-button" id="landing-menu-open" type="button" aria-haspopup="dialog" aria-controls="landing-menu" hidden>Menu</button>
+      <label class="landing-appearance"><span class="visually-hidden">Appearance</span><select data-theme-picker aria-label="Appearance"><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></label>
+    </div>
   </header>
 
   <main id="main">
     <section class="landing-hero" aria-labelledby="landing-title">
       <div class="landing-intro">
-        <h1 id="landing-title">From chart to<br>spreadsheet.</h1>
-        <p class="landing-lede">Extract the data. Check every value. Keep the source.</p>
-        <div class="landing-actions">
-          <a class="landing-button landing-primary" href="#example" data-open-example>Explore an example <img src="/static/icons/arrow-right.svg" width="18" height="18" alt=""></a>
-          <a class="landing-text-link" href="/signup">Use your own chart</a>
-        </div>
+        <h1 id="landing-title">Unlock the numbers.<br>Keep the evidence.</h1>
+        <p class="landing-lede">Turn chart images into editable data.<br>Review every value. Export with a record.</p>
+        <a class="landing-button landing-primary" href="/signup" data-signup-link><span>Create account</span><img src="/static/icons/arrow-right.svg" width="21" height="21" alt=""></a>
       </div>
-      <figure class="landing-artifact" id="example" aria-labelledby="example-caption">
-        <div class="landing-source"><img src="/static/demo/revenue-example.png" width="1600" height="1000" alt="Quarterly revenue bar chart: Q1 12.4, Q2 18.6, Q3 16.8, Q4 24.2 million dollars." fetchpriority="high"></div>
-        <img class="landing-conversion-arrow" src="/static/icons/arrow-right.svg" width="26" height="26" alt="">
-        <div class="landing-table-wrap">
-          <table class="landing-data-table"><caption class="visually-hidden">Quarterly revenue from the illustrative chart</caption><thead><tr><th scope="col">Quarter</th><th scope="col">Revenue ($m)</th></tr></thead><tbody><tr><th scope="row">Q1</th><td>12.4</td></tr><tr><th scope="row">Q2</th><td>18.6</td></tr><tr><th scope="row">Q3</th><td>16.8</td></tr><tr><th scope="row">Q4</th><td>24.2</td></tr></tbody></table>
+      <figure class="landing-artifact" aria-label="A chart unfolds into a spreadsheet">
+        <div class="landing-artwork" id="landing-artwork">
+          <img class="landing-art-light" src="/static/artwork/unfold-hero-1600.webp" srcset="/static/artwork/unfold-hero-800.webp 800w, /static/artwork/unfold-hero-1600.webp 1600w" sizes="(max-width: 700px) 100vw, min(1180px, 94vw)" width="1600" height="800" alt="A paper chart unfolds into ribbons of numbers and a spreadsheet. Concept illustration of chart-to-data extraction." fetchpriority="high">
+          <img class="landing-art-dark" src="/static/artwork/unfold-hero-dark-1600.webp" srcset="/static/artwork/unfold-hero-dark-800.webp 800w, /static/artwork/unfold-hero-dark-1600.webp 1600w" sizes="(max-width: 700px) 100vw, min(1180px, 94vw)" width="1600" height="800" alt="A paper chart unfolds into ribbons of numbers and a spreadsheet. Concept illustration of chart-to-data extraction." loading="lazy">
         </div>
-        <figcaption id="example-caption"><span>Illustrative example</span><strong>Review first. Export with a record.</strong><a href="#example" data-open-example>Try the review workflow</a></figcaption>
       </figure>
-      <noscript><p class="landing-no-script">The chart and table above show the finished example. In Unrender, you compare the values, save corrections, then approve and export. Enable JavaScript to try this example, or <a href="/login">continue to sign in</a>.</p></noscript>
+      <ol class="landing-journey" aria-label="The Unrender workflow"><li><span>01</span>Bring a chart.</li><li><span>02</span>Review the values.</li><li><span>03</span>Take the data.</li></ol>
+      <div class="landing-discover"><a href="#how-it-works"><img src="/static/icons/arrow-right.svg" width="20" height="20" alt="">Scroll to discover</a><button id="landing-motion" type="button" aria-pressed="false" hidden>Pause motion</button></div>
     </section>
 
-    <section class="landing-section" id="how-it-works" aria-labelledby="workflow-title">
-      <p class="landing-kicker">The workflow</p>
-      <h2 id="workflow-title">A table is only the beginning.</h2>
-      <p class="landing-section-intro">Keep the image, the corrections, and the decision together.</p>
+    <section class="landing-section landing-workflow" id="how-it-works" aria-labelledby="workflow-title" tabindex="-1">
+      <div class="landing-section-heading" data-reveal><p class="landing-kicker">From picture to possibility</p><h2 id="workflow-title">Your next spreadsheet<br>is already in the picture.</h2><p class="landing-section-intro">For the chart in a report, presentation, or screenshot. Get its data into a table you can actually use.</p></div>
       <div class="landing-steps">
-        <article><span class="landing-step-number">01</span><h3>Choose your chart.</h3><p>Upload an image or a PDF. Select a page and crop to the chart you need.</p></article>
-        <article><span class="landing-step-number">02</span><h3>Make it your data.</h3><p>Compare the extracted table with the source. Correct values and labels, then approve the saved result.</p></article>
-        <article><span class="landing-step-number">03</span><h3>Take it with you.</h3><p>Export CSV, JSON, or an Excel workbook. XLSX includes an Audit sheet with source, model, and approval details.</p></article>
+        <article data-reveal><span class="landing-step-number">01 / Bring a chart</span><h3>Start with the source.</h3><p>Upload an image or PDF. Choose a page and crop to one chart, keeping its labels and axes in view.</p></article>
+        <article data-reveal><span class="landing-step-number">02 / Review the values</span><h3>You make the final call.</h3><p>AI prepares an editable table. Compare it beside the original, correct values and labels, then save and approve your work.</p></article>
+        <article data-reveal><span class="landing-step-number">03 / Take the data</span><h3>Carry the context with you.</h3><p>Export CSV, JSON, or XLSX. The Excel workbook includes an Audit sheet with source, model, and approval details.</p></article>
       </div>
+      <p class="landing-review-note" data-reveal>Extraction is a starting point. Your review makes the result ready to use.</p>
     </section>
 
-    <section class="landing-section landing-inputs" aria-labelledby="inputs-title">
-      <div><p class="landing-kicker">Start with what you have</p><h2 id="inputs-title">An image.<br>A page. A chart.</h2></div>
-      <div class="landing-input-detail">
-        <p>Bring a PNG, JPEG, WebP, or PDF. Choose one chart at a time, with its labels and axes in view.</p>
-        <ul class="landing-formats" aria-label="Supported file formats"><li>PNG</li><li>JPEG</li><li>WebP</li><li>PDF</li></ul>
-        <p class="landing-limit-note" id="landing-upload-limits" hidden></p>
-        <p class="landing-limit-note">Extracted values need your review. The source stays visible while you work.</p>
-        <a class="landing-text-link" href="/signup">Use your own chart <img src="/static/icons/arrow-right.svg" width="18" height="18" alt=""></a>
+    <section class="landing-section landing-inputs" id="formats" aria-labelledby="inputs-title" tabindex="-1">
+      <div data-reveal><p class="landing-kicker">Made for the files you have</p><h2 id="inputs-title">A screenshot.<br>A report. A chart.</h2></div>
+      <div class="landing-input-detail" data-reveal>
+        <p>Bring one clearly visible chart at a time. A sharp source, readable labels, and complete axes give you a better starting point.</p>
+        <ul class="landing-formats" aria-label="Supported input formats"><li>PNG</li><li>JPEG</li><li>WebP</li><li>PDF</li></ul>
+        <p class="landing-limit-note" id="landing-upload-limits">See current file limits in your workspace.</p>
+        <div class="landing-output"><span>Ready for your next step</span><strong>CSV <span>·</span> JSON <span>·</span> XLSX</strong></div>
+        <p class="landing-limit-note">Charts stay in your private workspace for up to 30 days. Download the files you want to keep.</p>
       </div>
     </section>
-    <section class="landing-closing" aria-labelledby="closing-title"><h2 id="closing-title">See the whole picture.<br>Work with the data.</h2><a class="landing-button landing-primary" href="#example" data-open-example>Explore an example <img src="/static/icons/arrow-right.svg" width="18" height="18" alt=""></a></section>
+    <section class="landing-closing" aria-labelledby="closing-title" data-reveal><p class="landing-kicker">See it. Review it. Use it.</p><h2 id="closing-title">Less retyping.<br>More understanding.</h2><a class="landing-button landing-primary" href="/signup" data-signup-link><span>Create account</span><img src="/static/icons/arrow-right.svg" width="21" height="21" alt=""></a><p class="landing-access-note" id="landing-access-note">Start with an account. Review every extraction.</p><a class="landing-text-link" href="/contact">Talk to us about access</a></section>
   </main>
-
-  <a class="landing-button landing-primary landing-mobile-cta" id="landing-mobile-cta" href="#example" data-open-example hidden>Explore an example</a>
-
-  <dialog class="landing-menu" id="landing-menu" aria-labelledby="landing-menu-title">
-    <div class="landing-dialog-top"><h2 id="landing-menu-title">Explore Unrender</h2><form method="dialog"><button class="landing-close" type="submit">Close</button></form></div>
-    <nav aria-label="Mobile navigation"><a href="#how-it-works">How it works</a><a href="#example">Examples</a><a href="/login">Sign in</a><a href="/signup">Use your own chart</a></nav>
-  </dialog>
-
-  <dialog class="landing-example-dialog" id="landing-example-dialog" aria-labelledby="demo-title" aria-describedby="demo-description">
-    <div class="landing-dialog-top"><div><p class="landing-kicker">Illustrative example</p><h2 id="demo-title" tabindex="-1">A small correction.<br>A clearer result.</h2></div><form method="dialog"><button class="landing-close" type="submit">Close example</button></form></div>
-    <p class="landing-demo-description" id="demo-description">Try the review workflow with prepared data. Nothing is uploaded, no model runs, and no account or credits are used.</p>
-    <ol class="landing-demo-steps" aria-label="Example progress"><li data-demo-step="review" aria-current="step">1. Review</li><li data-demo-step="approve">2. Approve</li><li data-demo-step="export">3. Export</li></ol>
-    <div class="landing-demo-grid">
-      <section aria-labelledby="demo-source-title"><h3 id="demo-source-title">Source image</h3><div class="landing-demo-source"><img src="/static/demo/revenue-example.png" width="1600" height="1000" alt="Quarterly revenue: Q1 12.4, Q2 18.6, Q3 16.8, Q4 24.2 million dollars."></div></section>
-      <section aria-labelledby="demo-table-title"><div class="landing-demo-table-heading"><h3 id="demo-table-title">Extracted data</h3><span class="landing-demo-badge" id="demo-badge">Needs review</span></div>
-        <form id="landing-demo-form">
-          <table class="landing-data-table"><caption class="visually-hidden">Prepared example data with one value to correct</caption><thead><tr><th scope="col">Quarter</th><th scope="col">Revenue ($m)</th></tr></thead><tbody><tr><th scope="row">Q1</th><td>12.4</td></tr><tr><th scope="row">Q2</th><td>18.6</td></tr><tr class="landing-correction-row"><th scope="row"><label for="demo-q3">Q3</label></th><td><input id="demo-q3" name="q3" type="number" value="16.3" step="0.1" min="0" max="100" inputmode="decimal" aria-label="Q3 revenue in millions of dollars" aria-describedby="demo-hint demo-error" required></td></tr><tr><th scope="row">Q4</th><td>24.2</td></tr></tbody></table>
-          <p class="landing-demo-hint" id="demo-hint">The Q3 label reads <strong>16.8</strong>. Correct the prepared value of 16.3, then save.</p>
-          <p class="landing-demo-error" id="demo-error" role="alert" hidden></p>
-          <button class="landing-button landing-primary" id="demo-save" type="submit">Save correction</button>
-        </form>
-        <button class="landing-button landing-primary" id="demo-approve" type="button" hidden>Approve example</button>
-      </section>
-    </div>
-    <section class="landing-demo-export" id="demo-export" aria-labelledby="demo-export-title" hidden><div><h3 id="demo-export-title">Approved. Ready to use.</h3><p>This example downloads CSV or JSON. Your workspace also supports XLSX with an Audit sheet.</p></div><div class="landing-export-actions"><button class="landing-button landing-primary" type="button" data-demo-export="csv">Download CSV</button><button class="landing-button landing-secondary" type="button" data-demo-export="json">Download JSON</button></div></section>
-    <div class="landing-demo-footer"><p id="demo-status" role="status" aria-live="polite"></p><button class="landing-reset" id="demo-reset" type="button">Reset example</button></div>
-    <p class="landing-demo-own-chart">Ready for your own chart? <a href="/signup">Continue to your workspace</a></p>
-  </dialog>
 </body>
 </html>

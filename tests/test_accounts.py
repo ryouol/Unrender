@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
-from test_product import STATIC_DIR, service_for, settings_for
+from test_product import STATIC_DIR, png_bytes, service_for, settings_for
 
 from unrender.product.database import SCHEMA_VERSION, Database
 from unrender.product.service import ProductError
@@ -169,8 +169,8 @@ def test_recovery_is_generic_expiring_single_purpose_and_origin_checked(tmp_path
         )
 
 
-def test_production_signup_requires_email_and_zero_welcome_spend(tmp_path):
-    settings = replace(
+def production_settings(tmp_path):
+    return replace(
         email_settings(tmp_path),
         environment="production",
         worker_enabled=True,
@@ -182,13 +182,106 @@ def test_production_signup_requires_email_and_zero_welcome_spend(tmp_path):
         modal_model_digest="b" * 64,
         modal_provider_release="c" * 64,
     )
+
+
+def test_production_signup_requires_zero_spend_and_explicit_email_policy(tmp_path):
+    settings = production_settings(tmp_path)
     settings.validate()
-    with pytest.raises(ValueError, match="verified email"):
+    with pytest.raises(ValueError, match="email and billing disabled"):
         replace(settings, require_email_verification=False).validate()
     with pytest.raises(ValueError, match="zero credits"):
         replace(settings, initial_credits=3).validate()
     with pytest.raises(ValueError, match="verified email"):
         replace(settings, smtp_password="").validate()
+
+
+def password_only_production_settings(tmp_path):
+    return replace(
+        production_settings(tmp_path),
+        require_email_verification=False,
+        smtp_host="",
+        smtp_username="",
+        smtp_password="",
+        email_from="",
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "smtp_host",
+        "smtp_username",
+        "smtp_password",
+        "email_from",
+        "stripe_secret_key",
+        "stripe_webhook_secret",
+        "stripe_price_id",
+    ],
+)
+def test_password_only_production_rejects_even_partial_email_or_billing(tmp_path, field):
+    settings = password_only_production_settings(tmp_path)
+    settings.validate()
+    with pytest.raises(ValueError, match="email and billing disabled"):
+        replace(settings, **{field: "configured"}).validate()
+    with pytest.raises(ValueError, match="zero credits"):
+        replace(settings, initial_credits=1).validate()
+
+
+def test_password_signup_production_session_restart_and_zero_spend(tmp_path, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Password signup or zero-credit uploads must not send email or infer")
+
+    monkeypatch.setattr("unrender.product.mail.send_account_email", forbidden)
+    monkeypatch.setattr("unrender.product.extractors.ModalExtractor.extract", forbidden)
+    settings = password_only_production_settings(tmp_path)
+    with TestClient(create_app(settings), base_url=settings.base_url) as client:
+        response = client.post(
+            "/api/auth/register", json={"email": "Owner@Example.com", "password": PASSWORD}
+        )
+        assert response.status_code == 201
+        assert response.json() == {"ok": True}
+        cookie = response.headers.get_list("set-cookie")[0]
+        assert "Secure" in cookie and "HttpOnly" in cookie and "SameSite=lax" in cookie
+        account = client.get("/api/me").json()
+        assert account["email"] == "owner@example.com"
+        assert account["credits"] == 0 and account["email_verified"] is False
+        assert account["billing_configured"] is False
+        csrf = {"X-CSRF-Token": client.cookies["unrender_csrf"]}
+        blocked = client.post(
+            "/api/uploads",
+            headers=csrf,
+            files={"file": ("chart.png", png_bytes(), "image/png")},
+        )
+        assert blocked.status_code == 402
+        assert client.post("/api/auth/logout", headers=csrf).status_code == 200
+        assert client.get("/api/me").status_code == 401
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 200
+        )
+        session = client.cookies["unrender_session"]
+        with client.app.state.service.database.connect() as conn:
+            for table in (
+                "account_challenges",
+                "credit_ledger",
+                "uploads",
+                "jobs",
+                "provider_attempts",
+            ):
+                assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            row = conn.execute("SELECT account_active,email_verified FROM users").fetchone()
+            assert tuple(row) == (1, 0)
+    with TestClient(create_app(settings), base_url=settings.base_url) as reopened:
+        reopened.cookies.set("unrender_session", session)
+        assert reopened.get("/api/me").json()["id"] == account["id"]
+        assert (
+            reopened.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 200
+        )
 
 
 @pytest.mark.parametrize("legacy_operator_account", [False, True])

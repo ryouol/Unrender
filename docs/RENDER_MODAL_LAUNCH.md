@@ -1,11 +1,14 @@
 # Render + Modal launch
 
-## Current deployment — September 10, 2026
+## Current deployment — September 11, 2026
 
 UNRENDER is deployed at https://unrender.onrender.com using the Documents/Codex
-working checkout and `codex/render-modal-productization` branch. The separate
-Desktop checkout is not the launch source. Draft PR #2 remains open:
-https://github.com/ryouol/Unrender/pull/2.
+working checkout. The separate Desktop checkout is not the launch source.
+The backend and premium interface were merged separately through PRs
+[#2](https://github.com/ryouol/Unrender/pull/2) and
+[#3](https://github.com/ryouol/Unrender/pull/3). The service still uses an explicit
+deployment of `4ebdcaa`; aligning its branch with `main` does not turn on
+automatic deployments.
 
 Render project `UNRENDER`, Production environment:
 https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
@@ -16,12 +19,38 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `2179df8`; deployment `dep-dahmc8cs728c73clf4ug`.
+- Live runtime code: `4ebdcaa`; deployment `dep-daho7fh594qs73fs4mj0`.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
   override. It has no app/Modal credentials or persistent disk. Its build remains
-  `02597a6`; the September 11 01:17 UTC scheduled run passed.
+  `02597a6`; the September 11 04:17 UTC scheduled run passed.
+
+### Premium interface rollout — September 11, 04:30 UTC
+
+The reviewed UI commit `4ebdcaa` was deployed explicitly after its verify and
+container checks passed. Ingress was closed using this service's maintenance
+mode. No queued/running jobs or storage reservations remained. A coordinated
+recovery set was created at
+`/data/release-backups/pre-premium-4ebdcaa-20260911T0429Z` and restored into an
+isolated temporary directory before the deployment began. The persistent
+recovery set survived the rollout.
+
+Render reported the deployment live at 04:30:36 UTC. The new process confirmed
+the exact commit, schema 9, SQLite integrity, zero foreign-key errors, six
+accounts, five charts, six saved versions and one remaining credit. The digest
+of the approved chart's saved result/approval and its source checksum matched
+the pre-deploy values. Readiness and every operations check passed before
+maintenance was disabled. No model configuration, pricing plan, instance count
+or other project's resource was changed; no inference was invoked.
+
+Hosted browser verification confirmed the public landing page, persistent owner
+session, existing charts and the new review workspace. A fresh XLSX download
+opened successfully with 18 data rows and an Audit sheet containing the source,
+job, model, approval status and approval timestamp. The browser download-event
+observer timed out for the blob download, but the newly written local workbook
+was independently inspected. Signup remains closed on this schema-9 runtime
+until the separate account-policy release is reviewed and deployed.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root

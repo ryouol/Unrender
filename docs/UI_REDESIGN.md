@@ -109,7 +109,6 @@ These markers remain in source. The associated content must be supplied and revi
 
 | Source | Exact marker |
 |---|---|
-| [contact.html](../unrender/product/static/contact.html) | `<!-- TODO: provide monitored support email and render as a mailto link -->` |
 | [contact.html](../unrender/product/static/contact.html) | `<!-- TODO: provide business telephone and render as a tel link -->` |
 | [contact.html](../unrender/product/static/contact.html) | `<!-- TODO: provide legal operator name and physical business address -->` |
 | [privacy.html](../unrender/product/static/privacy.html) | `<!-- TODO: provide legal operator, jurisdiction, effective date, and monitored privacy contact -->` |
@@ -125,7 +124,7 @@ The implementation note in [site.js](../unrender/product/static/site.js) is also
 // honour withdrawal, and never send chart contents, account IDs, URLs or filenames.
 ```
 
-The terms draft additionally calls for the contracting entity/address, refund policy, monitored support contact, service levels, warranties, liability, dispute and termination terms. These are business/legal decisions, not copy the UI implementation can invent.
+The owner supplied `royluo05@gmail.com` as the public support contact on September 11. It is linked from the contact page; email sending remains disabled. The terms draft additionally calls for the contracting entity/address, refund policy, service levels, warranties, liability, dispute and termination terms. These are business/legal decisions, not copy the UI implementation can invent.
 
 ## Follow-up and release boundary
 

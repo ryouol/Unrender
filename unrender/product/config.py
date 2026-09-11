@@ -59,6 +59,7 @@ class Settings:
     max_jobs_per_user: int = 1_000
     max_upload_bytes_per_minute: int = 40 * 1024 * 1024
     rate_limit_per_minute: int = 120
+    global_rate_limit_per_minute: int = 600
     max_result_versions_per_job: int = 25
     max_history_bytes_per_user: int = 16 * 1024 * 1024
     max_result_json_bytes: int = 1_000_000
@@ -83,6 +84,7 @@ class Settings:
     idempotency_tombstone_days: int = 365
     max_idempotency_records_per_user: int = 10_000
     auth_rate_limit_per_minute: int = 10
+    global_auth_rate_limit_per_minute: int = 30
     max_concurrent_auth_requests: int = 2
     max_concurrent_expensive_requests: int = 4
     provider_failure_limit_per_user_hour: int = 5
@@ -268,6 +270,8 @@ class Settings:
             raise ValueError("Per-job audit limit cannot exceed the tenant audit limit")
         admission_limits = (
             self.auth_rate_limit_per_minute,
+            self.global_rate_limit_per_minute,
+            self.global_auth_rate_limit_per_minute,
             self.max_concurrent_auth_requests,
             self.max_concurrent_expensive_requests,
             self.provider_failure_limit_per_user_hour,
@@ -379,6 +383,10 @@ class Settings:
                 "UNRENDER_MAX_IDEMPOTENCY_RECORDS_PER_USER", 10_000
             ),
             auth_rate_limit_per_minute=_int("UNRENDER_AUTH_RATE_LIMIT_PER_MINUTE", 10),
+            global_rate_limit_per_minute=_int("UNRENDER_GLOBAL_RATE_LIMIT_PER_MINUTE", 600),
+            global_auth_rate_limit_per_minute=_int(
+                "UNRENDER_GLOBAL_AUTH_RATE_LIMIT_PER_MINUTE", 30
+            ),
             max_concurrent_auth_requests=_int("UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS", 2),
             max_concurrent_expensive_requests=_int("UNRENDER_MAX_CONCURRENT_EXPENSIVE_REQUESTS", 4),
             provider_failure_limit_per_user_hour=_int(

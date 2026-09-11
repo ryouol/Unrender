@@ -50,7 +50,7 @@ Customer chart sources, extracted values, corrections, exports, identities, sess
 
 - no MFA, SSO, organization roles, or session-management UI;
 - no malware scanner or content-disarm service for PDFs;
-- tenant quotas and authenticated rate counters are local to one SQLite deployment, with no distributed WAF/rate limiter; client-IP attribution depends on a correctly configured trusted edge;
+- global capacity and tenant/account rate counters are local to one SQLite deployment, with no distributed WAF/rate limiter; forwarded client addresses are not trusted or used for admission. Global exhaustion can affect everyone, and short account throttles can be deliberately exhausted; see REQUEST_LIMITS.md;
 - no formal penetration test, signed SBOM attestation, SOC 2, or external compliance audit; the checked-in CycloneDX inventory is unsigned;
 - the PyMuPDF runtime was removed and replaced by hash-locked pypdfium2/PDFium with recorded upstream terms and shipped notices; final dependency/distribution approval remains an owner/counsel responsibility;
 - application-level encryption at rest is not implemented; the platform volume must provide it;

@@ -345,7 +345,7 @@ def test_email_challenges_are_bounded_and_expired_tokens_are_reclaimed(tmp_path,
         assert conn.execute("SELECT COUNT(*) FROM account_challenges").fetchone()[0] == 1
 
 
-def test_logout_remains_available_after_login_rate_limit(tmp_path):
+def test_logout_remains_available_after_login_rate_limit(tmp_path, fixed_rate_window):
     settings = settings_for(tmp_path, seed_demo_account=False, auth_rate_limit_per_minute=2)
     with TestClient(create_app(settings)) as client:
         assert (
@@ -371,6 +371,76 @@ def test_logout_remains_available_after_login_rate_limit(tmp_path):
         )
         assert response.status_code == 200
         assert client.get("/api/me").status_code == 401
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_account_attempt_limit_normalizes_identity_before_password_work(
+    tmp_path, monkeypatch, known, fixed_rate_window
+):
+    import unrender.product.service as service_module
+
+    app = create_app(settings_for(tmp_path, seed_demo_account=False, auth_rate_limit_per_minute=2))
+    with TestClient(app) as client:
+        if known:
+            app.state.service.provision_user("owner@example.com", PASSWORD)
+        app.state.service.provision_user("other@example.com", PASSWORD)
+        original = service_module.verify_password
+        checked = []
+
+        def verify(password, encoded):
+            checked.append(True)
+            return original(password, encoded)
+
+        monkeypatch.setattr(service_module, "verify_password", verify)
+        for email in ("Owner@Example.com", " owner@example.com "):
+            assert (
+                client.post(
+                    "/api/auth/login", json={"email": email, "password": "wrong password"}
+                ).status_code
+                == 401
+            )
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 429
+        )
+        assert len(checked) == 2
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "other@example.com", "password": PASSWORD}
+            ).status_code
+            == 200
+        )
+
+
+def test_global_auth_capacity_applies_with_valid_session_and_rotated_accounts(
+    tmp_path, fixed_rate_window
+):
+    app = create_app(
+        settings_for(tmp_path, seed_demo_account=False, global_auth_rate_limit_per_minute=2)
+    )
+    with TestClient(app) as client:
+        user_id = app.state.service.provision_user("owner@example.com", PASSWORD)
+        session = app.state.service.create_session(user_id)
+        client.cookies.set("unrender_session", session["session"])
+        for email in ("unknown1@example.com", "unknown2@example.com"):
+            assert (
+                client.post(
+                    "/api/auth/login", json={"email": email, "password": PASSWORD}
+                ).status_code
+                == 401
+            )
+        assert (
+            client.post(
+                "/api/auth/login", json={"email": "owner@example.com", "password": PASSWORD}
+            ).status_code
+            == 429
+        )
+        assert (
+            client.post("/api/auth/logout", headers={"X-CSRF-Token": session["csrf"]}).status_code
+            == 200
+        )
 
 
 def test_verification_hashing_releases_writer_and_fences_credential_change(tmp_path, monkeypatch):

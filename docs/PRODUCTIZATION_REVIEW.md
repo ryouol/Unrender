@@ -472,3 +472,21 @@ and hourly monitor. The real slow-provider alert delivered to the operator inbox
 and a follow-up monitor run passed after the lookback window cleared. Hosted
 sign-in, preserved data and CSV/JSON/XLSX audit-sheet exports passed. No GPU call
 was used for this monitoring rollout. See OPERATIONS.md for evidence and limits.
+
+57. **Fixed documentation drift — request admission** (`docs/OPERATIONS.md:20`,
+    `docs/SECURITY_MODEL.md:53`, `docs/SECURITY_REVIEW.md:334` at review).
+    Quality/breaking and context reviewers found old client-IP descriptions.
+    They now document global capacity plus tenant/account quotas and the hosted
+    evidence against blindly trusting forwarding headers.
+58. **Fixed P2 — minute-boundary test flakiness** (`tests/test_accounts.py:395`
+    at review). Real password work could cross a UTC-minute boundary and reset
+    the correctly implemented quota before the test expected 429. An explicit
+    fixture fixes `service.utcnow` for the affected account/global/tenant tests.
+
+All three simplify passes and the breaking, testing, context and change-size
+reviews completed. The full suite passed 233 tests / 1 skipped before the clock
+fixture adjustment; all 10 focused final quota tests then passed, including the
+additional API-key coverage. The testing reviewer rechecked the fixture and key
+assertions without new findings. Ruff, mypy across 19 product files and Blueprint
+validation passed. Hosted rollout remains separate evidence. No model, provider
+pins, signup policy or credit grant changed.

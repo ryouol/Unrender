@@ -1712,6 +1712,7 @@ def test_test_mode_checkout_and_signed_webhook_flow(
 
 def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
     tmp_path: Path,
+    fixed_rate_window,
 ) -> None:
     app = create_app(
         settings_for(
@@ -1719,6 +1720,7 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
             seed_demo_account=False,
             rate_limit_per_minute=2,
             auth_rate_limit_per_minute=2,
+            global_auth_rate_limit_per_minute=2,
         )
     )
     payload = {"email": "known@example.com", "password": "wrong password"}
@@ -1731,7 +1733,7 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
         )
         second = client.post(
             "/api/auth/login",
-            json=payload,
+            json={**payload, "email": "unknown@example.com"},
             headers={
                 "Cookie": "unrender_session=attacker-b",
                 "X-Forwarded-For": "198.51.100.2",
@@ -1739,24 +1741,90 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
         )
         blocked = client.post(
             "/api/auth/login",
-            json=payload,
+            json={**payload, "email": "another@example.com"},
             headers={"Authorization": "Bearer attacker-c", "X-Forwarded-For": "198.51.100.3"},
         )
     assert first.status_code == second.status_code == 401
     assert blocked.status_code == 429
     with app.state.service.database.connect() as conn:
         buckets = conn.execute("SELECT bucket_key,request_count FROM rate_limits").fetchall()
-    assert len(buckets) == 1
-    assert int(buckets[0]["request_count"]) == 3
-    assert "attacker" not in str(buckets[0]["bucket_key"])
+    counts = {row["bucket_key"]: row["request_count"] for row in buckets}
+    assert counts["global:auth"] == 3
+    assert len(counts) == 3  # Two admitted account identifiers, never raw credentials.
+    assert all("attacker" not in key and "@" not in key for key in counts)
 
 
-def test_live_health_is_cheap_while_readiness_is_admission_limited(tmp_path: Path) -> None:
-    app = create_app(settings_for(tmp_path, rate_limit_per_minute=2))
+def test_live_health_is_cheap_while_readiness_is_admission_limited(
+    tmp_path: Path, fixed_rate_window
+) -> None:
+    app = create_app(settings_for(tmp_path, global_rate_limit_per_minute=2))
     with TestClient(app) as client:
         assert client.get("/health/ready").status_code == 200
         assert client.get("/health/ready").status_code == 200
         assert client.get("/health/ready").status_code == 429
+        assert client.get("/health/live").status_code == 200
+
+
+def test_tenant_quota_is_independent_behind_shared_proxy_and_shared_across_sessions(
+    tmp_path: Path,
+    fixed_rate_window,
+) -> None:
+    app = create_app(settings_for(tmp_path, seed_demo_account=False, rate_limit_per_minute=2))
+    with TestClient(app) as client:
+        service = app.state.service
+        owner = service.provision_user("owner@example.com", "owner password is long enough")
+        other = service.provision_user("other@example.com", "other password is long enough")
+        first = service.create_session(owner)
+        second = service.create_session(owner)
+        other_session = service.create_session(other)
+        client.cookies.set("unrender_session", first["session"])
+        assert client.get("/api/me").status_code == 200
+        assert client.get("/api/me").status_code == 200
+        client.cookies.set("unrender_session", second["session"])
+        assert client.get("/api/me", headers={"X-Forwarded-For": "198.51.100.9"}).status_code == 429
+        client.cookies.set("unrender_session", other_session["session"])
+        assert client.get("/api/me").status_code == 200
+        for name in ("first key", "second key"):
+            key = service.create_api_key(user_id=owner, name=name)
+            assert (
+                client.get(
+                    "/api/v1/extractions/missing", headers={"Authorization": "Bearer " + key["key"]}
+                ).status_code
+                == 429
+            )
+        assert client.get("/api/me").status_code == 200
+
+
+@pytest.mark.parametrize("failure", ["csrf", "json", "bearer"])
+def test_global_capacity_covers_rejected_requests_with_valid_session(
+    tmp_path: Path,
+    failure: str,
+    fixed_rate_window,
+) -> None:
+    app = create_app(
+        settings_for(tmp_path, seed_demo_account=False, global_rate_limit_per_minute=2)
+    )
+    with TestClient(app) as client:
+        service = app.state.service
+        user_id = service.provision_user("owner@example.com", "owner password is long enough")
+        session = service.create_session(user_id)
+        client.cookies.set("unrender_session", session["session"])
+
+        def rejected():
+            if failure == "csrf":
+                return client.post("/api/jobs", json={"upload_id": "missing", "page_index": 0})
+            if failure == "json":
+                return client.post(
+                    "/api/jobs", content="{", headers={"Content-Type": "application/json"}
+                )
+            return client.get(
+                "/api/v1/extractions/missing", headers={"Authorization": "Bearer invalid"}
+            )
+
+        expected = {"csrf": 403, "json": 422, "bearer": 401}[failure]
+        assert rejected().status_code == expected
+        assert rejected().status_code == expected
+        assert rejected().status_code == 429
         assert client.get("/health/live").status_code == 200
 
 

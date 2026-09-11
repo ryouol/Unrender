@@ -30,6 +30,10 @@ services:
         value: "4000000"
       - key: UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS
         value: "1"
+      - key: UNRENDER_GLOBAL_RATE_LIMIT_PER_MINUTE
+        value: "600"
+      - key: UNRENDER_GLOBAL_AUTH_RATE_LIMIT_PER_MINUTE
+        value: "30"
       - key: UNRENDER_MAX_CONCURRENT_EXPENSIVE_REQUESTS
         value: "1"
       - key: UNRENDER_EXTRACTOR

@@ -38,6 +38,7 @@ from unrender.product.extractors import build_extractor
 from unrender.product.operations import OperationsProbe
 from unrender.product.public_site import document, error_document, sitemap
 from unrender.product.scheduled_backup import ScheduledBackup
+from unrender.product.security import normalize_email
 from unrender.product.service import ProductError, ProductService
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.worker import JobWorker
@@ -434,14 +435,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_auth = _is_auth_attempt(request.url.path, request.method)
         return "poll" if is_job_status else "auth" if is_auth else "request"
 
-    def rate_limit_for(group: str) -> int:
+    def rate_limit_for(group: str, *, global_capacity: bool = False) -> int:
+        request_limit = (
+            settings.global_rate_limit_per_minute
+            if global_capacity
+            else settings.rate_limit_per_minute
+        )
         if group == "poll":
-            return max(240, settings.rate_limit_per_minute * 2)
+            return max(240, request_limit * 2)
         if group == "auth":
-            return settings.auth_rate_limit_per_minute
-        return settings.rate_limit_per_minute
+            return (
+                settings.global_auth_rate_limit_per_minute
+                if global_capacity
+                else settings.auth_rate_limit_per_minute
+            )
+        return request_limit
 
-    def allowed_request(bucket: str, *, group: str) -> bool:
+    def allowed_request(bucket: str, *, group: str, global_capacity: bool = False) -> bool:
         try:
             guard = (
                 database.operational_lock(exclusive=False, timeout_seconds=0)
@@ -449,7 +459,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else nullcontext()
             )
             with guard:
-                return service.rate_limit(f"{bucket}:{group}", limit=rate_limit_for(group))
+                return service.rate_limit(
+                    f"{bucket}:{group}",
+                    limit=rate_limit_for(group, global_capacity=global_capacity),
+                )
         except TimeoutError:
             raise
         except Exception:
@@ -482,12 +495,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ),
                     request,
                 )
-        client = request.client.host if request.client else "unknown"
-        ip_bucket = hashlib.sha256(f"ip:{client}".encode()).hexdigest()[:24]
         group = rate_group(request)
         try:
+            # Shared proxy addresses are neither tenant identities nor trusted headers.
+            # Every request spends global capacity before parsing/authentication.
             allowed = request.url.path == "/health/live" or await run_in_threadpool(
-                allowed_request, f"ip:{ip_bucket}", group=group
+                allowed_request, "global", group=group, global_capacity=True
             )
         except TimeoutError:
             return secure_response(
@@ -712,6 +725,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/auth/register", status_code=201)
     async def register(payload: Credentials, response: Response):
+        await run_in_threadpool(admit_credentials, payload.email)
         # Registration shares KDF admission with sign-in, but releases it before
         # synchronous SMTP work. The outer email slot bounds the whole request.
         try:
@@ -729,8 +743,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _cookies(response, values, settings)
         return {"ok": True}
 
+    def admit_credentials(email: str) -> None:
+        try:
+            normalized = normalize_email(email)
+        except ValueError:
+            normalized = ""
+        principal = hashlib.sha256(normalized.encode()).hexdigest()[:24]
+        if not allowed_request(f"account:{principal}", group="auth"):
+            raise ProductError("rate_limited", "Try again in a minute", 429)
+
     @app.post("/api/auth/login")
     def login(payload: Credentials, response: Response):
+        admit_credentials(payload.email)
         values = service.authenticate(payload.email, payload.password)
         _cookies(response, values, settings)
         return {"ok": True}

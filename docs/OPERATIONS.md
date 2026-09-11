@@ -17,7 +17,11 @@ The adapter's `UNRENDER_PROVIDER_TIMEOUT_SECONDS` (default 240, allowed 1–240)
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
-`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. The readiness route is covered by the client-IP admission bucket and should also be private to the platform health network; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider.
+`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. Readiness consumes the global request-capacity bucket; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider. Global exhaustion can also reject readiness, so investigate request pressure before treating it as a storage failure.
+
+Request limits use global capacity plus validated tenant/account quotas. They do
+not trust forwarding headers or depend on ASGI peer addresses. Defaults and the
+hosted ingress evidence are in [REQUEST_LIMITS.md](REQUEST_LIMITS.md).
 
 Invite users from a trusted shell on the running service with its configured data directory (Render one-off jobs do not mount the service disk):
 

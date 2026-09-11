@@ -90,6 +90,8 @@ def public_job(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, An
     result: dict[str, Any] = {
         "id": row["id"],
         "source_name": row["source_name"],
+        "display_name": row["display_name"] or row["source_name"],
+        "project_id": row["project_id"],
         "source_mime": row["source_mime"],
         "page_index": row["page_index"],
         "crop": json.loads(row["crop_json"]) if row["crop_json"] else None,
@@ -294,6 +296,7 @@ class ProductService:
 
     def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
         tables = (
+            "projects",
             "account_challenges",
             "google_identities",
             "oauth_attempts",

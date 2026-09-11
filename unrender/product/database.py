@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 SCHEMA = """
@@ -85,11 +85,22 @@ CREATE TABLE IF NOT EXISTS uploads (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS projects_user_created_idx ON projects(user_id,created_at DESC,id);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     upload_id TEXT REFERENCES uploads(id) ON DELETE SET NULL,
     source_name TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 120),
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
     source_mime TEXT NOT NULL,
     source_path TEXT NOT NULL,
     source_sha256 TEXT NOT NULL,
@@ -131,6 +142,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_user_created_idx ON jobs(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_status_created_idx ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS jobs_lease_expiry_idx ON jobs(status, lease_expires_at);
+CREATE INDEX IF NOT EXISTS jobs_project_idx ON jobs(user_id,project_id);
 
 CREATE TABLE IF NOT EXISTS result_versions (
     id TEXT PRIMARY KEY,
@@ -349,6 +361,8 @@ class Database:
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
         storage_reservations = self._columns(conn, "storage_reservations")
+        if "project_id" in jobs:
+            return 12
         if "password_enabled" in self._columns(conn, "users"):
             return 11
         if "account_active" in self._columns(conn, "users"):
@@ -410,6 +424,8 @@ class Database:
                 self._migrate_v9_to_v10(conn)
             elif version == 10:
                 self._migrate_v10_to_v11(conn)
+            elif version == 11:
+                self._migrate_v11_to_v12(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -418,6 +434,25 @@ class Database:
                 )
         self._ensure_v6_shape(conn)
         _execute_script(conn, SCHEMA)
+
+    def _migrate_v11_to_v12(self, conn: sqlite3.Connection) -> None:
+        self._migration_execute(
+            conn,
+            "CREATE TABLE IF NOT EXISTS projects ("
+            "id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),"
+            "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
+        )
+        self._add_column(
+            conn,
+            "jobs",
+            "display_name",
+            "TEXT NOT NULL DEFAULT '' CHECK (length(display_name)<=120)",
+        )
+        self._add_column(
+            conn, "jobs", "project_id", "TEXT REFERENCES projects(id) ON DELETE SET NULL"
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=12")
 
     def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
         self._add_column(

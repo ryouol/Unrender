@@ -35,6 +35,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
+from unrender.product.library_web import install_library_routes
 from unrender.product.operations import OperationsProbe
 from unrender.product.public_site import document, error_document, sitemap
 from unrender.product.scheduled_backup import ScheduledBackup
@@ -645,6 +646,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     current_user_dependency = Depends(current_user)
     csrf_user_dependency = Depends(csrf_user)
     api_user_dependency = Depends(api_user)
+    install_library_routes(app, service, current_user_dependency, csrf_user_dependency)
 
     @app.get("/")
     def index():

@@ -12,6 +12,7 @@ const state = {
   editorRows: [],
   editorSeries: [],
   editorPage: 0,
+  editorDirty: false,
   authEpoch: 0,
   authController: new AbortController(),
   principalMarker: null,
@@ -184,6 +185,17 @@ function resetViewSelection() {
   state.viewController.abort();
   state.viewController = new AbortController();
   state.viewEpoch += 1;
+  setHidden("workspace-loading", true);
+  const preview = byId("upload-preview");
+  preview.onload = null;
+  preview.onerror = null;
+  preview.removeAttribute("aria-busy");
+  for (const [id, label] of [["toggle-audit-button", "Show activity"], ["toggle-versions-button", "Show versions"]]) {
+    const button = byId(id);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = label;
+  }
 }
 
 function beginViewSelection() {
@@ -574,6 +586,9 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   state.editorRows = [];
   state.editorSeries = [];
   state.editorPage = 0;
+  state.editorDirty = false;
+  setHidden("export-completion", true);
+  byId("editor-change-note").textContent = "";
   if (clearSubmission) clearDurableJobSubmission();
   state.jobSubmissionPending = false;
   state.principalMarker = null;
@@ -604,11 +619,15 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   for (const id of ["job-source-image", "upload-preview"]) byId(id).removeAttribute("src");
   byId("file-input").value = "";
   byId("result-form").reset();
+  byId("result-form").inert = false;
+  byId("result-form").removeAttribute("aria-busy");
   byId("dropzone").removeAttribute("aria-busy");
   byId("file-input").disabled = false;
-  for (const id of ["open-sample-button", "queue-job-button", "buy-credits-button"]) {
+  for (const id of ["open-sample-button", "run-sample-button", "queue-job-button", "buy-credits-button"]) {
     byId(id).disabled = false;
   }
+  byId("run-sample-button").textContent = "Use the saved example";
+  byId("run-sample-button").removeAttribute("aria-busy");
   for (const [id, value] of [
     ["crop-left-input", 0], ["crop-top-input", 0],
     ["crop-width-input", 100], ["crop-height-input", 100],
@@ -631,12 +650,18 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   setHidden("version-list", true);
 }
 
+function routeTo(path) {
+  if (window.location?.pathname !== path) window.history?.replaceState(null, "", path);
+}
+
 function showPublic({ clearCsrf = true, clearSubmission = true } = {}) {
   resetPrivateState({ clearCsrf, clearSubmission });
+  setHidden("boot-notice", true);
   setHidden("marketing-view", false);
   setHidden("workspace-view", true);
   setHidden("account-bar", true);
   setHidden("public-nav", false);
+  switchAuth(window.location?.pathname === "/signup" ? "register" : "login", { focus: false });
   updateLogoutGate();
 }
 
@@ -646,21 +671,23 @@ function applyPublicConfig() {
     byId("upload-limits").textContent = `PNG, JPEG, WebP, or PDF up to ${config.max_upload_bytes / (1024 * 1024)} MB · Images up to ${config.max_image_pixels / 1000000} MP · PDFs up to ${config.max_pdf_pages} pages`;
   }
   const registrationOpen = state.publicConfig.registration_open;
-  byId("account-help-links").hidden = !state.publicConfig.email_available;
+  byId("account-help-links").hidden = false;
+  byId("resend-verification-link").hidden = !state.publicConfig.email_available;
   byId("register-tab").hidden = !registrationOpen;
   byId("open-sample-button").hidden = !state.publicConfig.sample_available;
-  byId("show-register-button").textContent = registrationOpen
-    ? "Create a workspace"
-    : "Sign in to a workspace";
-  if (!registrationOpen && byId("login-form").hidden) switchAuth("login");
+  if (!state.account) switchAuth(window.location?.pathname === "/signup" ? "register" : "login", { focus: false });
 }
 
 function showWorkspace() {
+  setHidden("boot-notice", true);
+  routeTo("/app");
+  document.title = "Workspace — Unrender";
   setHidden("marketing-view", true);
   setHidden("workspace-view", false);
   setHidden("account-bar", false);
   setHidden("public-nav", true);
   const isolatedDemo = state.account.demo_account;
+  byId("run-sample-button").hidden = !state.account.demo_mode;
   byId("account-email").textContent = isolatedDemo ? "Ephemeral sample" : state.account.email;
   byId("credit-count").textContent = isolatedDemo
     ? "Isolated demo"
@@ -792,22 +819,28 @@ async function boot() {
   }
   try {
     await reconcilePrincipal();
-    if (!state.account) return;
+    if (!state.account) showPublic({ clearCsrf: false });
   } catch (error) {
     if (error.status === 401) showPublic();
     else showError("auth-error", error);
   }
 }
 
-function switchAuth(mode) {
+function switchAuth(mode, { focus = true } = {}) {
   const login = mode === "login";
+  const invitationOnly = !login && !state.publicConfig.registration_open;
+  routeTo(login ? "/login" : "/signup");
+  document.title = `${login ? "Sign in" : "Create a workspace"} — Unrender`;
   byId("login-tab").setAttribute("aria-selected", String(login));
   byId("register-tab").setAttribute("aria-selected", String(!login));
   setHidden("login-form", !login);
-  setHidden("register-form", login);
+  setHidden("register-form", login || invitationOnly);
+  byId("auth-title").textContent = login ? "Welcome back." : invitationOnly ? "Your next chart starts here." : "Create your workspace.";
+  byId("auth-description").textContent = login ? "Sign in to your workspace."
+    : invitationOnly ? "Unrender is available by invitation during the pilot. Use the setup link from your inviter, or explore the example first."
+    : "Turn your charts into data you can work with.";
   clearError("auth-error");
-  const form = byId(login ? "login-form" : "register-form");
-  form.querySelector("input").focus();
+  if (focus && !invitationOnly) byId(login ? "login-form" : "register-form").querySelector("input").focus();
 }
 
 async function submitAuth(event, mode) {
@@ -1009,7 +1042,7 @@ function renderJobList() {
   if (!state.jobs.length) {
     const empty = document.createElement("p");
     empty.className = "job-list-empty";
-    empty.textContent = "No extractions yet. Start with an image, a PDF page, or the saved sample.";
+    empty.textContent = "Your charts will appear here. Start with an image or a PDF page.";
     list.append(empty);
     return;
   }
@@ -1034,6 +1067,7 @@ function renderJobList() {
 }
 
 function startUpload() {
+  if (!discardEditorChanges()) return;
   stopPolling();
   resetViewSelection();
   state.upload = null;
@@ -1079,8 +1113,26 @@ async function prepareFile(file) {
 function updateUploadPreview() {
   if (!state.upload) return;
   const preview = byId("upload-preview");
-  preview.src = `/api/uploads/${routeSegment(state.upload.id)}/pages/${Number(state.uploadPage)}`;
-  byId("page-counter").textContent = `Page ${state.uploadPage + 1} of ${state.upload.page_count}`;
+  const upload = state.upload;
+  const page = state.uploadPage;
+  const viewEpoch = state.viewEpoch;
+  const authEpoch = state.authEpoch;
+  const label = `Page ${page + 1} of ${upload.page_count}`;
+  const finish = (failed) => {
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch
+      || state.upload !== upload || state.uploadPage !== page) return;
+    preview.removeAttribute("aria-busy");
+    preview.onload = null;
+    preview.onerror = null;
+    byId("page-counter").textContent = failed ? `${label} — preview unavailable` : label;
+    if (failed) showError("upload-error", new Error("The page preview could not load. Choose the page again or upload the file again."));
+  };
+  clearError("upload-error");
+  preview.setAttribute("aria-busy", "true");
+  byId("page-counter").textContent = `Loading ${label.toLowerCase()}…`;
+  preview.onload = () => finish(false);
+  preview.onerror = () => finish(true);
+  preview.src = `/api/uploads/${routeSegment(upload.id)}/pages/${Number(page)}`;
   byId("previous-page-button").disabled = state.uploadPage === 0;
   byId("next-page-button").disabled = state.uploadPage >= state.upload.page_count - 1;
   clearCrop();
@@ -1256,6 +1308,13 @@ async function queueCurrentUpload() {
 }
 
 async function runSample() {
+  const button = byId("run-sample-button");
+  if (button.disabled) return;
+  const authEpoch = state.authEpoch;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Opening saved example…";
+  button.setAttribute("aria-busy", "true");
   try {
     const upload = await api("/api/uploads/demo", { method: "POST" });
     const job = await api("/api/jobs", {
@@ -1268,12 +1327,25 @@ async function runSample() {
     await openJob(job.id);
   } catch (error) {
     showToast(error);
+  } finally {
+    if (authEpoch === state.authEpoch) {
+      button.disabled = false;
+      button.textContent = label;
+      button.removeAttribute("aria-busy");
+    }
   }
 }
 
 async function openJob(jobId, { throwOnError = false } = {}) {
+  if (state.editorDirty && state.currentJob?.id === jobId) return state.currentJob;
+  if (!discardEditorChanges()) return null;
   stopPolling();
   const view = beginViewSelection();
+  const authEpoch = state.authEpoch;
+  if (state.currentJob?.id !== jobId) {
+    byId("workspace-loading").textContent = "Opening chart…";
+    setHidden("workspace-loading", false);
+  }
   try {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
@@ -1303,6 +1375,8 @@ async function openJob(jobId, { throwOnError = false } = {}) {
       showToast(error);
     }
     return null;
+  } finally {
+    if (authEpoch === state.authEpoch && view.epoch === state.viewEpoch) setHidden("workspace-loading", true);
   }
 }
 
@@ -1332,7 +1406,7 @@ function renderJob() {
   if (!job) return;
   byId("job-status").textContent = statusLabel(job.status);
   byId("job-title").textContent = job.source_name;
-  byId("job-meta").textContent = `${job.progress_stage} · Attempt ${job.attempt} · ${formatDate(job.updated_at)}`;
+  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
   byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
   const error = byId("job-error");
@@ -1348,6 +1422,17 @@ function renderJob() {
   setHidden("result-form", !resultReady);
   byId("result-loading").textContent = job.error?.message || job.progress_stage;
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
+  setHidden("export-completion", true);
+  const currentStep = job.status === "approved" ? "export" : resultReady ? "review" : "extract";
+  let completed = true;
+  for (const step of byId("workflow-steps").querySelectorAll("[data-step]")) {
+    const current = step.dataset.step === currentStep;
+    if (current) completed = false;
+    step.classList.toggle("is-complete", completed);
+    step.classList.toggle("is-current", current);
+    if (current) step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
+  }
   if (resultReady) renderEditor(job.result);
   renderJobActions();
   setHidden("audit-list", true);
@@ -1361,28 +1446,63 @@ function renderJobActions() {
   const actions = byId("job-actions");
   actions.replaceChildren();
   if (["queued", "running"].includes(job.status)) {
-    actions.append(actionButton("Cancel", "button-secondary", () => jobMutation("cancel")));
+    actions.append(actionButton("Cancel extraction", "button-secondary", () => jobMutation("cancel")));
     return;
   }
-  if (job.status === "review") {
-    actions.append(actionButton("Approve result", "button-primary", () => jobMutation("approve")));
+  if (job.status === "review" || (job.status === "approved" && state.editorDirty)) {
+    actions.append(actionButton("Save & approve", "button-primary", async () => {
+      if (state.currentJob?.id !== job.id) return;
+      if (state.editorDirty) await saveCorrections(null, { approve: true });
+      else await jobMutation("approve");
+    }));
   }
   if (["review", "approved"].includes(job.status)) {
-    for (const format of ["CSV", "JSON", "XLSX"]) {
-      const button = actionButton(`Export ${format}`, "button-secondary", () => downloadExport(job, format.toLowerCase()));
-      actions.append(button);
+    if (job.status === "approved" && !state.editorDirty) {
+      actions.append(actionButton("Download workbook", "button-primary", () => downloadExport(job, "xlsx")));
     }
-    actions.append(actionButton("Reprocess", "button-quiet", () => jobMutation("reprocess")));
-  }
-  if (["failed", "cancelled"].includes(job.status)) {
-    actions.append(actionButton("Try again", "button-primary", () => jobMutation("reprocess")));
-  }
-  if (!["queued", "running"].includes(job.status)) {
-    actions.append(actionButton("Delete", "button-danger", deleteCurrentJob));
+    const more = document.createElement("details");
+    more.className = "action-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "More";
+    summary.setAttribute("aria-label", "More chart actions");
+    more.append(summary);
+    const menu = document.createElement("div");
+    menu.className = "action-menu-content";
+    for (const format of job.status === "review" ? ["XLSX", "CSV", "JSON"] : ["CSV", "JSON"]) {
+      menu.append(actionButton(`${job.status === "review" ? "Export draft" : "Download"} ${format}`, "button-quiet", () => downloadExport(job, format.toLowerCase())));
+    }
+    menu.append(actionButton("Reprocess · 1 credit", "button-quiet", () => jobMutation("reprocess")));
+    menu.append(actionButton("Delete chart", "button-danger", deleteCurrentJob));
+    more.append(menu);
+    actions.append(more);
+  } else if (["failed", "cancelled"].includes(job.status)) {
+    actions.append(actionButton("Try again · 1 credit", "button-primary", () => jobMutation("reprocess")));
+    actions.append(actionButton("Delete chart", "button-danger", deleteCurrentJob));
   }
 }
 
+function markEditorDirty() {
+  if (state.editorDirty) return;
+  state.editorDirty = true;
+  byId("editor-change-note").textContent = "Unsaved changes";
+  byId("edit-state").textContent = "Needs review";
+  setHidden("export-completion", true);
+  if (state.currentJob) renderJobActions();
+}
+
+function discardEditorChanges() {
+  if (!state.editorDirty) return true;
+  if (!window.confirm("Leave without saving your corrections? Your last saved version will be kept.")) return false;
+  if (state.currentJob?.result) renderJob();
+  state.editorDirty = false;
+  return true;
+}
+
 async function downloadExport(job, format) {
+  if (state.editorDirty) {
+    showToast("Save your corrections before exporting so the download includes your changes.");
+    return;
+  }
   const authEpoch = state.authEpoch;
   const authRecord = readDurableAuthRecord();
   const principal = state.principalMarker;
@@ -1413,6 +1533,7 @@ async function downloadExport(job, format) {
       || state.viewEpoch !== viewEpoch
       || state.currentJob !== job
       || signal.aborted) throw staleAuthError();
+    if (state.editorDirty) throw new Error("The table changed during export. Save your corrections and download again.");
     objectUrl = URL.createObjectURL(blob);
     state.objectUrls.add(objectUrl);
     if (!authContextMatches(authEpoch, authRecord)
@@ -1425,6 +1546,8 @@ async function downloadExport(job, format) {
     document.body?.append(anchor);
     anchor.click();
     anchor.remove();
+    setHidden("export-completion", false);
+    showToast("Download started. Check your browser’s downloads.");
   } catch (error) {
     if (!isStaleRequest(error)) showToast(error);
   } finally {
@@ -1438,8 +1561,16 @@ async function downloadExport(job, format) {
 async function jobMutation(action) {
   const job = state.currentJob;
   if (!job) return;
+  if (state.editorDirty) {
+    showToast("Save your corrections before changing this extraction.");
+    return;
+  }
   const viewEpoch = state.viewEpoch;
   const signal = state.viewController.signal;
+  const form = byId("result-form");
+  if (form.getAttribute("aria-busy") === "true") return;
+  form.setAttribute("aria-busy", "true");
+  form.inert = true;
   try {
     const updated = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, {
       method: "POST", signal,
@@ -1447,7 +1578,9 @@ async function jobMutation(action) {
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     state.currentJob = updated;
     await refreshAccount();
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     await loadJobs();
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     renderJob();
     if (["queued", "running"].includes(state.currentJob.status)) {
       state.pollDelay = 1500;
@@ -1456,6 +1589,11 @@ async function jobMutation(action) {
     showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
   } catch (error) {
     showToast(error);
+  } finally {
+    if (viewEpoch === state.viewEpoch) {
+      form.inert = false;
+      form.removeAttribute("aria-busy");
+    }
   }
 }
 
@@ -1463,15 +1601,35 @@ async function deleteCurrentJob() {
   const job = state.currentJob;
   if (!job || !window.confirm("Delete this source, result, and audit trail? This cannot be undone.")) return;
   const viewEpoch = state.viewEpoch;
+  const authEpoch = state.authEpoch;
   try {
     const deletion = await api(`/api/jobs/${routeSegment(job.id)}`, {
       method: "DELETE", signal: state.viewController.signal,
     });
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    const view = beginViewSelection();
     state.currentJob = null;
+    state.editorDirty = false;
+    state.editorRows = [];
+    state.editorSeries = [];
+    state.editorPage = 0;
+    state.jobs = state.jobs.filter((item) => item.id !== job.id);
+    byId("result-form").reset();
+    byId("result-form").inert = false;
+    byId("result-form").removeAttribute("aria-busy");
+    byId("job-source-image").removeAttribute("src");
+    for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) {
+      byId(id).replaceChildren();
+    }
+    for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "result-loading"]) {
+      byId(id).textContent = "";
+    }
+    for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);
+    renderJobList();
+    showMainView("empty-view");
     await loadJobs();
-    if (state.jobs.length) await openJob(state.jobs[0].id);
-    else showMainView("empty-view");
+    if (authEpoch !== state.authEpoch || view.epoch !== state.viewEpoch || state.currentJob) throw staleAuthError();
+    if (state.jobs.length && !await openJob(state.jobs[0].id)) return;
     showToast(deletion?.status === "deletion_queued"
       ? "Extraction hidden; source deletion will retry automatically"
       : "Extraction deleted");
@@ -1512,6 +1670,10 @@ function renderSeriesEditor() {
 }
 
 function renderEditor(result) {
+  byId("result-form").inert = false;
+  byId("result-form").removeAttribute("aria-busy");
+  state.editorDirty = false;
+  byId("editor-change-note").textContent = "";
   byId("chart-type-input").replaceChildren(...chartTypes.map((type) => {
     const option = document.createElement("option");
     option.value = type;
@@ -1534,6 +1696,7 @@ function renderEditor(result) {
 
 function renderResultTable() {
   const table = byId("result-table");
+  table.classList.toggle("single-series", state.editorSeries.length === 1);
   table.replaceChildren();
   const head = document.createElement("thead");
   const heading = document.createElement("tr");
@@ -1589,6 +1752,7 @@ function renderResultTable() {
     remove.addEventListener("click", () => {
       collectEditorRows();
       state.editorRows.splice(rowIndex, 1);
+      markEditorDirty();
       const pageCount = Math.max(1, Math.ceil(state.editorRows.length / EDITOR_PAGE_SIZE));
       state.editorPage = Math.min(state.editorPage, pageCount - 1);
       renderResultTable();
@@ -1643,9 +1807,10 @@ function addEditorRow() {
     return;
   }
   state.editorRows.push({ seriesIndex: 0, x: "", xType: "string", y: "" });
+  markEditorDirty();
   state.editorPage = Math.floor((state.editorRows.length - 1) / EDITOR_PAGE_SIZE);
   renderResultTable();
-  byId("result-table").tBodies[0].lastElementChild.querySelector("input").focus();
+  byId("result-table").tBodies[0].lastElementChild.querySelector('[data-kind="x"]').focus();
 }
 
 function coerceX(value, xType) {
@@ -1678,41 +1843,66 @@ function buildEditedResult() {
   };
 }
 
-async function saveCorrections(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if (form.getAttribute("aria-busy") === "true") return;
+async function saveCorrections(event, { approve = false } = {}) {
+  event?.preventDefault();
+  const form = byId("result-form");
+  if (form.getAttribute("aria-busy") === "true") return false;
+  if (!form.reportValidity()) return false;
   const jobId = state.currentJob?.id;
   const viewEpoch = state.viewEpoch;
-  if (!jobId) return;
+  const authEpoch = state.authEpoch;
+  const signal = state.viewController.signal;
+  if (!jobId) return false;
   form.setAttribute("aria-busy", "true");
+  form.inert = true;
+  let saved = false;
   try {
     const result = buildEditedResult();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result }, signal: state.viewController.signal,
+      method: "PATCH", body: { result }, signal,
     });
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
+    saved = true;
+    if (approve) {
+      const approved = await api(`/api/jobs/${routeSegment(jobId)}/approve`, { method: "POST", signal });
+      if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+      state.currentJob = approved;
+    }
     await loadJobs();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     renderJob();
-    showToast("Corrections saved to the audit trail");
+    showToast(approve ? "Corrections saved and result approved" : "Corrections saved to the audit trail");
+    return true;
   } catch (error) {
+    if (approve && saved && authEpoch === state.authEpoch
+      && viewEpoch === state.viewEpoch && state.currentJob?.id === jobId) renderJob();
     showToast(error);
+    return false;
   } finally {
-    form.removeAttribute("aria-busy");
+    if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
+      form.inert = false;
+      form.removeAttribute("aria-busy");
+    }
   }
 }
 
 async function toggleAudit() {
   const list = byId("audit-list");
+  const button = byId("toggle-audit-button");
+  if (button.disabled) return;
   if (!list.hidden) {
     list.hidden = true;
     byId("toggle-audit-button").textContent = "Show activity";
     return;
   }
+  const authEpoch = state.authEpoch;
+  const viewEpoch = state.viewEpoch;
+  button.disabled = true;
+  button.textContent = "Loading activity…";
+  button.setAttribute("aria-busy", "true");
   try {
     const jobId = state.currentJob.id;
-    const viewEpoch = state.viewEpoch;
     const signal = state.viewController.signal;
     const items = [];
     const rollups = [];
@@ -1741,28 +1931,48 @@ async function toggleAudit() {
     byId("toggle-audit-button").textContent = "Hide activity";
   } catch (error) {
     showToast(error);
+  } finally {
+    if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = list.hidden ? "Show activity" : "Hide activity";
+    }
   }
 }
 
 async function restoreVersion(version) {
   const jobId = state.currentJob?.id;
   const viewEpoch = state.viewEpoch;
-  if (!jobId) return;
+  const signal = state.viewController.signal;
+  const form = byId("result-form");
+  if (!jobId || form.getAttribute("aria-busy") === "true") return;
+  if (state.editorDirty) {
+    showToast("Save your corrections before restoring a version.");
+    return;
+  }
+  form.setAttribute("aria-busy", "true");
+  form.inert = true;
   try {
     const saved = await api(
-      `/api/jobs/${routeSegment(jobId)}/versions/${routeSegment(version.version)}`,
-      { signal: state.viewController.signal },
+      `/api/jobs/${routeSegment(jobId)}/versions/${routeSegment(version.version)}`, { signal },
     );
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result: saved.result }, signal: state.viewController.signal,
+      method: "PATCH", body: { result: saved.result }, signal,
     });
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
     await loadJobs();
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     renderJob();
     showToast(`Version ${version.version} restored as a new correction`);
   } catch (error) {
     showToast(error);
+  } finally {
+    if (viewEpoch === state.viewEpoch) {
+      form.inert = false;
+      form.removeAttribute("aria-busy");
+    }
   }
 }
 
@@ -1818,13 +2028,21 @@ async function loadVersions(before = null, append = false) {
 
 async function toggleVersions() {
   const list = byId("version-list");
+  const button = byId("toggle-versions-button");
+  if (button.disabled) return;
   if (!list.hidden) {
     list.hidden = true;
     byId("toggle-versions-button").textContent = "Show versions";
     return;
   }
+  const authEpoch = state.authEpoch;
+  const viewEpoch = state.viewEpoch;
+  button.disabled = true;
+  button.textContent = "Loading versions…";
+  button.setAttribute("aria-busy", "true");
   try {
     const count = await loadVersions();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch) throw staleAuthError();
     if (!count) {
       const empty = document.createElement("li");
       empty.textContent = "No extracted result yet.";
@@ -1834,6 +2052,12 @@ async function toggleVersions() {
     byId("toggle-versions-button").textContent = "Hide versions";
   } catch (error) {
     showToast(error);
+  } finally {
+    if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = list.hidden ? "Show versions" : "Hide versions";
+    }
   }
 }
 
@@ -1848,11 +2072,16 @@ async function openKeyDialog() {
 }
 
 async function loadApiKeys({ dialogEpoch = state.keyDialogEpoch } = {}) {
+  if (dialogEpoch !== state.keyDialogEpoch || !byId("api-key-dialog").open) return;
   const list = byId("api-key-list");
   const authEpoch = state.authEpoch;
   const principal = state.principalMarker;
   const listEpoch = ++state.keyListEpoch;
   const signal = state.keyController.signal;
+  const pending = document.createElement("li");
+  pending.textContent = "Loading API keys…";
+  pending.setAttribute("role", "status");
+  list.replaceChildren(pending);
   try {
     const keys = [];
     let cursor = null;
@@ -1895,7 +2124,9 @@ async function loadApiKeys({ dialogEpoch = state.keyDialogEpoch } = {}) {
       list.append(item);
     }
   } catch (error) {
-    if (isStaleRequest(error)) return;
+    if (isStaleRequest(error) || authEpoch !== state.authEpoch || principal !== state.principalMarker
+      || dialogEpoch !== state.keyDialogEpoch || listEpoch !== state.keyListEpoch
+      || signal.aborted || !byId("api-key-dialog").open) return;
     list.replaceChildren();
     const failed = document.createElement("li");
     failed.textContent = error.message;
@@ -2013,18 +2244,21 @@ function bindEvents() {
   });
   byId("login-tab").addEventListener("click", () => switchAuth("login"));
   byId("register-tab").addEventListener("click", () => switchAuth("register"));
-  byId("show-register-button").addEventListener("click", () => {
-    switchAuth(state.publicConfig.registration_open ? "register" : "login");
-    byId("auth-title").scrollIntoView();
-  });
   byId("login-form").addEventListener("submit", (event) => submitAuth(event, "login"));
   byId("register-form").addEventListener("submit", (event) => submitAuth(event, "register"));
   byId("open-sample-button").addEventListener("click", demoLoginAndRun);
   byId("logout-button").addEventListener("click", logout);
   byId("retry-logout-button").addEventListener("click", logout);
-  byId("home-button").addEventListener("click", () => {
-    if (state.account) showMainView(state.jobs.length ? "job-view" : "empty-view");
-    else showPublic();
+  byId("home-button").addEventListener("click", (event) => {
+    if (!discardEditorChanges()) event.preventDefault();
+  });
+  byId("export-another-button").addEventListener("click", startUpload);
+  byId("result-form").addEventListener("input", markEditorDirty);
+  byId("result-form").addEventListener("change", markEditorDirty);
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.editorDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
   });
   for (const id of ["new-upload-button", "empty-upload-button"]) byId(id).addEventListener("click", startUpload);
   byId("cancel-upload-button").addEventListener("click", () => {

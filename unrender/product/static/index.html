@@ -3,71 +3,60 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Review chart extraction against its source, correct the table, and export an auditable result.">
     <title>Unrender — reviewed chart data</title>
     <link rel="stylesheet" href="/static/app.css">
     <script src="/static/app.js" defer></script>
   </head>
-  <body>
+  <body class="product-shell">
     <a class="skip-link" href="#main">Skip to main content</a>
 
     <header class="site-header">
-      <button class="wordmark" id="home-button" type="button" aria-label="Unrender home">Unrender</button>
+      <a class="wordmark" id="home-button" href="/" aria-label="Unrender home"><img src="/static/icons/icon-192.png" width="30" height="30" alt=""><span>Unrender</span></a>
       <div class="header-actions" id="account-bar" hidden>
         <span class="credits" id="credit-count"></span>
         <button class="button button-quiet" id="buy-credits-button" type="button" hidden>Buy credits</button>
         <span class="account-email" id="account-email"></span>
         <button class="button button-quiet" id="logout-button" type="button">Sign out everywhere</button>
       </div>
-      <nav class="public-nav" id="public-nav" aria-label="Legal">
-        <a href="/privacy">Privacy</a>
-        <a href="/terms">Terms</a>
+      <nav class="public-nav" id="public-nav" aria-label="Account">
+        <a href="/login">Sign in</a>
+        <a href="/signup">Create workspace</a>
       </nav>
+      <label class="theme-control"><span class="visually-hidden">Appearance</span><select data-theme-picker aria-label="Appearance"><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></label>
     </header>
 
     <main id="main">
-      <section class="marketing" id="marketing-view">
-        <div class="hero-copy">
-          <p class="eyebrow">Chart digitization with a review gate</p>
-          <h1>Turn a chart into a table you can defend.</h1>
-          <p class="lede">Upload an image or PDF. Check every extracted value beside the source. Correct it, approve it, and export the record.</p>
-          <div class="hero-actions">
-            <button class="button button-primary" id="open-sample-button" type="button" hidden>Open the reviewed sample</button>
-            <button class="button button-secondary" id="show-register-button" type="button">Sign in to a workspace</button>
-          </div>
-          <p class="evidence-note">The sample is a saved verification fixture. It exercises the real review and export workflow without using paid GPU inference.</p>
-        </div>
-        <figure class="source-example">
-          <img src="/static/demo/budget-quarter.webp" srcset="/static/demo/budget-quarter-small.webp 240w, /static/demo/budget-quarter.webp 374w" sizes="(max-width: 980px) 90vw, 45vw" width="374" height="273" decoding="async" alt="Horizontal bar chart titled Budget by Quarter">
-          <figcaption>
-            <span>Source stays visible</span>
-            <span>Edits are versioned</span>
-            <span>XLSX includes model and approval metadata</span>
-          </figcaption>
-        </figure>
+      <p class="boot-notice" id="boot-notice" role="status">Opening your workspace…</p>
+      <section class="marketing account-screen" id="marketing-view" hidden>
         <section class="auth-panel" aria-labelledby="auth-title">
           <div class="auth-tabs" role="tablist" aria-label="Account action">
             <button id="login-tab" role="tab" aria-selected="true" aria-controls="login-form" type="button">Sign in</button>
-            <button id="register-tab" role="tab" aria-selected="false" aria-controls="register-form" type="button" hidden>Create account</button>
+            <button id="register-tab" role="tab" aria-selected="false" aria-controls="register-form" type="button" hidden>Create workspace</button>
           </div>
-          <h2 id="auth-title">Continue to your workspace</h2>
+          <div class="auth-heading">
+            <h1 id="auth-title">Welcome back.</h1>
+            <p id="auth-description">Sign in to your workspace.</p>
+          </div>
           <form id="login-form">
-            <label>Email<input name="email" type="email" autocomplete="email" required></label>
-            <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+            <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@domain.com" required></label>
+            <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="Your password" required></label>
             <button class="button button-primary" type="submit">Sign in</button>
           </form>
           <form id="register-form" hidden>
-            <label>Email<input name="email" type="email" autocomplete="email" required></label>
-            <label>Password <span class="label-hint">12 characters minimum</span><input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+            <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@domain.com" required></label>
+            <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Create a password" aria-describedby="password-hint" required><span class="label-hint" id="password-hint">Use at least 12 characters.</span></label>
             <button class="button button-primary" type="submit">Create workspace</button>
           </form>
           <div id="logout-retry-panel" class="form-error" role="alert" hidden>
             <p id="logout-status">Account-wide sign-out could not be confirmed.</p>
             <button class="button button-secondary" id="retry-logout-button" type="button">Retry sign out everywhere</button>
           </div>
-          <p id="account-help-links" hidden><a href="/account">Forgot password?</a> · <a href="/account?mode=verify">Resend verification email</a></p>
-          <p id="auth-notice" role="status" hidden></p>
+          <p id="account-help-links" class="auth-help" hidden><a href="/account">Need help signing in?</a><a id="resend-verification-link" href="/account?mode=verify">Resend verification email</a></p>
+          <p id="auth-notice" class="form-notice" role="status" hidden></p>
           <p class="form-error" id="auth-error" role="alert" hidden></p>
+          <p class="auth-help"><a href="/#example">Explore an example</a></p>
+          <p class="invitation-note">Have an invitation? Use the setup link from your inviter to choose your password.</p>
+          <button class="button button-secondary auth-sample" id="open-sample-button" type="button" hidden>Run saved model replay</button>
         </section>
       </section>
 
@@ -76,9 +65,9 @@
           <div class="sidebar-heading">
             <div>
               <p class="eyebrow">Workspace</p>
-              <h2>Extractions</h2>
+              <h2>My charts</h2>
             </div>
-            <button class="button button-primary" id="new-upload-button" type="button">Upload chart</button>
+            <button class="button button-secondary" id="new-upload-button" type="button"><img class="ui-icon" src="/static/icons/plus.svg" width="18" height="18" alt="">Upload chart</button>
           </div>
           <div class="job-list" id="job-list"></div>
           <div class="sidebar-footer">
@@ -87,15 +76,16 @@
         </aside>
 
         <section class="workspace-main" id="workspace-main">
+          <p class="form-notice" id="workspace-loading" role="status" hidden></p>
           <section class="empty-state" id="empty-view">
-            <p class="eyebrow">Start with one chart</p>
-            <h2>Keep the source and the table together.</h2>
+            <p class="eyebrow">Your first extraction</p>
+            <h2>Start with one chart.</h2>
             <p id="workspace-access-note" role="status" hidden></p>
             <p id="retention-note"></p>
-            <p>Choose an image or PDF page. Crop to one chart when needed. Extraction runs as a durable job and waits for your approval.</p>
+            <p>Upload an image or PDF. We’ll extract a table for you to check against the source.</p>
             <div class="empty-actions">
-              <button class="button button-primary" id="empty-upload-button" type="button">Upload a chart</button>
-              <button class="button button-secondary" id="run-sample-button" type="button">Run saved sample</button>
+              <button class="button button-primary" id="empty-upload-button" type="button">Choose a chart</button>
+              <button class="button button-secondary" id="run-sample-button" type="button">Use the saved example</button>
             </div>
           </section>
 
@@ -103,13 +93,15 @@
             <div class="view-heading">
               <div>
                 <p class="eyebrow">New extraction</p>
-                <h2 id="upload-title">Select the chart to extract</h2>
+                <h2 id="upload-title">Choose your chart.</h2>
               </div>
               <button class="button button-quiet" id="cancel-upload-button" type="button">Close</button>
             </div>
             <label class="dropzone" id="dropzone">
               <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
-              <strong>Drop an image or PDF here, or click to choose</strong>
+              <img class="ui-icon upload-icon" src="/static/icons/upload.svg" width="34" height="34" alt="">
+              <strong>Choose a chart</strong>
+              <span>Drop an image or PDF here, or click to browse.</span>
               <span id="upload-limits">PNG, JPEG, WebP, or PDF</span>
             </label>
             <div class="upload-error" id="upload-error" role="alert" hidden></div>
@@ -123,6 +115,7 @@
                 <button class="text-button" id="clear-crop-button" type="button">Use whole page</button>
               </div>
               <p class="crop-instruction">If the page contains several charts, drag over the one you want. The original file is still retained.</p>
+              <details class="crop-options"><summary>Set crop with keyboard</summary>
               <fieldset class="crop-fields">
                 <legend>Keyboard crop (percent of source)</legend>
                 <label>Left<input id="crop-left-input" type="number" min="0" max="95" step="1" value="0"></label>
@@ -131,12 +124,13 @@
                 <label>Height<input id="crop-height-input" type="number" min="5" max="100" step="1" value="100"></label>
                 <button class="button button-secondary" id="apply-crop-button" type="button">Apply crop</button>
               </fieldset>
+              </details>
               <div class="crop-stage" id="crop-stage">
                 <img id="upload-preview" alt="Selected upload page">
                 <div class="crop-selection" id="crop-selection" hidden></div>
               </div>
               <div class="flow-footer">
-                <p>One credit is reserved. It is returned only if the attempt stops before provider dispatch; a dispatched attempt consumes the credit.</p>
+                <p>One credit per attempt. Once the chart is sent for extraction, the credit is used even if the attempt fails.</p>
                 <button class="button button-primary" id="queue-job-button" type="button">Extract selected chart</button>
               </div>
             </div>
@@ -151,20 +145,30 @@
               </div>
               <div class="command-actions" id="job-actions"></div>
             </div>
+            <ol class="workflow-steps" id="workflow-steps" aria-label="Extraction progress">
+              <li data-step="upload"><span class="step-number" aria-hidden="true">1</span>Upload</li>
+              <li data-step="extract"><span class="step-number" aria-hidden="true">2</span>Extract</li>
+              <li data-step="review"><span class="step-number" aria-hidden="true">3</span>Review</li>
+              <li data-step="export"><span class="step-number" aria-hidden="true">4</span>Export</li>
+            </ol>
+            <section class="export-completion" id="export-completion" hidden aria-labelledby="export-completion-title">
+              <div><h3 id="export-completion-title">Download started</h3><p>Your export records the review state. XLSX includes model and approval metadata in its audit sheet.</p></div>
+              <button class="button button-secondary" id="export-another-button" type="button">Extract another chart</button>
+            </section>
             <div class="job-error" id="job-error" role="alert" hidden></div>
             <div class="review-notice" id="review-notice" hidden>
-              This is extracted data, not verified data. Compare every row with the source before approval.
+              Check every value against the source before you approve this result.
             </div>
             <div class="review-layout">
               <section class="source-pane" aria-labelledby="source-heading">
-                <div class="pane-heading"><h3 id="source-heading">Source</h3><span id="source-page-label"></span></div>
-                <label class="source-zoom-control">Source magnification<select id="source-zoom"><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label>
+                <div class="pane-heading"><div><h3 id="source-heading">Source image</h3><span id="source-page-label"></span></div><label class="source-zoom-control"><span class="visually-hidden">Source magnification</span><select id="source-zoom"><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label></div>
                 <div class="source-canvas" tabindex="0" aria-label="Source chart; scroll to inspect when magnified"><img id="job-source-image" alt="Source chart selected for extraction"></div>
               </section>
               <section class="result-pane" aria-labelledby="result-heading">
-                <div class="pane-heading"><h3 id="result-heading">Editable table</h3><span id="edit-state"></span></div>
+                <div class="pane-heading"><h3 id="result-heading">Extracted data</h3><div class="editor-status"><span id="editor-change-note" role="status"></span><span id="edit-state"></span></div></div>
                 <div class="result-loading" id="result-loading">Waiting for the extraction worker.</div>
                 <form id="result-form" hidden>
+                  <details class="metadata-details"><summary>Chart details</summary>
                   <div class="metadata-grid">
                     <label>Chart type<select id="chart-type-input"></select></label>
                     <label>Title<input id="chart-title-input" type="text"></label>
@@ -176,6 +180,7 @@
                     <legend>Series names</legend>
                     <div class="series-editor-list" id="series-editor-list"></div>
                   </fieldset>
+                  </details>
                   <div class="table-scroll"><table class="data-table" id="result-table"></table></div>
                   <div class="editor-pagination" aria-label="Result value pages">
                     <button class="text-button" id="editor-previous-page" type="button">Previous values</button>
@@ -184,7 +189,7 @@
                   </div>
                   <div class="editor-actions">
                     <button class="button button-secondary" id="add-row-button" type="button">Add row</button>
-                    <button class="button button-primary" type="submit">Save corrections</button>
+                    <button class="button button-secondary" type="submit">Save corrections</button>
                   </div>
                 </form>
               </section>

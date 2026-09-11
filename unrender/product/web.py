@@ -62,7 +62,7 @@ def _security_headers(path: str, *, secure_cookies: bool) -> dict[str, str]:
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Resource-Policy": "same-origin",
         "Content-Security-Policy": (
-            "default-src 'self'; img-src 'self'; style-src 'self'; "
+            "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
             "script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
             "base-uri 'self'; form-action 'self'"
         ),
@@ -1031,9 +1031,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.get_job(user_id=user["id"], job_id=job_id)
 
     @app.get("/api/jobs/{job_id}/source")
-    def job_source(job_id: str, user: Any = current_user_dependency):
+    def job_source(job_id: str, thumbnail: bool = False, user: Any = current_user_dependency):
         return Response(
-            service.job_source(user_id=user["id"], job_id=job_id), media_type="image/png"
+            service.job_source(user_id=user["id"], job_id=job_id, thumbnail=thumbnail),
+            media_type="image/png",
         )
 
     @app.get("/api/jobs/{job_id}/audit")

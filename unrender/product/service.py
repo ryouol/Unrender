@@ -2268,7 +2268,7 @@ class ProductService:
     def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
         return public_job(self._job_row(user_id=user_id, job_id=job_id))
 
-    def job_source(self, *, user_id: str, job_id: str) -> bytes:
+    def job_source(self, *, user_id: str, job_id: str, thumbnail: bool = False) -> bytes:
         row = self._job_row(user_id=user_id, job_id=job_id)
         try:
             return self.storage.page_png(
@@ -2276,7 +2276,7 @@ class ProductService:
                 mime_type=row["source_mime"],
                 page_index=int(row["page_index"]),
                 crop=json.loads(row["crop_json"]) if row["crop_json"] else None,
-                max_edge=2200,
+                max_edge=640 if thumbnail else 2200,
             )
         except InvalidUpload as exc:
             raise ProductError("source_unavailable", str(exc), 422) from exc

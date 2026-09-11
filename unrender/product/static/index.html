@@ -5,18 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Unrender — reviewed chart data</title>
     <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/google.js" defer></script>
+    <script src="/static/library.js" defer></script>
+    <script src="/static/settings.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body class="product-shell">
     <a class="skip-link" href="#main">Skip to main content</a>
 
     <header class="site-header">
-      <a class="wordmark" id="home-button" href="/" aria-label="Unrender home"><img src="/static/icons/icon-192.png" width="30" height="30" alt=""><span>Unrender</span></a>
+      <a class="wordmark" id="home-button" href="/app" aria-label="Unrender dashboard"><img src="/static/icons/icon-192.png" width="30" height="30" alt=""><span>unrender</span></a>
+      <nav class="product-nav" id="product-nav" aria-label="Workspace" hidden>
+        <button class="nav-link" id="library-button" type="button" aria-current="page">My charts</button>
+        <button class="nav-link" id="projects-button" type="button">Projects</button>
+      </nav>
       <div class="header-actions" id="account-bar" hidden>
-        <span class="credits" id="credit-count"></span>
+        <span class="workspace-name">Personal</span>
         <button class="button button-quiet" id="buy-credits-button" type="button" hidden>Buy credits</button>
-        <span class="account-email" id="account-email"></span>
-        <button class="button button-quiet" id="logout-button" type="button">Sign out everywhere</button>
+        <button class="account-avatar" id="settings-button" type="button" aria-label="Account settings"></button>
       </div>
       <nav class="public-nav" id="public-nav" aria-label="Account">
         <a href="/login">Sign in</a>
@@ -56,28 +62,29 @@
           <p id="account-help-links" class="auth-help" hidden><a href="/account">Need help signing in?</a><a id="resend-verification-link" href="/account?mode=verify">Resend verification email</a></p>
           <p id="auth-notice" class="form-notice" role="status" hidden></p>
           <p class="form-error" id="auth-error" role="alert" hidden></p>
-          <p class="auth-help"><a href="/#example">Explore an example</a></p>
+          <p class="auth-help"><a href="/#how-it-works">How Unrender works</a></p>
           <p class="invitation-note" id="invitation-note">Have an invitation? Use the setup link from your inviter to choose your password.</p>
           <button class="button button-secondary auth-sample" id="open-sample-button" type="button" hidden>Run saved model replay</button>
         </section>
       </section>
 
       <section class="workspace" id="workspace-view" hidden>
-        <aside class="job-sidebar" aria-label="Extractions">
-          <div class="sidebar-heading">
-            <div>
-              <p class="eyebrow">Workspace</p>
-              <h2>My charts</h2>
-            </div>
-            <button class="button button-secondary" id="new-upload-button" type="button"><img class="ui-icon" src="/static/icons/plus.svg" width="18" height="18" alt="">Upload chart</button>
-          </div>
-          <div class="job-list" id="job-list"></div>
-          <div class="sidebar-footer">
-            <button class="text-button" id="create-key-button" type="button">Create API key</button>
-          </div>
-        </aside>
-
         <section class="workspace-main" id="workspace-main">
+          <section class="library-view" id="library-view" aria-labelledby="library-title">
+            <div class="library-heading">
+              <div><h1 id="library-title">My charts</h1><p>Your sources. Your reviewed data.</p></div>
+              <div class="library-tools"><label class="library-search"><span class="visually-hidden">Find a chart</span><input id="chart-search" type="search" placeholder="Find a chart" maxlength="200" autocomplete="off"></label><button class="button button-primary" id="new-upload-button" type="button"><img class="ui-icon" src="/static/icons/plus.svg" width="18" height="18" alt="">Upload chart</button></div>
+            </div>
+            <div class="library-toolbar">
+              <div class="library-filters" role="group" aria-label="Filter charts"><button type="button" data-chart-filter="all" aria-pressed="true">All charts <span id="count-all">0</span></button><button type="button" data-chart-filter="review" aria-pressed="false">Needs review <span id="count-review">0</span></button><button type="button" data-chart-filter="approved" aria-pressed="false">Approved <span id="count-approved">0</span></button></div>
+              <div class="library-display"><label><span class="visually-hidden">Filter by project</span><select id="project-filter"><option value="">All projects</option></select></label><div class="view-toggle" role="group" aria-label="Chart layout"><button type="button" id="grid-view-button" aria-pressed="true">Grid</button><button type="button" id="list-view-button" aria-pressed="false">List</button></div></div>
+            </div>
+            <div class="job-list" id="job-list" aria-label="Your charts"></div>
+            <p id="library-no-results" class="library-no-results" hidden>No charts match. Try another search or filter.</p>
+            <div class="library-pagination" id="library-pagination" hidden><button class="text-button" id="library-previous" type="button">Previous charts</button><span id="library-page-note"></span><button class="text-button" id="library-next" type="button">Next charts</button></div>
+            <div class="library-footer"><p id="library-count">Your charts are private to this workspace.</p><button class="text-button" id="new-project-button" type="button">Create project</button></div>
+          </section>
+          <section id="projects-view" hidden aria-labelledby="projects-title"><div class="library-heading"><div><h1 id="projects-title">Projects</h1><p>Keep related charts together.</p></div><button class="button button-primary" id="add-project-button" type="button">Create project</button></div><div id="project-list" class="project-list"></div></section>
           <p class="form-notice" id="workspace-loading" role="status" hidden></p>
           <div class="form-notice" id="workspace-access-notice" hidden>
             <p id="workspace-access-note" role="status"></p>
@@ -91,7 +98,7 @@
             <div class="empty-actions">
               <button class="button button-primary" id="empty-upload-button" type="button">Choose a chart</button>
               <button class="button button-secondary" id="run-sample-button" type="button">Use the saved example</button>
-              <a class="button button-secondary" id="workspace-example-link" href="/#example" hidden>Explore an example</a>
+              <a class="button button-secondary" id="workspace-example-link" href="/#how-it-works" hidden>How it works</a>
             </div>
           </section>
 
@@ -101,7 +108,7 @@
                 <p class="eyebrow">New extraction</p>
                 <h2 id="upload-title">Choose your chart.</h2>
               </div>
-              <button class="button button-quiet" id="cancel-upload-button" type="button">Close</button>
+              <button class="button button-quiet" id="cancel-upload-button" type="button">Discard upload</button>
             </div>
             <label class="dropzone" id="dropzone">
               <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
@@ -143,6 +150,7 @@
           </section>
 
           <section class="job-view" id="job-view" hidden aria-labelledby="job-title">
+            <div class="review-breadcrumb"><button class="text-button" id="back-to-library" type="button">Back to My charts</button><span id="review-filename"></span></div>
             <div class="job-commandbar">
               <div>
                 <p class="eyebrow" id="job-status"></p>
@@ -165,13 +173,14 @@
             <div class="review-notice" id="review-notice" hidden>
               Check every value against the source before you approve this result.
             </div>
-            <div class="review-layout">
+            <div class="review-layout" id="review-layout">
               <section class="source-pane" aria-labelledby="source-heading">
-                <div class="pane-heading"><div><h3 id="source-heading">Source image</h3><span id="source-page-label"></span></div><label class="source-zoom-control"><span class="visually-hidden">Source magnification</span><select id="source-zoom"><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label></div>
+                <div class="pane-heading"><div><h3 id="source-heading">Source</h3><span id="source-page-label"></span></div><label class="source-zoom-control"><span class="visually-hidden">Source magnification</span><select id="source-zoom"><option value="1">Fit</option><option value="actual">100%</option><option value="2">200%</option><option value="4">400%</option></select></label></div>
                 <div class="source-canvas" tabindex="0" aria-label="Source chart; scroll to inspect when magnified"><img id="job-source-image" alt="Source chart selected for extraction"></div>
               </section>
+              <div class="review-divider" id="review-divider" role="separator" aria-label="Resize source and data panes" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="70" aria-valuenow="55" tabindex="0"></div>
               <section class="result-pane" aria-labelledby="result-heading">
-                <div class="pane-heading"><h3 id="result-heading">Extracted data</h3><div class="editor-status"><span id="editor-change-note" role="status"></span><span id="edit-state"></span></div></div>
+                <div class="pane-heading"><h3 id="result-heading">Data</h3><div class="editor-status"><span id="editor-change-note" role="status"></span><span id="edit-state"></span></div></div>
                 <div class="result-loading" id="result-loading">Waiting for the extraction worker.</div>
                 <form id="result-form" hidden>
                   <details class="metadata-details"><summary>Chart details</summary>
@@ -200,12 +209,14 @@
                 </form>
               </section>
             </div>
+            <div class="review-footnote"><span>Keep your source and review history with your work.</span><span>CSV · JSON · XLSX</span></div>
             <section class="audit-panel" aria-labelledby="audit-heading">
               <div class="pane-heading"><h3 id="audit-heading">History &amp; audit</h3><div class="history-actions"><button class="text-button" id="toggle-versions-button" type="button">Show versions</button><button class="text-button" id="toggle-audit-button" type="button">Show activity</button></div></div>
               <ol id="version-list" hidden></ol>
               <ol id="audit-list" hidden></ol>
             </section>
           </section>
+          <div class="workspace-footer"><span id="credit-count"></span><button class="text-button" id="footer-settings-button" type="button">Settings</button></div>
         </section>
       </section>
     </main>
@@ -227,6 +238,26 @@
           <ul class="key-list" id="api-key-list" aria-label="Existing API keys"></ul>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="library-dialog" aria-labelledby="library-dialog-title">
+      <form class="dialog-content" id="library-dialog-form">
+        <div class="view-heading"><h2 id="library-dialog-title"></h2><button class="button button-quiet" id="library-dialog-close" type="button">Close</button></div>
+        <p class="dialog-note" id="library-dialog-note"></p>
+        <div id="library-dialog-fields"></div>
+        <p class="form-error" id="library-dialog-error" role="alert" hidden></p>
+        <button class="button button-primary" id="library-dialog-submit" type="submit">Save</button>
+      </form>
+    </dialog>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-content">
+        <div class="view-heading"><h2 id="settings-title">Account settings</h2><button class="button button-quiet" id="close-settings" type="button">Close</button></div>
+        <p class="settings-email" id="account-email"></p>
+        <section class="settings-section"><h3>Sign-in methods</h3><p id="signin-methods-note"></p><form id="connect-google-form" hidden><label>Current password<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><button class="button button-secondary" type="submit">Connect Google</button></form></section>
+        <section class="settings-section"><h3>Your workspace</h3><p id="settings-retention"></p><button class="text-button" id="create-key-button" type="button">Manage API keys</button><button class="text-button" id="logout-button" type="button">Sign out everywhere</button></section>
+        <section class="settings-section"><h3>Delete account</h3><p>This permanently removes your account, charts, projects, and review history. Download anything you need first.</p><button class="button button-danger" id="delete-account-button" type="button">Delete account and all charts</button></section>
+        <p class="form-error" id="settings-error" role="alert" hidden></p>
+      </div>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

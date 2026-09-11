@@ -7,7 +7,7 @@ import { webcrypto } from "node:crypto";
 // Exercise real event handlers and editor rendering. Only network dependencies
 // are replaced, so late replies must survive the same view fences as a browser.
 const appPath = new URL("../unrender/product/static/app.js", import.meta.url);
-const source = fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
+const source = ["google.js", "library.js", "settings.js"].map((name) => fs.readFileSync(new URL(`../unrender/product/static/${name}`, import.meta.url), "utf8")).join("\n") + "\n" + fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
 
 function deferred() {
   let resolve;
@@ -54,11 +54,12 @@ function harness({ authenticated = true } = {}) {
       Object.assign(this, {
         tag, hidden: false, disabled: false, inert: false, open: false,
         textContent: "", value: "", children: [], dataset: {}, parent: null,
-        attributes: new Map(), listeners: new Map(), fields: new Map(), focused: false,
+        style: { setProperty() {} }, attributes: new Map(), listeners: new Map(), fields: new Map(), focused: false,
       });
       const classes = new Set();
       this.classList = {
         contains: (name) => classes.has(name),
+        add: (name) => classes.add(name),
         remove: (name) => classes.delete(name),
         toggle: (name, on = !classes.has(name)) => {
           if (on) classes.add(name); else classes.delete(name);
@@ -144,7 +145,7 @@ function harness({ authenticated = true } = {}) {
   node("toast").hidden = true;
   const document = {
     cookie: "unrender_csrf=test-secret", visibilityState: "visible", body: new Node("body"),
-    getElementById: node, createElement: (tag) => new Node(tag), addEventListener() {},
+    querySelectorAll: () => [], getElementById: node, createElement: (tag) => new Node(tag), addEventListener() {},
   };
   class TestURL extends URL {
     static createObjectURL() {
@@ -181,6 +182,7 @@ function harness({ authenticated = true } = {}) {
   vm.createContext(context);
   vm.runInContext(`${source}
     globalThis.test = {
+      library, renderLibrary, showLibrary, closeLibraryDialog, editProject, deleteProject, moveChart,
       state, switchAuth, applyPublicConfig, renderJob, renderJobActions, markEditorDirty,
       showWorkspace,
       downloadExport, jobMutation, restoreVersion, saveCorrections, openJob, beginViewSelection,
@@ -196,6 +198,7 @@ function harness({ authenticated = true } = {}) {
     delete context.replacement;
   };
   replace("loadJobs", async () => {});
+  replace("loadProjects", async () => {});
   replace("refreshAccount", async () => {});
   replace("renderJobList", () => {});
   if (authenticated) {
@@ -294,12 +297,12 @@ await check("public password signup discloses zero credits and opens a usable ac
   assert.equal(h.node("workspace-view").hidden, false);
   assert.equal(h.node("workspace-access-note").hidden, false);
   assert.equal(h.node("workspace-access-notice").hidden, false);
-  assert.match(h.node("toast").textContent, /Explore the example or request extraction access/);
+  assert.match(h.node("toast").textContent, /Request extraction access/);
   assert.match(h.node("workspace-access-note").textContent, /credits before you can upload/);
   assert.match(h.node("retention-note").textContent, /30 days after their last update/);
   assert.equal(h.node("new-upload-button").disabled, true);
   assert.equal(h.node("empty-upload-button").disabled, true);
-  assert.equal(h.node("workspace-example-link").hidden, false);
+  assert.equal(h.node("workspace-example-link").hidden, true);
   assert.equal(h.node("buy-credits-button").hidden, true);
   await h.node("empty-upload-button").click();
   assert.deepEqual(requests.map(({ path }) => path), ["/api/auth/register"]);
@@ -778,7 +781,7 @@ await check("adding a single-series row focuses its visible category input", asy
 });
 
 for (const remaining of [true, false]) {
-  await check(`deleting a dirty chart ${remaining ? "selects the next chart" : "clears the last editor"} without another discard prompt`, async () => {
+  await check(`deleting a dirty chart ${remaining ? "returns to the library" : "clears the last editor"} without another discard prompt`, async () => {
     const h = harness();
     const job = makeJob();
     const next = makeJob("chart-b");
@@ -794,8 +797,11 @@ for (const remaining of [true, false]) {
       requests.push({ path, method: options.method || "GET" });
       return options.method === "DELETE" ? { status: "deleted" } : next;
     });
-    await h.test.deleteCurrentJob();
-    assert.equal(confirms, 1);
+    const confirmed = h.test.deleteCurrentJob();
+    assert.equal(h.node("library-dialog").open, true);
+    await h.node("library-dialog-form").dispatch("submit");
+    await confirmed;
+    assert.equal(confirms, 0);
     assert.equal(h.test.state.account, account);
     assert.equal(h.test.state.editorDirty, false);
     assert.equal(h.node("export-completion").hidden, true);
@@ -804,24 +810,16 @@ for (const remaining of [true, false]) {
     let prevented = false;
     h.windowListeners.get("beforeunload")({ preventDefault() { prevented = true; } });
     assert.equal(prevented, false);
-    if (remaining) {
-      assert.deepEqual(requests, [
-        { path: "/api/jobs/chart-a", method: "DELETE" }, { path: "/api/jobs/chart-b", method: "GET" },
-      ]);
-      assert.equal(h.test.state.currentJob, next);
-      assert.equal(h.node("chart-title-input").value, "Saved chart-b");
-      assert.equal(h.node("job-view").hidden, false);
-    } else {
-      assert.deepEqual(requests, [{ path: "/api/jobs/chart-a", method: "DELETE" }]);
-      assert.equal(h.test.state.currentJob, null);
-      assert.equal(h.test.state.editorRows.length, 0);
-      assert.equal(h.test.state.editorSeries.length, 0);
-      assert.equal(h.node("chart-title-input").value, "");
-      assert.equal(h.node("result-table").children.length, 0);
-      assert.equal(h.node("job-source-image").getAttribute("src"), null);
-      assert.equal(h.node("job-view").hidden, true);
-      assert.equal(h.node("empty-view").hidden, false);
-    }
+    assert.deepEqual(requests, [{ path: "/api/jobs/chart-a", method: "DELETE" }]);
+    assert.equal(h.test.state.currentJob, null);
+    assert.equal(h.test.state.editorRows.length, 0);
+    assert.equal(h.test.state.editorSeries.length, 0);
+    assert.equal(h.node("chart-title-input").value, "");
+    assert.equal(h.node("result-table").children.length, 0);
+    assert.equal(h.node("job-source-image").getAttribute("src"), null);
+    assert.equal(h.node("job-view").hidden, true);
+    assert.equal(h.node("library-view").hidden, false);
+    assert.equal(h.node("empty-view").hidden, remaining);
   });
 }
 
@@ -840,12 +838,15 @@ for (const phase of ["delete", "list"]) {
       return { status: "deleted" };
     });
     if (phase === "list") h.replace("loadJobs", async () => { started.resolve(); return reply.promise; });
-    const pending = h.test.deleteCurrentJob();
+    const confirmation = h.test.deleteCurrentJob();
+    const pending = h.node("library-dialog-form").dispatch("submit");
     await reached(started);
     h.select(next);
     await h.editTitle("Unsaved chart B");
     reply.resolve({ status: "deleted" });
     await pending;
+    h.test.closeLibraryDialog(true);
+    await confirmation;
     assert.equal(h.test.state.currentJob, next);
     assert.equal(h.node("chart-title-input").value, "Unsaved chart B");
     assert.equal(h.test.state.editorDirty, true);
@@ -859,11 +860,15 @@ await check("a failed deletion preserves corrections and the selected chart", as
   h.select(job);
   await h.editTitle("Unsaved chart A");
   h.replace("api", async () => { throw new Error("Deletion unavailable"); });
-  await h.test.deleteCurrentJob();
+  const confirmation = h.test.deleteCurrentJob();
+  await h.node("library-dialog-form").dispatch("submit");
+  assert.match(h.node("library-dialog-error").textContent, /Deletion unavailable/);
+  h.test.closeLibraryDialog(true);
+  await confirmation;
   assert.equal(h.test.state.currentJob, job);
   assert.equal(h.node("chart-title-input").value, "Unsaved chart A");
   assert.equal(h.test.state.editorDirty, true);
-  assert.match(h.node("toast").textContent, /Deletion unavailable/);
+
 });
 
 await check("editing an approved result immediately offers save and approve", async () => {

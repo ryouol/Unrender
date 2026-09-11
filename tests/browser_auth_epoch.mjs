@@ -20,6 +20,7 @@ class FakeNode {
     this.textContent = "";
     this.value = "";
     this.children = [];
+    this.style = {};
     this.attributes = new Map();
   }
   append(...children) { this.children.push(...children); }
@@ -98,10 +99,12 @@ context.globalThis = context;
 vm.createContext(context);
 
 const appPath = new URL("../unrender/product/static/app.js", import.meta.url);
-const source = fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
+const source = ["google.js", "library.js", "settings.js"].map((name) => fs.readFileSync(new URL(`../unrender/product/static/${name}`, import.meta.url), "utf8")).join("\n") + "\n" + fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
 vm.runInContext(
   `${source}
 renderJobList = () => {};
+renderLibrary = () => {};
+loadProjects = async () => {};
 renderJob = () => {};
 globalThis.__mainViewCalls = [];
 showMainView = (name) => globalThis.__mainViewCalls.push(name);

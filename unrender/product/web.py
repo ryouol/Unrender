@@ -57,7 +57,7 @@ def _security_headers(path: str, *, secure_cookies: bool) -> dict[str, str]:
     headers = {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
-        "Referrer-Policy": "same-origin",
+        "Referrer-Policy": "no-referrer" if path.startswith("/auth/") else "same-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Resource-Policy": "same-origin",

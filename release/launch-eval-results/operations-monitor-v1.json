@@ -1,0 +1,63 @@
+{
+  "scope": "Hosted operational monitoring and notification delivery; not a model-quality benchmark",
+  "runtime_commit": "02597a6d04ed81f6f2aaedd721280e20a961625f",
+  "ci_run": 34548479179,
+  "web_deploy": "dep-dahl4ncs728c73cgvpqg",
+  "monitor": {
+    "name": "unrender-monitor",
+    "service_id": "crn-dahl5uh594qs73ffkbk0",
+    "build_id": "bld-dahl5up594qs73ffkdhg",
+    "project": "UNRENDER",
+    "environment": "Production",
+    "region": "ohio",
+    "plan": "0.5c-512mb",
+    "schedule_utc": "17 * * * *",
+    "command": "timeout --kill-after=5s 100s unrender-operations-check",
+    "auto_deploy": false,
+    "notifications": "Only failure notifications",
+    "credentials_attached": false,
+    "disk_attached": false
+  },
+  "failure_run": {
+    "trigger": "manual",
+    "started_at": "2026-09-11T01:03:00Z",
+    "failure_logged_at": "2026-09-11T01:04:05Z",
+    "platform_failure_logged_at": "2026-09-11T01:04:08Z",
+    "exit_code": 1,
+    "alert_condition": "provider_latency_below_threshold=false; other checks healthy",
+    "provider_attempt_duration_seconds": 191.53,
+    "provider_attempt_completed_at": "2026-09-11T00:04:26.714971Z",
+    "notification_received_at": "2026-09-11T01:04:09Z",
+    "notification_subject": "Cron job failure detected on unrender-monitor",
+    "notification_destination": "operator Gmail inbox",
+    "synthetic_failure_induced": false
+  },
+  "recovery_run": {
+    "trigger": "manual",
+    "success_logged_at": "2026-09-11T01:05:18Z",
+    "platform_result": "Last successful run",
+    "platform_duration_seconds": 10.9,
+    "cause": "Earlier provider attempt naturally left the one-hour lookback",
+    "data_or_thresholds_changed": false
+  },
+  "hosted_checks": {
+    "readiness": true,
+    "model_pin_preserved": true,
+    "database_integrity": true,
+    "approved_chart_preserved": true,
+    "sign_in": true,
+    "secure_httponly_session_cookie": true,
+    "csv_export": true,
+    "json_export": true,
+    "xlsx_export_with_audit_sheet": true,
+    "existing_extraction_credits": 1,
+    "new_inference_calls": 0
+  },
+  "limitations": [
+    "Hourly cadence and one-minute cache can delay detection and miss short incidents.",
+    "Queue, backup and ledger failures were tested locally, not each induced in production.",
+    "First scheduled run has not yet been observed; both verification runs were manually triggered.",
+    "No delivery latency or platform availability guarantee is established.",
+    "15-minute failure-rate and repeated authentication/signature-failure alerts remain separate work."
+  ]
+}

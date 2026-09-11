@@ -50,9 +50,11 @@ Alert on:
 - provider latency/error increase;
 - backup age over 48 hours (the daily schedule plus retry grace).
 
-Provider success/failure and latency can be derived from the structured lifecycle records. Queue-age, ledger reconciliation, and backup-age dashboards still require queries/exporters and alert delivery.
+Provider success/failure and latency can be derived from the structured lifecycle
+records. The deployed hourly monitor covers the fixed conditions below;
+historical dashboards and the remaining alert types are separate work.
 
-The prepared `/health/operations` endpoint is separate from `/health/ready` and
+The deployed `/health/operations` endpoint is separate from `/health/ready` and
 does not control restarts. It emits fixed boolean checks without tenant data:
 queued/current running attempts older than five minutes, at least three provider
 failures in the last hour, any provider completion longer than 180 seconds in the
@@ -72,10 +74,25 @@ moving to a custom domain or another deployment. Hourly cadence plus caching can
 delay detection by about an hour and can miss an incident that starts and ends
 between checks. Planned maintenance can cause a notification.
 
-This monitor is prepared in code; creating the hosted cron, verifying its normal
-run and testing notification delivery remain deployment gates. The 15-minute job
-failure-rate dashboard and repeated authentication/signature-failure alerts above
-remain separate work; the fixed provider thresholds do not implement them.
+The monitor is `crn-dahl5uh594qs73ffkbk0` in UNRENDER's Production environment,
+built from `02597a6`. Its first manual run started at 01:03:00 UTC on September 11,
+reported failure at 01:04:05 and exited with status 1. The operator inbox received
+Render's cron failure email at 01:04:09. This exercised the real public endpoint,
+retry command and delivery path: the earlier pilot provider attempt took 191.53
+seconds and was still within the one-hour lookback. The other operational checks
+were healthy. The endpoint recovered after that event aged out, without changing
+data or thresholds. No website outage, synthetic failure or GPU call was induced.
+The second manual run logged success at 01:05:18 UTC and completed successfully
+in 10.9 seconds according to Render. The deployed command and schedule remained
+unchanged. Receipts are in `release/launch-eval-results/operations-monitor-v1.json`.
+The cron has an explicit failure-only notification override; no app/Modal
+credentials, shared environment groups or persistent disk are attached.
+
+The 15-minute job failure-rate dashboard and repeated authentication/signature
+failure alerts above remain separate work; the fixed provider thresholds do not
+implement them. Individual queue, ledger and backup failures are covered by local
+regressions; they have not each been induced in production. The delivery check
+does not establish notification latency or availability guarantees.
 
 The UNRENDER Render service has an explicit **Only failure notifications** override;
 workspace defaults and other services were not changed. The existing destination
@@ -86,9 +103,9 @@ failure receipts, not a newly induced outage or proof of every alert type.
 [Render's supported platform notifications](https://render.com/docs/notifications)
 include failed builds/deploys, unhealthy running services and persistent-disk use
 above 80%. This covers platform health/capacity events without application SMTP.
-It does not cover a stale coordinated backup, slow queue, ledger mismatch or
-individual extraction failures. Keep those custom monitoring gaps open until
-their delivery paths are implemented and tested. Recheck the service override
+Those native events do not inspect application data. The hourly cron above adds
+stale-backup, queue, ledger and provider checks through a failed cron execution.
+Recheck both service overrides
 after service recreation; the current Blueprint specification does not document
 a notification-policy field.
 

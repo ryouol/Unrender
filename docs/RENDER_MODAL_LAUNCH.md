@@ -16,7 +16,11 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `606a0d3`; deployment `dep-dahkq9h594qs73fe1aag`.
+- Live runtime code: `02597a6`; deployment `dep-dahl4ncs728c73cgvpqg`.
+- Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
+  Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
+  environment, with auto-deploy off and an explicit failure-only notification
+  override. It has no app/Modal credentials or persistent disk.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -36,9 +40,12 @@ The observed restart/recovery check took 70.08 seconds and included downtime.
 
 The user's current budget is approximately US$20/month, with modest overages
 accepted. Keep Render and Modal. The earlier absolute ceiling is superseded.
-The fixed Render baseline is US$7/month compute plus US$0.25/month for the disk;
-Modal compute/storage and any Render usage overages are additional. This is not
-a provider-enforced dollar cap.
+The Render baseline is US$7/month web compute, US$0.25/month for the disk and
+the monitor's US$1/month minimum: approximately US$8.25/month before Modal
+compute/storage, taxes and any Render usage overages. The bounded hourly monitor
+normally stays within its minimum. This is not a provider-enforced dollar cap.
+[Render cron billing](https://render.com/docs/cronjobs) charges for active time
+with a minimum of US$1/month per cron service.
 
 Only invited accounts are enabled. Public registration, welcome credits, customer
 billing, and email delivery are off. The invitation commands in OPERATIONS.md let
@@ -128,9 +135,13 @@ preprocessing was not silently changed during deployment.
 - Trusted proxy client-IP attribution remains open: live access logs show Render
   private proxy addresses. Do not blindly trust forwarded headers. Verify header
   rewriting and the private/direct ingress boundary before public signup.
-- Render service failure alerts now have an explicit UNRENDER-only override and
-  Email destination; two historical failure notices were verified in the operator
-  inbox. Custom backup-age, queue, provider and ledger alerts remain open.
+- Render service failure alerts now have explicit UNRENDER-only overrides and
+  an Email destination. The hourly monitor's first run detected the pilot's
+  191.53-second provider attempt, exited with status 1, and delivered a failure
+  notice to the operator inbox at 01:04:09 UTC on September 11. The public
+  operational endpoint returned to healthy after the event naturally left its
+  one-hour window; no threshold or production data was altered. See
+  OPERATIONS.md for the monitor's cadence, thresholds and remaining alert gaps.
   Scheduled coordinated off-host
   copies are enabled and the first restore drill passed; measured recovery
   objectives remain open. A disk snapshot alone does not meet the app's

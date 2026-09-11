@@ -466,6 +466,9 @@ remains. Deployment and live per-stage measurements are separate pending work.
 The final breaking, testing, context and change-size passes found no further
 actionable issues. Operations validation: 226 tests passed / 1 skipped, including
 13 focused monitor cases; mypy, Ruff/security lint and Blueprint validation passed.
-The image CI now checks the packaged command and operational route. Hosting and
-alert-delivery evidence are still pending; no new service or GPU call was created
-while preparing this change.
+The image CI now checks the packaged command and operational route. CI run
+34548479179 passed on `02597a6`, subsequently deployed to both the web service
+and hourly monitor. The real slow-provider alert delivered to the operator inbox,
+and a follow-up monitor run passed after the lookback window cleared. Hosted
+sign-in, preserved data and CSV/JSON/XLSX audit-sheet exports passed. No GPU call
+was used for this monitoring rollout. See OPERATIONS.md for evidence and limits.

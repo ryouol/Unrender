@@ -164,14 +164,26 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
-            if self.allow_registration and (
-                not self.require_email_verification or not self.email_configured
-            ):
-                raise ValueError(
-                    "UNRENDER_ALLOW_REGISTRATION in production requires verified email delivery"
-                )
             if self.allow_registration and self.initial_credits != 0:
                 raise ValueError("Public production registration must start with zero credits")
+            if self.allow_registration:
+                if self.require_email_verification:
+                    if not self.email_configured:
+                        raise ValueError("Public registration requires verified email delivery")
+                elif any(
+                    (
+                        self.smtp_host,
+                        self.smtp_username,
+                        self.smtp_password,
+                        self.email_from,
+                        self.stripe_secret_key,
+                        self.stripe_webhook_secret,
+                        self.stripe_price_id,
+                    )
+                ):
+                    raise ValueError(
+                        "Password-only public registration requires email and billing disabled"
+                    )
             if not self.worker_enabled:
                 raise ValueError("UNRENDER_WORKER_ENABLED must be true in production")
             if self.modal_function_name != "infer_one":

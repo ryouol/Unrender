@@ -675,6 +675,11 @@ function applyPublicConfig() {
   byId("resend-verification-link").hidden = !state.publicConfig.email_available;
   byId("register-tab").hidden = !registrationOpen;
   byId("open-sample-button").hidden = !state.publicConfig.sample_available;
+  const initialCredits = config.initial_credits;
+  byId("signup-access-note").textContent = Number.isInteger(initialCredits) && initialCredits > 0
+    ? `Your workspace starts with ${initialCredits} extraction credit${initialCredits === 1 ? "" : "s"}. Each extraction attempt uses one credit.`
+    : "Starts with 0 extraction credits. Upload access is granted separately during the beta.";
+  byId("signup-recovery-note").hidden = Boolean(config.email_available);
   if (!state.account) switchAuth(window.location?.pathname === "/signup" ? "register" : "login", { focus: false });
 }
 
@@ -697,10 +702,19 @@ function showWorkspace() {
   buyButton.textContent = `Buy ${state.account.credit_pack_size} credits`;
   byId("new-upload-button").hidden = isolatedDemo;
   byId("empty-upload-button").hidden = isolatedDemo;
+  const needsCredits = !isolatedDemo && state.account.credits <= 0;
+  byId("new-upload-button").disabled = needsCredits;
+  byId("empty-upload-button").disabled = needsCredits;
+  byId("export-another-button").disabled = isolatedDemo || needsCredits;
+  byId("workspace-access-notice").hidden = !needsCredits;
+  byId("workspace-example-link").hidden = !needsCredits;
+  byId("workspace-access-link").hidden = !needsCredits || state.account.billing_configured;
   byId("create-key-button").hidden = isolatedDemo;
   const accessNote = byId("workspace-access-note");
-  accessNote.hidden = isolatedDemo || state.account.credits > 0;
-  accessNote.textContent = "Your workspace is ready. Extraction credits are provided by the workspace operator during the beta. Existing charts remain available for review and export.";
+  accessNote.hidden = !needsCredits;
+  accessNote.textContent = state.account.billing_configured
+    ? "Add extraction credits to upload a chart. Your existing charts remain available for review and export."
+    : "Your workspace is ready. You’ll need extraction credits before you can upload. During the beta, credits are granted separately by the Unrender team. You can explore the example in the meantime.";
   byId("retention-note").textContent = isolatedDemo ? "" : `Charts are retained for ${state.account.retention_days} days after their last update. Download exports you need to keep.`;
 }
 
@@ -835,10 +849,11 @@ function switchAuth(mode, { focus = true } = {}) {
   byId("register-tab").setAttribute("aria-selected", String(!login));
   setHidden("login-form", !login);
   setHidden("register-form", login || invitationOnly);
+  setHidden("invitation-note", !invitationOnly);
   byId("auth-title").textContent = login ? "Welcome back." : invitationOnly ? "Your next chart starts here." : "Create your workspace.";
   byId("auth-description").textContent = login ? "Sign in to your workspace."
     : invitationOnly ? "Unrender is available by invitation during the pilot. Use the setup link from your inviter, or explore the example first."
-    : "Turn your charts into data you can work with.";
+    : "A private place for your charts and reviewed data.";
   clearError("auth-error");
   if (focus && !invitationOnly) byId(login ? "login-form" : "register-form").querySelector("input").focus();
 }
@@ -884,7 +899,9 @@ async function submitAuth(event, mode) {
     if (await recoverDurableJobSubmission()) return;
     showMainView(state.jobs.length ? "job-view" : "empty-view");
     if (state.jobs.length) await openJob(state.jobs[0].id);
-    showToast(mode === "register" ? "Workspace created. Upload a chart to begin." : "Signed in. Your workspace is ready.");
+    showToast(mode === "register"
+      ? (account.credits > 0 ? "Workspace created. Upload a chart to begin." : "Workspace created. Explore the example or request extraction access.")
+      : "Signed in. Your workspace is ready.");
   } catch (error) {
     showError("auth-error", error);
   } finally {
@@ -1067,6 +1084,7 @@ function renderJobList() {
 }
 
 function startUpload() {
+  if (!state.account || state.account.demo_account || state.account.credits <= 0) return;
   if (!discardEditorChanges()) return;
   stopPolling();
   resetViewSelection();

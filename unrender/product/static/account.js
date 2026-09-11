@@ -47,8 +47,8 @@
           form.hidden = false;
           if (!verifying) byId("account-description").textContent = "Enter your email and we’ll send a link to reset your password.";
         } else {
-          byId("account-title").textContent = "Request an account link";
-          byId("account-description").textContent = "Email recovery is not available for this workspace. Ask the person who invited you for a new account setup or recovery link. Your saved charts remain in your account.";
+          byId("account-title").textContent = "Help with account access";
+          byId("account-description").textContent = "Email recovery isn’t available yet. Contact Unrender support for help. We’ll need to establish that the workspace is yours; an email address alone isn’t enough. If we can’t confirm ownership, we can’t restore access.";
         }
       })
       .catch((error) => {

@@ -867,7 +867,7 @@ class ProductService:
         initial_credits: int,
         credit_reason: str = "welcome_allowance",
         account_kind: str = "customer",
-        email_verified: bool = True,
+        account_active: bool = True,
         activation_token: str | None = None,
         publish_activation: Callable[[], None] | None = None,
     ) -> str:
@@ -889,9 +889,10 @@ class ProductService:
                 self._insert_row(
                     conn,
                     "INSERT INTO users("
-                    "id,email,password_hash,account_kind,credit_balance,created_at,email_verified"
+                    "id,email,password_hash,account_kind,credit_balance,created_at,"
+                    "account_active,email_verified"
                     ") "
-                    "VALUES (?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?)",
                     (
                         user_id,
                         normalized_email,
@@ -899,7 +900,8 @@ class ProductService:
                         account_kind,
                         0,
                         now,
-                        email_verified,
+                        account_active,
+                        False,
                     ),
                     user_id=None,
                 )
@@ -927,7 +929,7 @@ class ProductService:
             email,
             password,
             initial_credits=self.settings.initial_credits,
-            email_verified=not self.settings.require_email_verification,
+            account_active=not self.settings.require_email_verification,
         )
         if self.settings.require_email_verification:
             # Transport sends the challenge after releasing expensive KDF admission.
@@ -955,6 +957,9 @@ class ProductService:
             ).fetchone()
             if not user or (purpose == "verify" and user["email_verified"]):
                 return
+            if purpose == "reset" and user["account_active"] and not user["email_verified"]:
+                # Knowing a claimed mailbox must not recover a password-only workspace.
+                return
             now = timestamp()
             conn.execute("DELETE FROM account_challenges WHERE expires_at<=?", (now,))
             count = conn.execute(
@@ -963,7 +968,7 @@ class ProductService:
             ).fetchone()[0]
             if count >= 5:
                 return
-            self._store_account_challenge(conn, str(user["id"]), purpose, token)
+            self._store_account_challenge(conn, str(user["id"]), purpose, token, email_proof=True)
         # Preserve other delivered links across failed or reordered delivery.
         if send_account_email(self.settings, normalized, purpose, token) is False:
             with self.database.transaction(immediate=True) as conn:
@@ -972,12 +977,19 @@ class ProductService:
                 )
 
     def _store_account_challenge(
-        self, conn: sqlite3.Connection, user_id: str, purpose: str, token: str
+        self,
+        conn: sqlite3.Connection,
+        user_id: str,
+        purpose: str,
+        token: str,
+        *,
+        email_proof: bool = False,
     ) -> None:
         self._insert_row(
             conn,
             "INSERT INTO account_challenges("
-            "id,user_id,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,?,?,?)",
+            "id,user_id,purpose,token_hash,expires_at,created_at,email_proof) "
+            "VALUES (?,?,?,?,?,?,?)",
             (
                 self._id(),
                 user_id,
@@ -985,6 +997,7 @@ class ProductService:
                 token_hash(token),
                 timestamp(utcnow() + timedelta(minutes=30)),
                 timestamp(),
+                email_proof,
             ),
             user_id=user_id,
         )
@@ -1002,7 +1015,7 @@ class ProductService:
             random_token(),
             initial_credits=credits,
             credit_reason="operator_grant",
-            email_verified=False,
+            account_active=False,
             activation_token=token,
             publish_activation=(lambda: publish(link)) if publish else None,
         )
@@ -1019,7 +1032,7 @@ class ProductService:
         token = random_token()
         with self.database.transaction(immediate=True) as conn:
             user = conn.execute(
-                "SELECT id,email_verified FROM users WHERE email=? AND account_kind='customer'",
+                "SELECT id,account_active FROM users WHERE email=? AND account_kind='customer'",
                 (normalized,),
             ).fetchone()
             if not user:
@@ -1027,7 +1040,7 @@ class ProductService:
             conn.execute("DELETE FROM account_challenges WHERE user_id=?", (user["id"],))
             self._store_account_challenge(conn, str(user["id"]), "reset", token)
             self._audit(conn, user_id=user["id"], event_type="operator_account_link_issued")
-            mode = "" if user["email_verified"] else "?mode=invite"
+            mode = "" if user["account_active"] else "?mode=invite"
             link = f"{self.settings.base_url}/account{mode}#account=reset&token={token}"
             if publish:
                 publish(link)
@@ -1039,7 +1052,8 @@ class ProductService:
         challenge_hash = token_hash(token)
         with self.database.connect() as conn:
             candidate = conn.execute(
-                "SELECT users.password_hash,users.session_generation FROM account_challenges "
+                "SELECT users.password_hash,users.session_generation,users.account_active,"
+                "users.email_verified,account_challenges.email_proof FROM account_challenges "
                 "JOIN users ON users.id=account_challenges.user_id "
                 "WHERE account_challenges.token_hash=? AND account_challenges.purpose=? "
                 "AND account_challenges.expires_at>? AND users.account_kind='customer'",
@@ -1050,6 +1064,15 @@ class ProductService:
                 "invalid_account_link",
                 "This link expired or was already used. Request a new one.",
                 400,
+            )
+        if (
+            purpose == "reset"
+            and candidate["email_proof"]
+            and candidate["account_active"]
+            and not candidate["email_verified"]
+        ):
+            raise ProductError(
+                "invalid_account_link", "Verify your email before using recovery", 400
             )
         replacement = None
         if purpose == "reset":
@@ -1063,7 +1086,7 @@ class ProductService:
             )
         with self.database.transaction(immediate=True) as conn:
             user = conn.execute(
-                "SELECT users.* FROM account_challenges "
+                "SELECT users.*,account_challenges.email_proof FROM account_challenges "
                 "JOIN users ON users.id=account_challenges.user_id "
                 "WHERE account_challenges.token_hash=? AND account_challenges.purpose=? "
                 "AND account_challenges.expires_at>? AND users.account_kind='customer'",
@@ -1075,6 +1098,15 @@ class ProductService:
                     "This link expired or was already used. Request a new one.",
                     400,
                 )
+            if (
+                purpose == "reset"
+                and user["email_proof"]
+                and user["account_active"]
+                and not user["email_verified"]
+            ):
+                raise ProductError(
+                    "invalid_account_link", "Verify your email before using recovery", 400
+                )
             if purpose == "verify":
                 if (
                     user["password_hash"] != candidate["password_hash"]
@@ -1085,16 +1117,19 @@ class ProductService:
                         "Account credentials changed. Request a new link.",
                         400,
                     )
-                conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
+                conn.execute(
+                    "UPDATE users SET email_verified=1,account_active=1 WHERE id=?", (user["id"],)
+                )
                 conn.execute(
                     "DELETE FROM account_challenges WHERE user_id=? AND purpose='verify'",
                     (user["id"],),
                 )
             else:
                 conn.execute(
-                    "UPDATE users SET password_hash=?,email_verified=1,"
+                    "UPDATE users SET password_hash=?,account_active=1,"
+                    "email_verified=MAX(email_verified,?),"
                     "session_generation=session_generation+1 WHERE id=?",
-                    (replacement, user["id"]),
+                    (replacement, user["email_proof"], user["id"]),
                 )
                 conn.execute("DELETE FROM account_challenges WHERE user_id=?", (user["id"],))
                 conn.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
@@ -1131,11 +1166,11 @@ class ProductService:
         with self.database.transaction(immediate=True) as conn:
             user = conn.execute(
                 "SELECT id FROM users WHERE email=? AND account_kind='customer' "
-                "AND email_verified=1",
+                "AND account_active=1",
                 (normalized,),
             ).fetchone()
             if not user:
-                raise ProductError("user_not_found", "Verified account not found", 404)
+                raise ProductError("user_not_found", "Active account not found", 404)
             self._change_credits(
                 conn,
                 user_id=user["id"],
@@ -1229,7 +1264,7 @@ class ProductService:
             conn.execute("DELETE FROM sessions WHERE expires_at<=?", (timestamp(now),))
             self._assert_database_capacity(conn, user_id)
             user = conn.execute(
-                "SELECT session_generation,email_verified,password_hash FROM users WHERE id=?",
+                "SELECT session_generation,account_active,password_hash FROM users WHERE id=?",
                 (user_id,),
             ).fetchone()
             if not user:
@@ -1241,8 +1276,10 @@ class ProductService:
                 raise ProductError(
                     "invalid_credentials", "Credentials changed. Sign in again.", 401
                 )
-            if not user["email_verified"]:
-                raise ProductError("email_not_verified", "Verify your email before signing in", 403)
+            if not user["account_active"]:
+                raise ProductError(
+                    "account_not_active", "Complete account setup before signing in", 403
+                )
             sessions = conn.execute(
                 "SELECT id FROM sessions WHERE user_id=? ORDER BY created_at DESC,id DESC",
                 (user_id,),
@@ -1327,6 +1364,7 @@ class ProductService:
         return {
             "id": user["id"],
             "email": user["email"],
+            "email_verified": bool(user["email_verified"]),
             "credits": user["credit_balance"],
             "billing_configured": self.settings.billing_configured,
             "credit_pack_size": self.settings.credit_pack_size,

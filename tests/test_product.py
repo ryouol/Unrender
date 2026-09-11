@@ -155,7 +155,7 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             worker_enabled=True,
             modal_model_path="approved/unrender-model",
         ).validate()
-    with pytest.raises(ValueError, match="ALLOW_REGISTRATION"):
+    with pytest.raises(ValueError, match="zero credits"):
         settings_for(
             tmp_path,
             environment="production",

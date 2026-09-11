@@ -182,6 +182,7 @@ function harness({ authenticated = true } = {}) {
   vm.runInContext(`${source}
     globalThis.test = {
       state, switchAuth, applyPublicConfig, renderJob, renderJobActions, markEditorDirty,
+      showWorkspace,
       downloadExport, jobMutation, restoreVersion, saveCorrections, openJob, beginViewSelection,
       resetPrivateState, syncAuthRecordFromStorage, showPublic, deleteCurrentJob,
       updateUploadPreview,
@@ -266,6 +267,77 @@ await check("open registration exposes the requested form", async () => {
   assert.equal(h.node("register-form").hidden, false);
   assert.equal(h.node("register-tab").getAttribute("aria-selected"), "true");
   assert.equal(h.node("register-form").querySelector("input").focused, true);
+});
+
+await check("public password signup discloses zero credits and opens a usable account without email", async () => {
+  const h = harness({ authenticated: false });
+  h.window.location.pathname = "/signup";
+  h.test.state.publicConfig = {
+    registration_open: true, sample_available: false,
+    email_available: false, email_verification_required: false, initial_credits: 0,
+  };
+  h.test.applyPublicConfig();
+  assert.match(h.node("signup-access-note").textContent, /0 extraction credits/);
+  assert.equal(h.node("signup-recovery-note").hidden, false);
+  assert.equal(h.node("invitation-note").hidden, true);
+  const requests = [];
+  h.replace("api", async (path, options) => { requests.push({ path, options }); return { ok: true }; });
+  h.replace("fetchAccount", async () => ({
+    id: "account-a", principal_marker: "principal-a", email: "a@example.com",
+    credits: 0, email_verified: false, billing_configured: false, retention_days: 30,
+  }));
+  h.replace("publishAuthChange", async () => true);
+  h.node("register-form").fields = new Map([["email", "a@example.com"], ["password", "a strong test password"]]);
+  await h.node("register-form").dispatch("submit");
+  assert.deepEqual(requests.map(({ path }) => path), ["/api/auth/register"]);
+  assert.equal(h.window.location.pathname, "/app");
+  assert.equal(h.node("workspace-view").hidden, false);
+  assert.equal(h.node("workspace-access-note").hidden, false);
+  assert.equal(h.node("workspace-access-notice").hidden, false);
+  assert.match(h.node("toast").textContent, /Explore the example or request extraction access/);
+  assert.match(h.node("workspace-access-note").textContent, /credits before you can upload/);
+  assert.match(h.node("retention-note").textContent, /30 days after their last update/);
+  assert.equal(h.node("new-upload-button").disabled, true);
+  assert.equal(h.node("empty-upload-button").disabled, true);
+  assert.equal(h.node("workspace-example-link").hidden, false);
+  assert.equal(h.node("buy-credits-button").hidden, true);
+  await h.node("empty-upload-button").click();
+  assert.deepEqual(requests.map(({ path }) => path), ["/api/auth/register"]);
+
+  h.test.state.account.credits = 1;
+  h.test.showWorkspace();
+  assert.equal(h.node("new-upload-button").disabled, false);
+  assert.equal(h.node("empty-upload-button").disabled, false);
+  assert.equal(h.node("workspace-access-note").hidden, true);
+  assert.equal(h.node("workspace-example-link").hidden, true);
+});
+
+await check("a last-credit chart keeps access guidance visible and cannot open upload after export", async () => {
+  const h = harness();
+  h.test.state.account.credits = 0;
+  h.test.state.account.billing_configured = false;
+  h.test.showWorkspace();
+  h.replace("api", async () => makeJob("chart-a", "approved"));
+  await h.test.openJob("chart-a", { throwOnError: true });
+  assert.equal(h.node("job-view").hidden, false);
+  assert.equal(h.node("empty-view").hidden, true);
+  assert.equal(h.node("workspace-access-notice").hidden, false);
+  assert.equal(h.node("workspace-access-link").hidden, false);
+  h.context.fetch = async () => ({ ok: true, blob: async () => ({ bytes: "workbook" }) });
+  await h.node("job-actions").children[0].click();
+  assert.equal(h.downloads.length, 1);
+  assert.equal(h.node("export-another-button").disabled, true);
+  await h.node("export-another-button").dispatch("click");
+  assert.equal(h.node("job-view").hidden, false);
+  assert.equal(h.node("upload-view").hidden, true);
+});
+
+await check("signup allowance and recovery copy follow the configured mode", async () => {
+  const h = harness({ authenticated: false });
+  h.test.state.publicConfig = { registration_open: true, initial_credits: 3, email_available: true };
+  h.test.applyPublicConfig();
+  assert.match(h.node("signup-access-note").textContent, /starts with 3 extraction credits/);
+  assert.equal(h.node("signup-recovery-note").hidden, true);
 });
 
 await check("workflow follows extraction, review and approval", async () => {

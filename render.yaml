@@ -41,7 +41,7 @@ services:
       - key: UNRENDER_WORKER_ENABLED
         value: "true"
       - key: UNRENDER_ALLOW_REGISTRATION
-        value: "false"
+        value: "true"
       - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
         value: "false"
       - key: UNRENDER_INITIAL_CREDITS

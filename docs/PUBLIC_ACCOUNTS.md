@@ -41,8 +41,8 @@ Refresh the signed-in workspace after a grant. One extraction attempt consumes
 one credit once dispatched to the provider, including a dispatched failure.
 Credit controls bound attempts per account; public signup can create additional
 accounts, so welcome credits are not an abuse-proof per-person limit or a dollar
-cap on the shared Render or Modal account. Existing global dispatch budgets,
-provider deadlines and concurrency limits remain necessary.
+cap on the shared Render or Modal account. Existing request quotas,
+provider failure limits, deadlines and concurrency limits remain in place.
 
 ## Access and recovery
 

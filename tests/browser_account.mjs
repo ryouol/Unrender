@@ -25,7 +25,11 @@ for (const email of [false, true]) {
   const request = await render({ email });
   assert.equal(request.node('account-form').hidden, !email);
   assert.equal(request.node('email-help-links').hidden, !email);
-  if (!email) assert.match(request.node('account-description').textContent, /Email recovery is not available/);
+  if (!email) {
+    assert.match(request.node('account-description').textContent, /Email recovery isn’t available/);
+    assert.match(request.node('account-description').textContent, /email address alone isn’t enough/);
+    assert.doesNotMatch(request.node('account-description').textContent, /person who invited/);
+  }
   const invitation = await render({ token: true, email });
   assert.equal(invitation.node('account-form').hidden, false);
   assert.equal(invitation.node('email-help-links').hidden, !email);

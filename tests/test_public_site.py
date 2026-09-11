@@ -122,6 +122,7 @@ def test_landing_and_account_shells_stay_separate_and_private(tmp_path: Path) ->
         assert config["registration_open"] is False
         assert config["sample_available"] is False
         assert config["email_available"] is False
+        assert config["initial_credits"] == 0
 
 
 def test_new_shell_assets_are_served_locally(tmp_path: Path) -> None:
@@ -161,6 +162,17 @@ def test_browser_landing_example_requires_saved_approval_and_stays_local() -> No
         )
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("browser_landing.mjs"))],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_browser_account_help_stays_available_without_email() -> None:
+    result = subprocess.run(
+        ["node", str(Path(__file__).with_name("browser_account.mjs"))],
         capture_output=True,
         text=True,
         check=False,

@@ -45,6 +45,8 @@
           <form id="register-form" hidden>
             <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@domain.com" required></label>
             <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Create a password" aria-describedby="password-hint" required><span class="label-hint" id="password-hint">Use at least 12 characters.</span></label>
+            <p class="form-notice" id="signup-access-note"></p>
+            <p class="label-hint" id="signup-recovery-note" hidden>Keep your password safe. Email recovery isn’t available yet, so lost access may be unrecoverable.</p>
             <button class="button button-primary" type="submit">Create workspace</button>
           </form>
           <div id="logout-retry-panel" class="form-error" role="alert" hidden>
@@ -55,7 +57,7 @@
           <p id="auth-notice" class="form-notice" role="status" hidden></p>
           <p class="form-error" id="auth-error" role="alert" hidden></p>
           <p class="auth-help"><a href="/#example">Explore an example</a></p>
-          <p class="invitation-note">Have an invitation? Use the setup link from your inviter to choose your password.</p>
+          <p class="invitation-note" id="invitation-note">Have an invitation? Use the setup link from your inviter to choose your password.</p>
           <button class="button button-secondary auth-sample" id="open-sample-button" type="button" hidden>Run saved model replay</button>
         </section>
       </section>
@@ -77,15 +79,19 @@
 
         <section class="workspace-main" id="workspace-main">
           <p class="form-notice" id="workspace-loading" role="status" hidden></p>
+          <div class="form-notice" id="workspace-access-notice" hidden>
+            <p id="workspace-access-note" role="status"></p>
+            <a class="button button-secondary" id="workspace-access-link" href="/contact">Request extraction access</a>
+          </div>
           <section class="empty-state" id="empty-view">
             <p class="eyebrow">Your first extraction</p>
             <h2>Start with one chart.</h2>
-            <p id="workspace-access-note" role="status" hidden></p>
             <p id="retention-note"></p>
             <p>Upload an image or PDF. We’ll extract a table for you to check against the source.</p>
             <div class="empty-actions">
               <button class="button button-primary" id="empty-upload-button" type="button">Choose a chart</button>
               <button class="button button-secondary" id="run-sample-button" type="button">Use the saved example</button>
+              <a class="button button-secondary" id="workspace-example-link" href="/#example" hidden>Explore an example</a>
             </div>
           </section>
 

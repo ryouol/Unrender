@@ -699,6 +699,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sample_available": settings.seed_demo_account,
             "email_available": settings.email_configured,
             "email_verification_required": settings.require_email_verification,
+            "initial_credits": settings.initial_credits,
             "max_upload_bytes": settings.max_upload_bytes,
             "max_image_pixels": settings.max_image_pixels,
             "max_pdf_pages": settings.max_pdf_pages,

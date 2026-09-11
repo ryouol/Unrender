@@ -120,6 +120,7 @@ form[aria-busy="true"] { opacity: .65; }
 .auth-tabs button { min-height: 44px; padding: 10px 0 14px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: .875rem; font-weight: 400; cursor: pointer; }
 .auth-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
 .auth-panel form { display: grid; gap: 22px; }
+.auth-panel form > p { margin: 0; }
 .auth-panel form > .button { margin-top: 4px; width: 100%; }
 .auth-panel > .form-error, .auth-panel > .form-notice, .auth-panel > .invitation-note { margin-top: 20px; }
 .auth-help { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 20px; margin: 16px 0; font-size: .8125rem; }

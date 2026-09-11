@@ -40,6 +40,32 @@ a prepared upload revokes that original preview immediately while existing chart
 keep their independent source copies. Backups follow their separate retention
 policy and are not represented as instantly erased by these actions.
 
+## Account removal
+
+`GET /api/account/deletion-summary` returns `charts`, `projects`,
+`running_extractions`, and `preparing_uploads` counts for the current account.
+`POST /api/auth/delete-account` requires `{confirmation: "DELETE"}`, its session
+cookie and CSRF token, and an explicit password or Google reauthentication in
+that same session within the last five minutes. Normal sign-in alone is not
+destructive confirmation. Recent authentication is rechecked inside the removal
+transaction, including current session generation and expiration.
+
+Running extractions or live storage reservations return 409 `account_busy` and
+leave the account intact. Cancel running extractions and wait for settlement,
+or finish preparing an upload, then retry. Cancellation does not promise to stop
+a dispatched provider call immediately or refund its used credit. Queued work is
+cancelled transactionally and its pre-dispatch reservations refunded before
+removal. The worker cannot claim a deleted job.
+
+Successful removal revokes every session and API key, removes linked identities,
+projects, chart results/history, prepared uploads and other account-owned rows,
+and durably queues owned files for cleanup. The response contains `status`
+(`deleted` or `deletion_queued`), `charts_deleted`, and `projects_deleted`; the
+browser's session cookies are cleared. A recreated account receives a distinct
+identity and storage namespace. Minimal shared operational rate buckets and
+billing event hashes can remain; they contain no source files or chart values.
+Coordinated backups are governed separately by their retention policy.
+
 Schema 12 adds projects and nullable project assignment. Existing charts retain
 their IDs, sources, results, credits, and sessions, and use the original filename
 as their initial display name. The migration is atomic; older releases must not

@@ -646,7 +646,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     current_user_dependency = Depends(current_user)
     csrf_user_dependency = Depends(csrf_user)
     api_user_dependency = Depends(api_user)
-    install_library_routes(app, service, current_user_dependency, csrf_user_dependency)
+    install_library_routes(
+        app,
+        service,
+        current_user_dependency,
+        csrf_user_dependency,
+        session_cookie=SESSION_COOKIE,
+        clear_cookies=lambda response: _clear_cookies(response, settings),
+    )
 
     @app.get("/")
     def index():

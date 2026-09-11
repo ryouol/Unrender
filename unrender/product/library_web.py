@@ -1,12 +1,14 @@
 """Session-only library routes kept separate from extraction transport."""
 
+from collections.abc import Callable
 from typing import Any, Literal
 
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from unrender.product.library import ChartLibrary
+from unrender.product.lifecycle import AccountLifecycle
 from unrender.product.service import ProductService
 
 
@@ -21,10 +23,34 @@ class ChartMetadata(BaseModel):
     project_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
+class AccountDeletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: Literal["DELETE"]
+
+
 def install_library_routes(
-    app: FastAPI, service: ProductService, current_user: Any, csrf_user: Any
+    app: FastAPI,
+    service: ProductService,
+    current_user: Any,
+    csrf_user: Any,
+    *,
+    session_cookie: str,
+    clear_cookies: Callable[[Response], None],
 ) -> None:
     library = ChartLibrary(service)
+    lifecycle = AccountLifecycle(service)
+
+    @app.get("/api/account/deletion-summary")
+    def deletion_summary(user: Any = current_user):
+        return lifecycle.summary(user["id"])
+
+    @app.post("/api/auth/delete-account")
+    def delete_account(
+        request: Request, response: Response, payload: AccountDeletion, user: Any = csrf_user
+    ):
+        result = lifecycle.delete_account(user["id"], request.cookies.get(session_cookie, ""))
+        clear_cookies(response)
+        return result
 
     @app.get("/api/projects")
     def list_projects(user: Any = current_user):

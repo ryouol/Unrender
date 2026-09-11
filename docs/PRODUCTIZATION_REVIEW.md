@@ -548,3 +548,25 @@ is unchanged. The provider pin, SQLite integrity and persisted backup status wer
 verified after deployment. No email, upload or inference ran. The receipt is
 `release/launch-eval-results/recovery-release-v1.json`; the refreshed deployed
 package comparison and remaining advisory limits are in CONTAINER_SCAN.md.
+
+The final container-only follow-up (`2179df8`) removes setuid/setgid bits from
+regular files under `/usr` (`Dockerfile:44`); CI rejects any remaining matching
+file (`.github/workflows/ci.yml:108`). The reuse/testing, quality/breaking,
+efficiency/size and model-context reviews found no new issues. This is a
+four-addition, one-deletion change; it preserves ordinary executable permissions,
+operator shell/home setup and the separate Modal model image. It mitigates
+privileged helper exposure, not the recorded library advisories.
+
+The isolated network-disabled AMD64 image passed startup, restart with stored
+data preserved, UID 10001, private data/SSH-directory permissions and operator
+command checks with half a CPU and 512 MB RAM. A root scan found no matching
+privilege bits; mount and umount were mode 0755. CI run 34554233524 passed 240
+tests / one skipped, lint/types, dependency audits, package build and the new
+production-container assertion. This validation used no email or inference.
+
+Render deployment `dep-dahmc8cs728c73clf4ug` then passed real non-root operator
+SSH and the privilege-bit scan, database integrity and existing backup status,
+owner sign-in, approved-chart persistence, and CSV/JSON/XLSX audit-sheet exports.
+The provider pin and owner's one credit are unchanged. The public receipt is
+`release/launch-eval-results/runtime-hardening-v1.json`; the monitor retains its
+previous image and the package advisory assessment remains separate.

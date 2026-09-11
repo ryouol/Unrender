@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `35f49f6`; deployment `dep-dahm06cs728c73ck22p0`.
+- Live runtime code: `2179df8`; deployment `dep-dahmc8cs728c73clf4ug`.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
@@ -116,6 +116,13 @@ preprocessing was not silently changed during deployment.
 
 ## Verification and remaining launch work
 
+- The final container hardening release `2179df8` passed CI run 34554233524
+  (240 tests / one skipped and the production image checks). It removes unused
+  setuid/setgid permissions under `/usr`. Isolated startup/restart/storage tests
+  and hosted non-root SSH, helper modes, health, database integrity, owner sign-in
+  and approved exports passed. The model pin and owner's one credit are unchanged;
+  no inference or email ran. See `release/launch-eval-results/runtime-hardening-v1.json`.
+  Debian packages are unchanged; this mitigation does not patch their advisories.
 - The whole-diff simplify/code review and focused rechecks are complete. Runtime
   `35f49f6` clears inherited cloud backup/SMTP destinations from the local sample
   launcher and rejects invalid reset challenges before expensive password work.

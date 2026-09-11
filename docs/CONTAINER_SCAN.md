@@ -174,3 +174,27 @@ of Render's final image digest or a clean bill for embedded native dependencies.
 It narrows the deployed-inventory gap without closing the remaining advisory
 assessment. Only public package manifests and application hashes were collected;
 no customer data, database contents, runtime secrets or GPU calls were involved.
+
+## Runtime privilege-bit removal — September 11 UTC
+
+The pre-change hosted inspection of `35f49f6` found mount and umount at mode 04755,
+although the app and SSH operator already ran as UID 10001 with `NoNewPrivs=1`
+and no active capabilities. Release `2179df8` removes setuid/setgid bits from
+regular files under `/usr`. CI scans the final running image as root and fails
+if any such file remains. This closes an unnecessary privilege mechanism without
+deleting operator commands or changing ordinary execute permissions.
+
+The network-disabled local AMD64 image
+`sha256:07131179faa0416f04ce8a9300ab5d3e6f0cc25511975fb2bb2e5aac37efc062`
+passed startup, private storage, operator commands and restart persistence at
+512 MB / half a CPU. Deployment `dep-dahmc8cs728c73clf4ug` then passed the same
+privilege-bit scan through real non-root Render SSH: zero matching files and
+mount/umount mode 0755. Application and SSH processes retain UID 10001, zero
+active capabilities and `NoNewPrivs=1`. Hosted readiness, database integrity,
+approved work and all three exports passed; no inference ran.
+
+The deployed Debian manifest checksum is unchanged from the comparison above.
+This is permission hardening, not a vendor patch or a new full-image scan.
+The recorded advisories and their limits remain applicable. The hourly monitor
+still uses its earlier `02597a6` image; this rollout concerns the web service.
+Evidence: `release/launch-eval-results/runtime-hardening-v1.json`.

@@ -1,0 +1,109 @@
+{
+  "scope": "Web-service permission hardening, isolated image smoke and hosted persistence verification; no model or account-policy changes",
+  "runtime_commit": "2179df8718f64c945a429bb3c25128a8b4f39f27",
+  "web_deploy": "dep-dahmc8cs728c73clf4ug",
+  "ci_run": 34554233524,
+  "ci_tests": {
+    "passed": 240,
+    "skipped": 1,
+    "seconds": 72.97
+  },
+  "review": "Reuse/testing, quality/breaking, efficiency/size and model-context follow-ups completed with no new issues",
+  "local": {
+    "scope": "Isolated production-mode image with no network, credentials, email, or inference",
+    "image": "sha256:07131179faa0416f04ce8a9300ab5d3e6f0cc25511975fb2bb2e5aac37efc062",
+    "startup_healthy": true,
+    "uid": 10001,
+    "private_storage_writable": true,
+    "operator_ssh_directory": true,
+    "privileged_regular_files_under_usr": 0,
+    "mount_helper_modes": [
+      "755 /usr/bin/mount",
+      "755 /usr/bin/umount"
+    ],
+    "operator_commands_present": true,
+    "restart_healthy_and_storage_preserved": true,
+    "status": "passed",
+    "observed_at": "2026-09-11T02:20:09.060569+00:00"
+  },
+  "hosted": {
+    "runtime_commit": "2179df8718f64c945a429bb3c25128a8b4f39f27",
+    "observed_at": "2026-09-11T02:24:47.232733+00:00",
+    "non_root_operator_ssh": true,
+    "privileged_regular_files_under_usr": 0,
+    "mount_helper_modes": {
+      "mount": "0o755",
+      "umount": "0o755"
+    },
+    "processes": {
+      "1": {
+        "Uid": "10001\t10001\t10001\t10001",
+        "Gid": "10001\t10001\t10001\t10001",
+        "CapInh": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "CapEff": "0000000000000000",
+        "CapAmb": "0000000000000000",
+        "NoNewPrivs": "1"
+      },
+      "self": {
+        "Uid": "10001\t10001\t10001\t10001",
+        "Gid": "10001\t10001\t10001\t10001",
+        "CapInh": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "CapEff": "0000000000000000",
+        "CapAmb": "0000000000000000",
+        "NoNewPrivs": "1"
+      }
+    },
+    "health": {
+      "status": "ready",
+      "extractor": "modal",
+      "worker": "running"
+    },
+    "provider_pin_unchanged": true,
+    "database_integrity": true,
+    "approved_job_preserved": true,
+    "backup_status_present": true,
+    "debian_manifest_unchanged": true,
+    "status": "passed"
+  },
+  "owner_workflow": {
+    "scope": "Existing owner sign-in and approved exports; no uploads, inference, email or credential changes",
+    "runtime_commit": "2179df8718f64c945a429bb3c25128a8b4f39f27",
+    "new_inference_calls": 0,
+    "health": {
+      "status": "ready",
+      "extractor": "modal",
+      "worker": "running"
+    },
+    "secure_http_only_session": true,
+    "owner_credit_preserved": 1,
+    "approved_chart_preserved": true,
+    "exports": {
+      "csv": "passed",
+      "json": "passed",
+      "xlsx": "passed"
+    },
+    "xlsx_audit_sheet": true,
+    "operations": {
+      "status": "ok",
+      "checks": {
+        "queue_timely": true,
+        "provider_failures_below_threshold": true,
+        "provider_latency_below_threshold": true,
+        "credit_ledger_consistent": true,
+        "backup_recent": true,
+        "worker_available": true
+      }
+    },
+    "status": "passed",
+    "observed_at": "2026-09-11T02:25:01.322333+00:00"
+  },
+  "new_inference_calls": 0,
+  "limitations": [
+    "Permission hardening does not patch or suppress the recorded Debian package advisories.",
+    "The local image digest is not the Render image digest. Hosted permissions and the unchanged Debian manifest were checked independently.",
+    "The hourly monitor remains on its earlier 02597a6 image.",
+    "Public registration, customer email and billing remain disabled. This is an invited pilot."
+  ]
+}

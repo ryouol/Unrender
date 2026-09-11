@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 SCHEMA = """
@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
-    email_verified INTEGER NOT NULL DEFAULT 1 CHECK (email_verified IN (0,1)),
+    email_verified INTEGER NOT NULL DEFAULT 0 CHECK (email_verified IN (0,1)),
+    account_active INTEGER NOT NULL DEFAULT 0 CHECK (account_active IN (0,1)),
     password_hash TEXT NOT NULL,
     account_kind TEXT NOT NULL DEFAULT 'customer'
         CHECK (account_kind IN ('customer','demo')),
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS account_challenges (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     purpose TEXT NOT NULL CHECK (purpose IN ('verify','reset')),
+    email_proof INTEGER NOT NULL DEFAULT 0 CHECK (email_proof IN (0,1)),
     token_hash TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -327,6 +329,8 @@ class Database:
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
         storage_reservations = self._columns(conn, "storage_reservations")
+        if "account_active" in self._columns(conn, "users"):
+            return 10
         if "email_verified" in self._columns(conn, "users"):
             return 9
         if "owner_token" in storage_reservations:
@@ -380,6 +384,8 @@ class Database:
                 self._migrate_v7_to_v8(conn)
             elif version == 8:
                 self._migrate_v8_to_v9(conn)
+            elif version == 9:
+                self._migrate_v9_to_v10(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -397,6 +403,30 @@ class Database:
             "INTEGER NOT NULL DEFAULT 1 CHECK (email_verified IN (0,1))",
         )
         self._migration_execute(conn, "UPDATE schema_meta SET version=9")
+
+    def _migrate_v9_to_v10(self, conn: sqlite3.Connection) -> None:
+        self._add_column(
+            conn,
+            "users",
+            "account_active",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (account_active IN (0,1))",
+        )
+        # Before v10 the same flag also meant operator activation, without email.
+        # Preserve access, but require fresh mailbox proof before email recovery.
+        self._migration_execute(
+            conn, "UPDATE users SET account_active=email_verified,email_verified=0"
+        )
+        # Older migrations can reach this step before creating the challenge table.
+        if self._table_exists(conn, "account_challenges"):
+            self._add_column(
+                conn,
+                "account_challenges",
+                "email_proof",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (email_proof IN (0,1))",
+            )
+        # Legacy reset links have no recorded delivery provenance, so never use
+        # one as new evidence of mailbox ownership.
+        self._migration_execute(conn, "UPDATE schema_meta SET version=10")
 
     def _ensure_v6_shape(self, conn: sqlite3.Connection) -> None:
         """Repair the only pre-release v6 shape that existed before audit rollups were final."""

@@ -31,7 +31,7 @@ def parser() -> argparse.ArgumentParser:
     link.add_argument("email")
     link.add_argument("--destination", required=True, type=Path)
     grant = commands.add_parser(
-        "grant-credits", help="grant extraction credits to a verified account"
+        "grant-credits", help="grant extraction credits to an active account"
     )
     grant.add_argument("email")
     grant.add_argument("--credits", type=int, required=True)

@@ -8,7 +8,7 @@ including in development. Returning users retain their existing allowance.
 ## Deployment configuration
 
 Create a dedicated UNRENDER **Web application** OAuth client in a personal Google
-Cloud project, with the UNRENDER app name, approved logo, support address,
+Cloud project, with the UNRENDER app name, support address,
 homepage/privacy/terms URLs and intended external audience. Do not reuse Wayline's
 client secret or alter unrelated project clients.
 
@@ -31,7 +31,7 @@ Google API access-token persistence, refresh tokens, or automatic credit grants.
 The application controls account creation through `UNRENDER_ALLOW_REGISTRATION`;
 closing registration does not prevent an already connected Google identity signing in.
 Google Testing status alone is not an access gate for these basic identity scopes.
-Publish/verify the Google app's brand for the intended public experience.
+Publish the Google app for the intended public audience. A custom consent-screen logo may require separate brand verification; it is not required for basic sign-in.
 
 ## Browser integration contract
 
@@ -95,7 +95,7 @@ callback query is cleared from the ASGI scope before Uvicorn access logging.
 Authentication requests share bounded concurrency/global admission controls.
 
 Before deployment take a coordinated backup. Rollback requires restoring the prior
-schema backup into a fresh data directory rather than reverting code over schema 13.
+schema backup into a fresh data directory rather than reverting code over the upgraded schema (currently 14).
 Tests exercise real RSA-signed JWT validation, wrong audience/issuer/signature,
 nonce/expiry/denial, browser mismatch/replay, explicit linking, zero grants, native
 session continuation and recent-auth invalidation. No real Google consent or cloud

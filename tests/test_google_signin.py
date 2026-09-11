@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
-from test_product import settings_for
+from test_product import csrf_headers, settings_for
 
 from unrender.product import google_oauth
 from unrender.product.service import ProductError
@@ -40,10 +40,6 @@ def app(tmp_path, monkeypatch):
     return create_app(settings)
 
 
-def csrf(client):
-    return {"X-CSRF-Token": client.cookies.get("unrender_csrf", "")}
-
-
 def callback(client, start):
     query = parse_qs(urlsplit(start.headers["location"]).query)
     assert query["scope"] == ["openid email profile"]
@@ -64,7 +60,7 @@ def signin(client, *, complete=True):
     if complete and response.headers["location"] == "/app":
         assert (
             client.post(
-                "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf(client)
+                "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf_headers(client)
             ).status_code
             == 200
         )
@@ -80,7 +76,9 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
         assert client.get("/api/jobs").status_code == 401
         assert (
             client.post(
-                "/api/auth/reauthenticate", json={"password": PASSWORD}, headers=csrf(client)
+                "/api/auth/reauthenticate",
+                json={"password": PASSWORD},
+                headers=csrf_headers(client),
             ).status_code
             == 401
         )
@@ -89,12 +87,12 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
             client.post(
                 "/api/auth/google/complete",
                 json={"intent": "wrongIntentWithEnoughLength"},
-                headers=csrf(client),
+                headers=csrf_headers(client),
             ).status_code
             == 403
         )
         complete = client.post(
-            "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf(client)
+            "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf_headers(client)
         )
         assert complete.status_code == 200
         user = client.get("/api/me").json()
@@ -103,7 +101,7 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
         assert user["email_verified"]
         assert (
             client.post(
-                "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf(client)
+                "/api/auth/google/complete", json={"intent": INTENT}, headers=csrf_headers(client)
             ).status_code
             == 403
         )
@@ -114,7 +112,7 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
             == 401
         )
         app.state.service.grant_credits("owner@gmail.com", credits=2, reference="test-grant")
-        client.post("/api/auth/logout", headers=csrf(client))
+        client.post("/api/auth/logout", headers=csrf_headers(client))
         assert signin(client).headers["location"] == "/app"
         returned = client.get("/api/me").json()
         assert returned["id"] == user["id"] and returned["credits"] == 2
@@ -136,12 +134,12 @@ def test_google_never_links_by_email_and_explicit_password_link_preserves_accoun
         assert not before["email_verified"]
         assert (
             client.post(
-                "/api/auth/google/link", json={"password": "wrong"}, headers=csrf(client)
+                "/api/auth/google/link", json={"password": "wrong"}, headers=csrf_headers(client)
             ).status_code
             == 401
         )
         start = client.post(
-            "/api/auth/google/link", json={"password": PASSWORD}, headers=csrf(client)
+            "/api/auth/google/link", json={"password": PASSWORD}, headers=csrf_headers(client)
         )
         assert start.status_code == 200
         query = parse_qs(urlsplit(start.json()["url"]).query)
@@ -154,7 +152,7 @@ def test_google_never_links_by_email_and_explicit_password_link_preserves_accoun
         after = client.get("/api/me").json()
         assert after["id"] == before["id"] and after["credits"] == 2
         assert after["google_connected"] and after["has_password"] and after["email_verified"]
-        client.post("/api/auth/logout", headers=csrf(client))
+        client.post("/api/auth/logout", headers=csrf_headers(client))
         assert signin(client).headers["location"] == "/app"
         assert client.get("/api/me").json()["id"] == before["id"]
 
@@ -231,7 +229,7 @@ def test_google_reauthentication_requires_connected_subject_and_current_session(
         with app.state.service.database.connect() as conn:
             app.state.service.require_recent_auth(conn, user_id=owner, session_token=session)
         started = client.get("/auth/google/reauthenticate", follow_redirects=False)
-        client.post("/api/auth/logout", headers=csrf(client))
+        client.post("/api/auth/logout", headers=csrf_headers(client))
         assert callback(client, started)[0].headers["location"] == "/login?google=google_failed"
 
 

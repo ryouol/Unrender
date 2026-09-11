@@ -20,12 +20,14 @@ function startGoogleLogin(event) {
 
 async function completeGoogleLogin(path) {
   let pending;
+  let encoded;
   try {
-    const encoded = sessionStorage.getItem(GOOGLE_INTENT_KEY);
+    encoded = sessionStorage.getItem(GOOGLE_INTENT_KEY);
     sessionStorage.removeItem(GOOGLE_INTENT_KEY);
     if (!encoded) return;
     pending = JSON.parse(encoded);
   } catch (_) {
+    if (!encoded) return;
     throw new Error("Google sign-in could not be confirmed in this browser. Please try again.");
   }
   if (path !== "/app") return;

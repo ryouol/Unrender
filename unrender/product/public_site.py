@@ -13,10 +13,17 @@ PAGES = {
         "Verify your email or recover access to your workspace.",
     ),
     "/": (
-        "index.html",
-        "Unrender — reviewed chart data",
+        "landing.html",
+        "Unrender — from chart to spreadsheet",
         "Review chart extraction against its source, correct the table, "
         "and export an auditable result.",
+    ),
+    "/app": ("index.html", "Workspace — Unrender", "Review, correct and export your chart data."),
+    "/login": ("index.html", "Sign in — Unrender", "Sign in to your Unrender workspace."),
+    "/signup": (
+        "index.html",
+        "Create a workspace — Unrender",
+        "Start reviewing your chart data with Unrender.",
     ),
     "/privacy": (
         "privacy.html",
@@ -41,7 +48,7 @@ INDEXABLE_PATHS = ("/",)
 def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
     filename, title, description = PAGES[path]
     content = (static_dir / filename).read_text()
-    social_image = escape(base_url + "/static/demo/budget-quarter.webp", quote=True)
+    social_image = escape(base_url + "/static/demo/revenue-example.png", quote=True)
     # Fixed page allowlist plus validated deployment origin: never the Host header.
     tags = (
         f'<link rel="canonical" href="{escape(base_url + path, quote=True)}">'
@@ -50,7 +57,8 @@ def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
         f'<meta property="og:description" content="{escape(description, quote=True)}">'
         f'<meta property="og:url" content="{escape(base_url + path, quote=True)}">'
         f'<meta property="og:image" content="{social_image}">'
-        '<meta property="og:image:alt" content="Saved Unrender budget chart verification fixture">'
+        '<meta property="og:image:alt" content="Illustrative quarterly revenue chart: '
+        'Q1 12.4, Q2 18.6, Q3 16.8, Q4 24.2 million dollars">'
         '<meta name="twitter:card" content="summary_large_image">'
         f'<meta name="twitter:title" content="{escape(title, quote=True)}">'
         f'<meta name="twitter:description" content="{escape(description, quote=True)}">'
@@ -62,8 +70,14 @@ def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
         '<link rel="manifest" href="/static/site.webmanifest">'
         '<script src="/static/site.js" defer></script>'
     )
+    if path not in INDEXABLE_PATHS and 'name="robots"' not in content:
+        tags += '<meta name="robots" content="noindex, nofollow">'
     if 'name="description"' not in content:
         tags += f'<meta name="description" content="{escape(description, quote=True)}">'
+    start = content.index("<title>")
+    end = content.index("</title>", start) + len("</title>")
+    content = content[:start] + f"<title>{escape(title)}</title>" + content[end:]
+    content = content.replace("<head>", '<head><script src="/static/theme.js"></script>', 1)
     content = content.replace("</head>", tags + "</head>")
     footer = (
         '<footer class="site-footer"><span>© '
@@ -99,8 +113,11 @@ def error_document(status: int) -> HTMLResponse:
         '<meta name="robots" content="noindex">'
         '<link rel="icon" href="/static/icons/favicon.ico">'
         f'<meta name="description" content="{message}"><title>{title} — Unrender</title>'
+        '<script src="/static/theme.js"></script>'
         '<link rel="stylesheet" href="/static/app.css"></head><body>'
-        '<header class="site-header"><a class="wordmark" href="/">Unrender</a></header>'
+        '<header class="site-header"><a class="wordmark" href="/">'
+        '<img src="/static/icons/icon-192.png" width="30" height="30" alt="">'
+        "Unrender</a></header>"
         f'<main class="legal-page"><p class="eyebrow">{status}</p><h1>{title}</h1>'
         f'<p>{message}</p><a class="button button-primary" href="/">Return home</a>'
         "</main></body></html>",

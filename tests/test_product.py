@@ -1674,6 +1674,8 @@ def test_test_mode_checkout_and_signed_webhook_flow(
         assert checkout.status_code == 201
         assert checkout.json()["url"].startswith("https://checkout.stripe.com/")
         assert checkout_arguments["payment_method_types"] == ["card"]
+        assert checkout_arguments["success_url"] == "http://testserver/app?billing=success"
+        assert checkout_arguments["cancel_url"] == "http://testserver/app?billing=cancelled"
 
         monkeypatch.setattr(
             stripe.checkout.Session,
@@ -3729,7 +3731,9 @@ def test_backup_and_restore_fsync_files_manifests_and_publication_directories(
     assert any(path.name == "unrender.sqlite3" for path in files)
 
 
-@pytest.mark.parametrize("script", ["browser_auth_epoch.mjs", "browser_two_tab.mjs"])
+@pytest.mark.parametrize(
+    "script", ["browser_auth_epoch.mjs", "browser_two_tab.mjs", "browser_workflow.mjs"]
+)
 def test_browser_privacy_editor_and_two_tab_regressions(script: str) -> None:
     result = subprocess.run(
         ["node", str(Path(__file__).with_name(script))],

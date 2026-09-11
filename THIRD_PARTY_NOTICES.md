@@ -6,6 +6,8 @@ This file is a release inventory, not a substitute for dependency-specific licen
 
 IBM Plex Sans (regular and semibold WOFF2) is bundled under the SIL Open Font License 1.1. The license text is included at `unrender/product/static/fonts/LICENSE.txt`.
 
+Phosphor regular SVG icons are bundled under the MIT license. Source: https://github.com/phosphor-icons/core/tree/2b75f3ad12b420c9504ef05df8d2564a28f8500e/assets/regular. Only filenames are shortened; paths are unmodified. The license is retained at `unrender/product/static/icons/PHOSPHOR-LICENSE.txt`.
+
 ## Referenced model artifacts
 
 The research pipeline references Qwen3-VL model artifacts distributed through Qwen/Unsloth. Their cited artifact pages identify Apache-2.0, but model and training-data obligations must be reviewed before redistributing fine-tuned weights. No model weights are bundled in the Python package or container.

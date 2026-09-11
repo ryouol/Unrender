@@ -650,6 +650,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         return document(static_dir, "/", settings.base_url)
 
+    @app.get("/app")
+    @app.get("/login")
+    @app.get("/signup")
+    def workspace_shell(request: Request):
+        return document(static_dir, request.url.path, settings.base_url)
+
     @app.get("/privacy")
     def privacy():
         return document(static_dir, "/privacy", settings.base_url)
@@ -975,8 +981,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "user_id": user["id"],
                     "credits": str(settings.credit_pack_size),
                 },
-                success_url=f"{settings.base_url}/?billing=success",
-                cancel_url=f"{settings.base_url}/?billing=cancelled",
+                success_url=f"{settings.base_url}/app?billing=success",
+                cancel_url=f"{settings.base_url}/app?billing=cancelled",
             )
         except stripe.StripeError as exc:
             logger.warning("stripe_checkout_failed", exc_info=exc)

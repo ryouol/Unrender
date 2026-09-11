@@ -40,6 +40,8 @@ class Settings:
     worker_shutdown_timeout_seconds: int = 30
     backup_volume_name: str = ""
     allow_registration: bool = True
+    google_client_id: str = ""
+    google_client_secret: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -104,6 +106,10 @@ class Settings:
     initial_credits: int = 3
 
     @property
+    def google_configured(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
     def email_configured(self) -> bool:
         return bool(
             self.smtp_host and self.smtp_username and self.smtp_password and self.email_from
@@ -147,6 +153,17 @@ class Settings:
         if self.extractor_backend not in {"replay", "modal"}:
             raise ValueError("UNRENDER_EXTRACTOR must be replay or modal")
         parsed_base_url = urlsplit(self.base_url)
+        if bool(self.google_client_id) != bool(self.google_client_secret):
+            raise ValueError("Google sign-in requires both client ID and client secret")
+        if self.google_configured and (
+            not self.google_client_id.endswith(".apps.googleusercontent.com")
+            or any(char.isspace() for char in self.google_client_id + self.google_client_secret)
+            or (
+                parsed_base_url.scheme != "https"
+                and parsed_base_url.hostname not in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            raise ValueError("Google sign-in requires a Web OAuth client and HTTPS or localhost")
         if (
             parsed_base_url.scheme not in {"http", "https"}
             or not parsed_base_url.hostname
@@ -340,6 +357,8 @@ class Settings:
             worker_heartbeat_seconds=_int("UNRENDER_WORKER_HEARTBEAT_SECONDS", 10),
             worker_shutdown_timeout_seconds=_int("UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 30),
             allow_registration=_bool("UNRENDER_ALLOW_REGISTRATION", True),
+            google_client_id=os.getenv("UNRENDER_GOOGLE_CLIENT_ID", ""),
+            google_client_secret=os.getenv("UNRENDER_GOOGLE_CLIENT_SECRET", ""),
             smtp_host=os.getenv("UNRENDER_SMTP_HOST", ""),
             smtp_port=_int("UNRENDER_SMTP_PORT", 587),
             smtp_username=os.getenv("UNRENDER_SMTP_USERNAME", ""),

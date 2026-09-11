@@ -295,6 +295,8 @@ class ProductService:
     def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
         tables = (
             "account_challenges",
+            "google_identities",
+            "oauth_attempts",
             "sessions",
             "uploads",
             "jobs",
@@ -1126,7 +1128,7 @@ class ProductService:
                 )
             else:
                 conn.execute(
-                    "UPDATE users SET password_hash=?,account_active=1,"
+                    "UPDATE users SET password_hash=?,password_enabled=1,account_active=1,"
                     "email_verified=MAX(email_verified,?),"
                     "session_generation=session_generation+1 WHERE id=?",
                     (replacement, user["email_proof"], user["id"]),
@@ -1186,9 +1188,13 @@ class ProductService:
             normalized = ""
         with self.database.connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE email=?", (normalized,)).fetchone()
-        candidate_hash = user["password_hash"] if user else self._dummy_password_hash
+        candidate_hash = (
+            user["password_hash"]
+            if user and user["password_enabled"]
+            else self._dummy_password_hash
+        )
         password_matches = verify_password(password, candidate_hash)
-        if not user or not password_matches:
+        if not user or not user["password_enabled"] or not password_matches:
             raise ProductError("invalid_credentials", "Email or password is incorrect", 401)
         expected_hash = str(user["password_hash"])
         if password_needs_rehash(expected_hash):
@@ -1215,6 +1221,51 @@ class ProductService:
                     raise ProductError("invalid_credentials", "Credentials changed", 401)
                 expected_hash = str(current["password_hash"])
         return self.create_session(str(user["id"]), expected_password_hash=expected_hash)
+
+    def reauthenticate_password(self, *, user_id: str, session_token: str, password: str) -> None:
+        with self.database.connect() as conn:
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        candidate = (
+            user["password_hash"]
+            if user and user["password_enabled"]
+            else self._dummy_password_hash
+        )
+        matches = verify_password(password, candidate)
+        if not user or not user["password_enabled"] or not matches:
+            raise ProductError("invalid_credentials", "Password is incorrect", 401)
+        with self.database.transaction(immediate=True) as conn:
+            changed = conn.execute(
+                "UPDATE sessions SET reauthenticated_at=? WHERE token_hash=? AND user_id=? "
+                "AND expires_at>? AND session_generation=? AND EXISTS(SELECT 1 FROM users "
+                "WHERE id=? AND password_hash=? AND password_enabled=1 AND session_generation=?)",
+                (
+                    timestamp(),
+                    token_hash(session_token),
+                    user_id,
+                    timestamp(),
+                    user["session_generation"],
+                    user_id,
+                    candidate,
+                    user["session_generation"],
+                ),
+            ).rowcount
+            if not changed:
+                raise ProductError("invalid_credentials", "Sign in again before continuing", 401)
+
+    @staticmethod
+    def require_recent_auth(conn: sqlite3.Connection, *, user_id: str, session_token: str) -> None:
+        recent = timestamp(utcnow() - timedelta(minutes=5))
+        valid = conn.execute(
+            "SELECT 1 FROM sessions JOIN users ON users.id=sessions.user_id "
+            "WHERE sessions.token_hash=? AND users.id=? AND users.account_active=1 "
+            "AND sessions.expires_at>? AND sessions.reauthenticated_at>=? "
+            "AND sessions.session_generation=users.session_generation",
+            (token_hash(session_token), user_id, timestamp(), recent),
+        ).fetchone()
+        if not valid:
+            raise ProductError(
+                "reauthentication_required", "Confirm your identity to continue", 403
+            )
 
     def demo_session(self) -> dict[str, str]:
         if not self.settings.seed_demo_account:
@@ -1359,12 +1410,20 @@ class ProductService:
     def account(self, user_id: str) -> dict[str, Any]:
         with self.database.connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            google_connected = (
+                conn.execute(
+                    "SELECT 1 FROM google_identities WHERE user_id=?", (user_id,)
+                ).fetchone()
+                is not None
+            )
         if not user:
             raise ProductError("user_not_found", "Account not found", 404)
         return {
             "id": user["id"],
             "email": user["email"],
             "email_verified": bool(user["email_verified"]),
+            "password_enabled": bool(user["password_enabled"]),
+            "google_connected": google_connected,
             "credits": user["credit_balance"],
             "billing_configured": self.settings.billing_configured,
             "credit_pack_size": self.settings.credit_pack_size,

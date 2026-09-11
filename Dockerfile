@@ -40,7 +40,8 @@ RUN set -eu; \
     python -m pip install --no-cache-dir --no-deps "$1"; \
     rm -r /tmp/unrender-wheel; \
     python -m pip check; \
-    python -m pip uninstall --yes pip setuptools
+    python -m pip uninstall --yes pip setuptools; \
+    find /usr -xdev -type f -perm /6000 -exec chmod a-s {} +
 
 USER unrender
 EXPOSE 8000

@@ -56,8 +56,15 @@
   "limitations": [
     "Hourly cadence and one-minute cache can delay detection and miss short incidents.",
     "Queue, backup and ledger failures were tested locally, not each induced in production.",
-    "First scheduled run has not yet been observed; both verification runs were manually triggered.",
     "No delivery latency or platform availability guarantee is established.",
     "15-minute failure-rate and repeated authentication/signature-failure alerts remain separate work."
-  ]
+  ],
+  "scheduled_run": {
+    "trigger": "scheduled",
+    "started_at": "2026-09-11T01:17:00Z",
+    "success_logged_at": "2026-09-11T01:17:07Z",
+    "platform_success_logged_at": "2026-09-11T01:17:10Z",
+    "result": "success",
+    "command_or_thresholds_changed": false
+  }
 }

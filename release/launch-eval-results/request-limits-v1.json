@@ -1,0 +1,81 @@
+{
+  "scope": "Existing owned accounts; HTTPS quotas and persistence; no inference",
+  "runtime_commit": "be6c99ba765cc7fcda0725eb0827440ac567aa95",
+  "ci_run": 34550763910,
+  "web_deploy": "dep-dahlkaifngtc73d1je80",
+  "new_inference_calls": 0,
+  "health": {
+    "status": "ready",
+    "extractor": "modal",
+    "worker": "running"
+  },
+  "secure_httponly_session_cookie": true,
+  "approved_chart_preserved": true,
+  "exports": {
+    "csv": {
+      "bytes": 250
+    },
+    "json": {
+      "bytes": 1450
+    },
+    "xlsx": {
+      "bytes": 5836
+    }
+  },
+  "xlsx_audit_sheet": true,
+  "quota": {
+    "successful_canary_requests": 120,
+    "last_status": 429,
+    "single_server_minute": true,
+    "elapsed_seconds": 11.31,
+    "second_session_same_tenant_status": 429,
+    "rotated_forwarded_header_status": 429,
+    "other_tenant_status": 200
+  },
+  "existing_extraction_credits": 1,
+  "readiness_after_tenant_exhaustion": {
+    "status": "ready",
+    "extractor": "modal",
+    "worker": "running"
+  },
+  "operations": {
+    "status": "ok",
+    "checks": {
+      "queue_timely": true,
+      "provider_failures_below_threshold": true,
+      "provider_latency_below_threshold": true,
+      "credit_ledger_consistent": true,
+      "backup_recent": true,
+      "worker_available": true
+    }
+  },
+  "status": "passed",
+  "observed_at": "2026-09-11T01:35:13.518209+00:00",
+  "remote_checks": {
+    "database_integrity": true,
+    "foreign_keys": true,
+    "approved_chart_preserved": true,
+    "provider_pin_preserved": true,
+    "backup_status_preserved": true
+  },
+  "ci": {
+    "tests_passed": 233,
+    "tests_skipped": 1,
+    "verify_job": "success",
+    "container_job": "success"
+  },
+  "limitations": [
+    "Only existing owned accounts were exercised; no inference or uploads ran.",
+    "API-key and malformed-request bounds have CI coverage, not separate hosted probes in this receipt.",
+    "Global capacity was not deliberately exhausted on the live service; it can still affect all tenants.",
+    "Forwarded client-IP attribution remains unavailable; quotas do not establish a billing ceiling."
+  ],
+  "verified_runtime_limits": {
+    "global_requests_per_minute": 600,
+    "global_auth_per_minute": 30,
+    "tenant_requests_per_minute": 120,
+    "account_auth_per_minute": 10,
+    "allow_registration": false,
+    "initial_credits": 0
+  }
+}

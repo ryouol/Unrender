@@ -22,14 +22,18 @@ review. A final review of the release diff remains required after remaining work
    stores bounded independent challenges instead of replacing the only link.
    Failed sends delete their own challenge; completion invalidates siblings.
    Regressions cover failure, sibling consumption, capacity and expiration.
-6. **Fixed locally P2; deployment verification pending — operator SSH.**
+6. **Fixed and verified on Render P2 — operator SSH.**
    `Dockerfile` now creates a non-root home, shell and private .ssh directory.
-   Verify Render operator SSH before relying on grant-credits in production.
-7. **Open P1 — Render client-IP attribution.** `render.yaml` uses Docker without
-   a verified trusted proxy setup. The default Uvicorn proxy trust can group users
-   behind the Render edge into a shared auth bucket. Verify ingress/header
-   behavior and configure/test trust before release. Do not blindly trust spoofable
-   forwarded values. See RENDER_MODAL_LAUNCH.md.
+   Hosted operator SSH and account provisioning passed; the deployed UID/GID
+   check is recorded in CONTAINER_SCAN.md.
+7. **Resolved P1 — shared Render proxy request quotas.** The original peer-address
+   buckets grouped unrelated users. Hosted public/private ingress probes showed
+   why forwarded values cannot safely establish identity. Runtime `be6c99b` uses
+   global capacity, validated tenant quotas and normalized login-account quotas.
+   Hosted verification exhausted one account at 120 ordinary requests while a
+   second account still received 200; sessions and headers could not reset that
+   tenant quota. Public client-IP attribution remains unavailable for logs, but
+   admission no longer depends on it. See REQUEST_LIMITS.md for limits and evidence.
 8. **Open P2 — review size.** PR #2 at `02c3a6b` has 2,134 changed text
    lines across 51 files (1,478 excluding README/docs). The smallest coherent
    first stage is schema v9 plus isolated migration-preservation coverage
@@ -488,5 +492,9 @@ reviews completed. The full suite passed 233 tests / 1 skipped before the clock
 fixture adjustment; all 10 focused final quota tests then passed, including the
 additional API-key coverage. The testing reviewer rechecked the fixture and key
 assertions without new findings. Ruff, mypy across 19 product files and Blueprint
-validation passed. Hosted rollout remains separate evidence. No model, provider
-pins, signup policy or credit grant changed.
+validation passed. CI run 34550763910 then passed the final 233-test suite (one
+skipped) and production container smoke. Runtime `be6c99b` is deployed; separate
+hosted verification passed tenant-quota isolation, sign-in, preserved approved
+exports, SQLite integrity and healthy operational checks. The receipt is linked
+from REQUEST_LIMITS.md. No inference ran, and no model, provider pins, signup
+policy or credit grant changed.

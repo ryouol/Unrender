@@ -87,8 +87,10 @@ seconds and was still within the one-hour lookback. The other operational checks
 were healthy. The endpoint recovered after that event aged out, without changing
 data or thresholds. No website outage, synthetic failure or GPU call was induced.
 The second manual run logged success at 01:05:18 UTC and completed successfully
-in 10.9 seconds according to Render. The deployed command and schedule remained
-unchanged. Receipts are in `release/launch-eval-results/operations-monitor-v1.json`.
+in 10.9 seconds according to Render. The first scheduled run then started at
+01:17:00 UTC, logged a passed check at 01:17:07 and completed successfully at
+01:17:10. The deployed command and schedule remained unchanged. Receipts are in
+`release/launch-eval-results/operations-monitor-v1.json`.
 The cron has an explicit failure-only notification override; no app/Modal
 credentials, shared environment groups or persistent disk are attached.
 

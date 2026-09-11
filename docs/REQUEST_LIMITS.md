@@ -2,7 +2,9 @@
 
 The app separates shared service capacity from ordinary account quotas. A public
 request's forwarding headers and peer address do not establish its identity.
-This change is prepared locally; hosted rollout verification is pending.
+This change is live on Render at `be6c99b`, deployment
+`dep-dahlkaifngtc73d1je80`. CI run 34550763910 passed all 233 tests (one skipped),
+dependency audits, lint/types and the production container build/smoke checks.
 
 | Scope | Default per minute | Configuration |
 |---|---:|---|
@@ -32,6 +34,26 @@ Global exhaustion still affects everyone and can reject readiness checks. These
 are bounded capacity controls for the one-instance deployment, not an uptime or
 resistance-to-distributed-attack guarantee. SQLite row budgets and housekeeping
 bound retained counters. No global quota is a dollar cap.
+
+## Hosted quota verification — September 11, 2026 UTC
+
+The existing zero-credit operator test account completed exactly 120 ordinary
+requests within one server minute; its next request returned 429. Another session
+for that account and a changed forwarding header also received 429. The other
+owned account still received 200, and readiness remained healthy. The sequence
+took 11.31 seconds. No global quota was exhausted in production.
+
+Hosted sign-in, Secure HttpOnly cookies, the existing approved chart and all three
+exports passed, including the workbook audit sheet. Read-only SSH checks confirmed
+SQLite integrity/foreign keys, the unchanged provider pin and retained backup
+status after deployment. Operational checks were healthy. No upload or inference
+ran, no account was created, and the owner's one extraction credit remained.
+The sanitized receipt is
+`release/launch-eval-results/request-limits-v1.json`.
+
+API-key sharing, malformed authenticated requests and normalized login quotas
+have regression coverage in CI; this hosted exercise did not independently replay
+every regression or deliberately exhaust shared service capacity.
 
 ## Hosted ingress evidence — September 10, 2026
 

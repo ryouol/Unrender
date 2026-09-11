@@ -16,11 +16,12 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `02597a6`; deployment `dep-dahl4ncs728c73cgvpqg`.
+- Live runtime code: `be6c99b`; deployment `dep-dahlkaifngtc73d1je80`.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
-  override. It has no app/Modal credentials or persistent disk.
+  override. It has no app/Modal credentials or persistent disk. Its build remains
+  `02597a6`; the September 11 01:17 UTC scheduled run passed.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -132,9 +133,16 @@ preprocessing was not silently changed during deployment.
   retest passed: one charged attempt, no redispatch, terminal failure, and approved
   work/export persistence. Failed diagnostic jobs were removed after recording
   the results; the approved example remains available.
-- Trusted proxy client-IP attribution remains open: live access logs show Render
-  private proxy addresses. Do not blindly trust forwarded headers. Verify header
-  rewriting and the private/direct ingress boundary before public signup.
+- Request admission now separates shared capacity from validated tenant and
+  normalized login quotas. The hosted test exhausted one zero-credit account at
+  120 requests while another account and readiness remained available. A second
+  session and changed forwarding header could not reset the exhausted quota.
+  Public/private ingress probes established that forwarded identity is spoofable
+  across the shared private boundary. Client IPs remain unavailable for attribution,
+  but quotas no longer depend on them. See REQUEST_LIMITS.md. CI on `be6c99b`
+  passed 233 tests / one skipped and both verification/container jobs. Hosted
+  sign-in, approved exports, database integrity and the provider pin survived the
+  update; no inference credit was spent.
 - Render service failure alerts now have explicit UNRENDER-only overrides and
   an Email destination. The hourly monitor's first run detected the pilot's
   191.53-second provider attempt, exited with status 1, and delivered a failure
@@ -142,6 +150,8 @@ preprocessing was not silently changed during deployment.
   operational endpoint returned to healthy after the event naturally left its
   one-hour window; no threshold or production data was altered. See
   OPERATIONS.md for the monitor's cadence, thresholds and remaining alert gaps.
+  Its first scheduled run started at 01:17:00 UTC and finished successfully at
+  01:17:10 UTC, separately from the earlier manual alert/recovery checks.
   Scheduled coordinated off-host
   copies are enabled and the first restore drill passed; measured recovery
   objectives remain open. A disk snapshot alone does not meet the app's

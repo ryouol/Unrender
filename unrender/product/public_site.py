@@ -48,7 +48,7 @@ INDEXABLE_PATHS = ("/",)
 def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
     filename, title, description = PAGES[path]
     content = (static_dir / filename).read_text()
-    social_image = escape(base_url + "/static/demo/revenue-example.png", quote=True)
+    social_image = escape(base_url + "/static/artwork/unfold-hero-1600.webp", quote=True)
     # Fixed page allowlist plus validated deployment origin: never the Host header.
     tags = (
         f'<link rel="canonical" href="{escape(base_url + path, quote=True)}">'
@@ -57,8 +57,8 @@ def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
         f'<meta property="og:description" content="{escape(description, quote=True)}">'
         f'<meta property="og:url" content="{escape(base_url + path, quote=True)}">'
         f'<meta property="og:image" content="{social_image}">'
-        '<meta property="og:image:alt" content="Illustrative quarterly revenue chart: '
-        'Q1 12.4, Q2 18.6, Q3 16.8, Q4 24.2 million dollars">'
+        '<meta property="og:image:alt" content="A paper chart unfolds into numbers '
+        'and a spreadsheet. Concept illustration of chart-to-data extraction.">'
         '<meta name="twitter:card" content="summary_large_image">'
         f'<meta name="twitter:title" content="{escape(title, quote=True)}">'
         f'<meta name="twitter:description" content="{escape(description, quote=True)}">'
@@ -66,6 +66,10 @@ def document(static_dir: Path, path: str, base_url: str) -> HTMLResponse:
         '<link rel="icon" href="/static/icons/favicon.ico" sizes="any">'
         '<link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" type="image/png">'
         '<link rel="icon" href="/static/icons/favicon-16.png" sizes="16x16" type="image/png">'
+        '<link rel="icon" href="/static/icons/favicon-dark-32.png" sizes="32x32" '
+        'type="image/png" media="(prefers-color-scheme: dark)">'
+        '<link rel="icon" href="/static/icons/favicon-dark-16.png" sizes="16x16" '
+        'type="image/png" media="(prefers-color-scheme: dark)">'
         '<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">'
         '<link rel="manifest" href="/static/site.webmanifest">'
         '<script src="/static/site.js" defer></script>'

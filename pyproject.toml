@@ -89,6 +89,7 @@ include = ["unrender*"]
     "static/*.js",
     "static/*.webmanifest",
     "static/icons/*",
+    "static/artwork/*",
     "static/demo/*",
     "static/fonts/*",
 ]

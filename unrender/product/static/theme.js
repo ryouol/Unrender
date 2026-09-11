@@ -14,6 +14,10 @@
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     for (const picker of document.querySelectorAll("[data-theme-picker]")) picker.value = preference;
+    const markPath = `/static/icons/brand-mark${theme === "dark" ? "-dark" : ""}.png`;
+    for (const mark of document.querySelectorAll(".wordmark img")) {
+      if (mark.getAttribute("src") !== markPath) mark.setAttribute("src", markPath);
+    }
   }
   apply();
   system.addEventListener("change", apply);

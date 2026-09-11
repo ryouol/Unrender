@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -479,6 +480,66 @@ def test_verification_hashing_releases_writer_and_fences_credential_change(tmp_p
     assert caught.value.code == "invalid_account_link"
     with service.database.connect() as conn:
         assert conn.execute("SELECT email_verified FROM users").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("state", ["unknown", "expired", "consumed"])
+def test_invalid_reset_links_reject_before_password_hashing(tmp_path, monkeypatch, state):
+    service = service_for(tmp_path)
+    service.provision_user("owner@example.com", PASSWORD)
+    link = service.operator_account_link("owner@example.com")
+    token = parse_qs(urlsplit(link).fragment)["token"][0]
+    if state == "unknown":
+        token = "unknown-reset-token"
+    elif state == "expired":
+        with service.database.transaction() as conn:
+            conn.execute("UPDATE account_challenges SET expires_at='2000-01-01'")
+    else:
+        service.complete_account_email(token, purpose="reset", password=NEW_PASSWORD)
+
+    def forbidden_hash(_):
+        pytest.fail("An invalid reset link reached password hashing")
+
+    monkeypatch.setattr("unrender.product.service.hash_password", forbidden_hash)
+    with pytest.raises(ProductError) as caught:
+        service.complete_account_email(token, purpose="reset", password=PASSWORD)
+    assert caught.value.code == "invalid_account_link"
+
+
+@pytest.mark.parametrize("change", ["expire", "reissue", "consume"])
+def test_reset_revalidates_challenge_after_password_work(tmp_path, monkeypatch, change):
+    from unrender.product import service as service_module
+
+    service = service_for(tmp_path)
+    service.provision_user("owner@example.com", PASSWORD)
+    link = service.operator_account_link("owner@example.com")
+    token = parse_qs(urlsplit(link).fragment)["token"][0]
+    with pytest.raises(ProductError) as invalid_password:
+        service.complete_account_email(token, purpose="reset", password="short")
+    assert invalid_password.value.code == "invalid_password"
+    original_hash = service_module.hash_password
+    winner_password = "the concurrent winning password"
+
+    def hash_with_concurrent_change(password):
+        result = original_hash(password)
+        if change == "expire":
+            with service.database.connect() as conn:
+                conn.execute("PRAGMA busy_timeout=50")
+                conn.execute("UPDATE account_challenges SET expires_at='2000-01-01'")
+                conn.commit()
+        elif change == "reissue":
+            service.operator_account_link("owner@example.com")
+        else:
+            with monkeypatch.context() as concurrent:
+                concurrent.setattr(service_module, "hash_password", original_hash)
+                service.complete_account_email(token, purpose="reset", password=winner_password)
+        return result
+
+    monkeypatch.setattr(service_module, "hash_password", hash_with_concurrent_change)
+    with pytest.raises(ProductError) as caught:
+        service.complete_account_email(token, purpose="reset", password=NEW_PASSWORD)
+    assert caught.value.code == "invalid_account_link"
+    current_password = winner_password if change == "consume" else PASSWORD
+    assert service.authenticate("owner@example.com", current_password)["session"]
 
 
 @pytest.mark.parametrize("mail_path", ["register", "request-verification", "forgot-password"])

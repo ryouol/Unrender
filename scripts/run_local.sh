@@ -13,6 +13,12 @@ export UNRENDER_ALLOW_REGISTRATION=true
 export UNRENDER_REQUIRE_EMAIL_VERIFICATION=false
 export UNRENDER_INITIAL_CREDITS=3
 export UNRENDER_SEED_DEMO=true
+# An operator shell may carry production destinations; local data must stay local.
+export UNRENDER_BACKUP_VOLUME=''
+export UNRENDER_SMTP_HOST=''
+export UNRENDER_SMTP_USERNAME=''
+export UNRENDER_SMTP_PASSWORD=''
+export UNRENDER_EMAIL_FROM=''
 export STRIPE_SECRET_KEY=''
 export STRIPE_WEBHOOK_SECRET=''
 export STRIPE_PRICE_ID=''

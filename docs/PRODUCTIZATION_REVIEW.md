@@ -3,7 +3,9 @@
 Read-only subagent reviews applied all code-review skills (context, testing,
 breaking changes, change size), plus three simplify passes (reuse, quality,
 efficiency). This records every reported issue, including those fixed during the
-review. A final review of the release diff remains required after remaining work.
+review. The September 11 UTC whole-diff review covered `c74e874...af1ff68`;
+the two resulting code fixes and their regressions then passed focused rechecks.
+New code after that reviewed delta requires its own review.
 
 1. **Fixed — duplicate export button busy state.** `static/app.js`'s actionButton
    now owns pending state and guards reenabling against stale auth/view epochs;
@@ -498,3 +500,40 @@ hosted verification passed tenant-quota isolation, sign-in, preserved approved
 exports, SQLite integrity and healthy operational checks. The receipt is linked
 from REQUEST_LIMITS.md. No inference ran, and no model, provider pins, signup
 policy or credit grant changed.
+
+59. **Fixed P2 — local replay inherited a production backup destination**
+    (`scripts/run_local.sh:11,19` at reviewed `af1ff68`). All three simplify
+    reviewers independently confirmed that an operator shell could pass its
+    `UNRENDER_BACKUP_VOLUME` into the local worker. A due backup could then publish
+    the local demo database and prune production recovery history. The launcher
+    now explicitly clears backup and SMTP destinations. An isolated executable
+    substitute runs the actual launcher and inspects Settings without starting
+    the app or calling a provider; production sentinels do not survive.
+60. **Fixed P3 — invalid reset links occupied password-hashing capacity**
+    (`unrender/product/service.py:1042` at reviewed `af1ff68`). The efficiency
+    reviewer observed password hashing before invalid/expired/consumed reset
+    challenges were rejected. Both challenge purposes now reuse the existing
+    preliminary lookup; password work stays outside the write transaction, which
+    still revalidates the challenge. Tests cover rejection without hashing,
+    valid-link password validation and expiry/reissue/consumption during hashing.
+    Verification still fences the validated password hash and session generation.
+    Invalid token plus invalid password now returns the link error first; no
+    dependent client contract was found.
+
+The final reuse/testing, quality/breaking and efficiency rechecks found no new
+issues in those fixes. Full local validation passed 240 tests / 1 skipped, Ruff
+format/lint/security checks and mypy across 19 modules. Context review found no
+new inference/provenance issues: prompt, image/text ordering, greedy 4096-token
+cap, response schema and fixture hashes are preserved. It independently matched
+the inference source digest to the deployed provider source. These are source
+and regression reviews, not new live inference, SMTP or visual quality evidence.
+
+The existing change-size concerns (8 and 17) remain: the reviewed combined PR at
+`af1ff68` contains 6,097 changed text lines across 84 files (17 binaries), or 4,455
+text lines excluding README/docs. Later independent commits do not split the
+2,133-line initial commit. The smallest proposed first stage is schema v9 plus
+its migration-preservation regression, approximately 42 changed lines; follow
+with account/credential fencing, public/account UI, provider publication/deadline
+and operator/deployment stages, keeping each feature's regressions together.
+This is a review-size concern, not a newly discovered runtime failure. PR #2
+remains a combined draft; no history was rewritten and no review comments posted.

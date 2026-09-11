@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import { appPath, source } from "./browser_product_source.mjs";
 import vm from "node:vm";
 import { TextEncoder } from "node:util";
 import { webcrypto } from "node:crypto";
 
 // Exercise real event handlers and editor rendering. Only network dependencies
 // are replaced, so late replies must survive the same view fences as a browser.
-const appPath = new URL("../unrender/product/static/app.js", import.meta.url);
-const source = ["google.js", "library.js", "settings.js"].map((name) => fs.readFileSync(new URL(`../unrender/product/static/${name}`, import.meta.url), "utf8")).join("\n") + "\n" + fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
 
 function deferred() {
   let resolve;
@@ -47,6 +45,7 @@ function harness({ authenticated = true } = {}) {
   const downloads = [];
   const windowListeners = new Map();
   const timers = new Map();
+  const timerDelays = new Map();
   let timerId = 0;
 
   class Node {
@@ -54,7 +53,7 @@ function harness({ authenticated = true } = {}) {
       Object.assign(this, {
         tag, hidden: false, disabled: false, inert: false, open: false,
         textContent: "", value: "", children: [], dataset: {}, parent: null,
-        style: { setProperty() {} }, attributes: new Map(), listeners: new Map(), fields: new Map(), focused: false,
+        style: { setProperty(name, value) { this[name] = value; } }, attributes: new Map(), listeners: new Map(), fields: new Map(), focused: false,
       });
       const classes = new Set();
       this.classList = {
@@ -129,6 +128,14 @@ function harness({ authenticated = true } = {}) {
     return nodes.get(id);
   };
   node("chart-type-input").tag = "select";
+  node("project-filter").tag = "select";
+  node("library-dialog-form").append(node("library-dialog-fields"));
+  node("review-divider").setAttribute("aria-valuenow", "55");
+  const chartFilters = ["all", "review", "approved"].map((value) => {
+    const button = new Node("button");
+    button.dataset.chartFilter = value;
+    return button;
+  });
   node("result-table").tag = "table";
   for (const id of ["chart-title-input", "x-label-input", "y-label-input", "y-unit-input"]) node(id).tag = "input";
   node("result-form").append(...[
@@ -145,7 +152,7 @@ function harness({ authenticated = true } = {}) {
   node("toast").hidden = true;
   const document = {
     cookie: "unrender_csrf=test-secret", visibilityState: "visible", body: new Node("body"),
-    querySelectorAll: () => [], getElementById: node, createElement: (tag) => new Node(tag), addEventListener() {},
+    querySelectorAll: (selector) => selector === "[data-chart-filter]" ? chartFilters : [], getElementById: node, createElement: (tag) => new Node(tag), addEventListener() {},
   };
   class TestURL extends URL {
     static createObjectURL() {
@@ -156,15 +163,20 @@ function harness({ authenticated = true } = {}) {
     static revokeObjectURL(value) { revokedUrls.push(value); }
   }
   class FormData {
-    constructor(form) { this.fields = new Map(form?.fields); }
+    constructor(form) {
+      this.fields = new Map(form?.fields);
+      for (const input of form?.querySelectorAll("*") || []) {
+        if (["input", "select"].includes(input.tag) && input.name) this.fields.set(input.name, input.value);
+      }
+    }
     get(name) { return this.fields.get(name) ?? null; }
   }
   const window = {
     location: { pathname: "/login" },
     history: { replaceState(_state, _unused, path) { window.location.pathname = path; } },
     confirm: () => true,
-    setTimeout(handler) { timers.set(++timerId, handler); return timerId; },
-    clearTimeout(id) { timers.delete(id); },
+    setTimeout(handler, delay) { timers.set(++timerId, handler); timerDelays.set(timerId, delay); return timerId; },
+    clearTimeout(id) { timers.delete(id); timerDelays.delete(id); },
     addEventListener(name, handler) { windowListeners.set(name, handler); },
   };
   const context = {
@@ -183,6 +195,8 @@ function harness({ authenticated = true } = {}) {
   vm.runInContext(`${source}
     globalThis.test = {
       library, renderLibrary, showLibrary, closeLibraryDialog, editProject, deleteProject, moveChart,
+      loadJobs, loadProjects, refreshAccount, renderJobList, refreshLibrary,
+      handleAuthLifecycleBoundary, renameChart, showProjects, deleteLibraryChart, openSettings,
       state, switchAuth, applyPublicConfig, renderJob, renderJobActions, markEditorDirty,
       showWorkspace,
       downloadExport, jobMutation, restoreVersion, saveCorrections, openJob, beginViewSelection,
@@ -201,6 +215,8 @@ function harness({ authenticated = true } = {}) {
   replace("loadProjects", async () => {});
   replace("refreshAccount", async () => {});
   replace("renderJobList", () => {});
+  // Thumbnail transport is separate from chart/account workflow requests.
+  replace("drainLibraryPreviews", async () => {});
   if (authenticated) {
     storage.set("unrender.auth-state.v2", JSON.stringify({
       version: 2, revision: 1, id: "session-a", phase: "authenticated", principalMarker: "principal-a",
@@ -221,7 +237,7 @@ function harness({ authenticated = true } = {}) {
     await node("result-form").dispatch("input", { target: node("chart-title-input") });
     return true;
   };
-  return { test, node, context, window, windowListeners, replace, select, editTitle, createdUrls, revokedUrls, downloads };
+  return { test, node, context, window, windowListeners, replace, select, editTitle, createdUrls, revokedUrls, downloads, chartFilters, timers, timerDelays };
 }
 
 let passed = 0;
@@ -871,12 +887,29 @@ await check("a failed deletion preserves corrections and the selected chart", as
 
 });
 
-await check("editing an approved result immediately offers save and approve", async () => {
+await check("editing approved data returns the review heading and workflow until saved and approved", async () => {
   const h = harness();
   h.select(makeJob("chart-a", "approved"));
+  const activeSteps = () => h.node("workflow-steps").children
+    .filter((step) => step.getAttribute("aria-current") === "step").map((step) => step.dataset.step);
   assert.equal(h.node("job-actions").children[0].textContent, "Download workbook");
+  assert.equal(h.node("job-title").textContent, "Approved data");
+  assert.deepEqual(activeSteps(), ["export"]);
   await h.editTitle("Corrected approved chart");
   assert.equal(h.node("job-actions").children[0].textContent, "Save & approve");
+  assert.equal(h.node("job-title").textContent, "Review data");
+  assert.equal(h.node("job-status").textContent, "Unsaved changes");
+  assert.match(h.node("job-meta").textContent, /^Last saved/);
+  assert.equal(h.node("review-notice").hidden, false);
+  assert.deepEqual(activeSteps(), ["review"]);
+  let exports = 0;
+  h.context.fetch = async () => { exports += 1; throw new Error("Unsaved data must not be exported"); };
+  const csv = h.node("job-actions").querySelectorAll("button").find((button) => button.textContent === "Download CSV");
+  assert.ok(csv);
+  await csv.click();
+  assert.equal(exports, 0);
+  assert.equal(h.node("export-completion").hidden, true);
+  assert.match(h.node("toast").textContent, /Save your corrections before exporting/);
   const methods = [];
   h.replace("api", async (_path, options) => {
     methods.push(options.method);
@@ -886,6 +919,10 @@ await check("editing an approved result immediately offers save and approve", as
   assert.deepEqual(methods, ["PATCH", "POST"]);
   assert.equal(h.test.state.editorDirty, false);
   assert.equal(h.node("job-actions").children[0].textContent, "Download workbook");
+  assert.equal(h.node("job-title").textContent, "Approved data");
+  assert.match(h.node("job-meta").textContent, /^Approved by you/);
+  assert.equal(h.node("review-notice").hidden, true);
+  assert.deepEqual(activeSteps(), ["export"]);
 });
 
 await check("a late chart request cannot dismiss the next selection's loading notice", async () => {
@@ -956,5 +993,536 @@ await check("old PDF preview completion cannot clear the current page's pending 
   assert.match(h.node("page-counter").textContent, /preview unavailable/);
   assert.equal(h.node("upload-error").hidden, false);
 });
+
+
+const flushHandlers = () => new Promise((resolve) => setImmediate(resolve));
+function libraryField(h, name) {
+  const input = h.node("library-dialog-fields").querySelectorAll("*").find((item) => item.name === name);
+  assert.ok(input, `Missing dialog input ${name}`);
+  return input;
+}
+
+function useLibraryNetwork(h, respond) {
+  for (const name of ["loadJobs", "loadProjects", "refreshAccount", "renderJobList"]) {
+    h.replace(name, h.test[name]);
+  }
+  h.context.fetch = async (path, options) => {
+    const body = await respond(path, options);
+    return { ok: true, status: 200, headers: new Headers({ "content-type": "application/json" }), json: async () => body };
+  };
+}
+
+const libraryAccount = () => ({ id: "account-a", email: "a@example.com", principal_marker: "principal-a", credits: 2, retention_days: 30 });
+
+async function tickLibrary(h) {
+  const timers = [...h.timerDelays].filter(([, delay]) => delay === 10000);
+  assert.equal(timers.length, 1, "Active charts should have one scheduled library refresh");
+  const [id] = timers[0];
+  const callback = h.timers.get(id);
+  h.timers.delete(id);
+  h.timerDelays.delete(id);
+  await callback();
+  await flushHandlers();
+}
+
+await check("a chart completed in the background updates the library and permits deletion", async () => {
+  const h = harness();
+  let job = makeJob("background", "queued");
+  let deleted = false;
+  useLibraryNetwork(h, async (path, options) => {
+    if (path.startsWith("/api/jobs?")) return { items: deleted ? [] : [job], next_cursor: null };
+    if (path === "/api/projects") return { items: [] };
+    if (path === "/api/me") return libraryAccount();
+    assert.equal(path, "/api/jobs/background");
+    if (options.method === "DELETE") { deleted = true; return { status: "deleted" }; }
+    return job;
+  });
+  h.test.state.jobs = [job];
+  await h.test.openJob(job.id);
+  await h.node("back-to-library").click();
+  await flushHandlers();
+  assert.equal(h.node("library-view").hidden, false);
+  assert.equal(h.node("count-review").textContent, "0");
+  job = makeJob("background", "review");
+  await tickLibrary(h);
+  assert.equal(h.node("count-review").textContent, "1");
+  assert.equal(h.test.state.jobs[0].status, "review");
+  assert.ok(h.node("job-list").querySelectorAll("span").some((node) => node.textContent === "Review needed"));
+  await h.chartFilters.find((button) => button.dataset.chartFilter === "review").click();
+  assert.equal(h.node("job-list").children.length, 1);
+  assert.equal([...h.timerDelays.values()].includes(10000), false, "Terminal charts should not keep polling");
+  const confirmation = h.test.deleteLibraryChart(h.test.state.jobs[0]);
+  assert.equal(h.node("library-dialog").open, true);
+  await h.node("library-dialog-form").dispatch("submit");
+  await confirmation;
+  assert.equal(deleted, true);
+  assert.equal(h.node("job-list").children.length, 0);
+});
+
+await check("a late library refresh preserves a newly opened chart and its unsaved corrections", async () => {
+  const h = harness();
+  const reply = deferred();
+  useLibraryNetwork(h, async (path) => {
+    if (path.startsWith("/api/jobs?")) return reply.promise;
+    if (path === "/api/projects") return { items: [] };
+    if (path === "/api/me") return libraryAccount();
+    assert.equal(path, "/api/jobs/reviewing");
+    return makeJob("reviewing");
+  });
+  h.test.state.jobs = [makeJob("background", "queued")];
+  h.test.showLibrary();
+  await h.test.openJob("reviewing");
+  await h.editTitle("Keep the current review");
+  reply.resolve({ items: [makeJob("background", "review"), makeJob("reviewing")], next_cursor: null });
+  await flushHandlers();
+  assert.equal(h.node("library-view").hidden, true);
+  assert.equal(h.node("job-view").hidden, false);
+  assert.equal(h.test.state.currentJob.id, "reviewing");
+  assert.equal(h.node("chart-title-input").value, "Keep the current review");
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal([...h.timerDelays.values()].includes(10000), false);
+});
+
+await check("logout discards pending library, project, and account replies without restarting polling", async () => {
+  const h = harness();
+  const reply = deferred();
+  useLibraryNetwork(h, async (path) => {
+    await reply.promise;
+    if (path.startsWith("/api/jobs?")) return { items: [makeJob("private", "queued")], next_cursor: null };
+    if (path === "/api/projects") return { items: [{ id: "private-project", name: "Private project", chart_count: 1 }] };
+    assert.equal(path, "/api/me");
+    return libraryAccount();
+  });
+  h.test.state.jobs = [makeJob("private", "queued")];
+  h.test.showLibrary();
+  h.context.localStorage.setItem("unrender.auth-state.v2", JSON.stringify({
+    version: 2, revision: 2, id: "signed-out", phase: "signed-out", principalMarker: null,
+  }));
+  h.test.syncAuthRecordFromStorage({ wipe: true });
+  reply.resolve();
+  await flushHandlers();
+  assert.equal(h.test.state.account, null);
+  assert.equal(h.test.state.jobs.length, 0);
+  assert.equal(h.test.library.projects.length, 0);
+  assert.equal(h.node("workspace-view").hidden, true);
+  assert.equal(h.node("job-list").children.length, 0);
+  assert.equal(h.test.state.pollTimer, null);
+  assert.equal([...h.timerDelays.values()].includes(10000), false);
+});
+
+await check("returning before a pending library refresh completes resumes one polling loop", async () => {
+  const h = harness();
+  const first = deferred();
+  let lists = 0;
+  let job = makeJob("background", "queued");
+  useLibraryNetwork(h, async (path) => {
+    if (path.startsWith("/api/jobs?")) {
+      lists += 1;
+      return lists === 1 ? first.promise : { items: [job], next_cursor: null };
+    }
+    if (path === "/api/projects") return { items: [] };
+    if (path === "/api/me") return libraryAccount();
+    assert.equal(path, "/api/jobs/reviewing");
+    return makeJob("reviewing");
+  });
+  h.test.state.jobs = [job];
+  h.test.showLibrary();
+  await h.test.openJob("reviewing");
+  await h.node("back-to-library").click();
+  assert.equal(lists, 1, "Returning should reuse the in-flight library request");
+  first.resolve({ items: [job], next_cursor: null });
+  await flushHandlers();
+  job = makeJob("background", "review");
+  await tickLibrary(h);
+  assert.equal(lists, 2);
+  assert.equal(h.node("count-review").textContent, "1");
+  assert.equal([...h.timerDelays.values()].includes(10000), false);
+});
+
+await check("a hidden library pauses requests and refreshes completed charts when focus returns", async () => {
+  const h = harness();
+  let job = makeJob("background", "queued");
+  let requests = 0;
+  useLibraryNetwork(h, async (path) => {
+    requests += 1;
+    if (path.startsWith("/api/jobs?")) return { items: [job], next_cursor: null };
+    if (path === "/api/projects") return { items: [] };
+    assert.equal(path, "/api/me");
+    return libraryAccount();
+  });
+  h.test.state.jobs = [job];
+  h.test.showLibrary();
+  await flushHandlers();
+  h.context.document.visibilityState = "hidden";
+  const before = requests;
+  job = makeJob("background", "review");
+  await tickLibrary(h);
+  assert.equal(requests, before);
+  h.context.document.visibilityState = "visible";
+  h.test.handleAuthLifecycleBoundary();
+  await flushHandlers();
+  assert.ok(requests > before);
+  assert.equal(h.node("count-review").textContent, "1");
+  assert.equal([...h.timerDelays.values()].includes(10000), false);
+});
+
+await check("a stalled account refresh times out and permits later chart completion updates", async () => {
+  const h = harness();
+  let job = makeJob("background", "queued");
+  let accounts = 0;
+  useLibraryNetwork(h, async (path, options) => {
+    if (path.startsWith("/api/jobs?")) return { items: [job], next_cursor: null };
+    if (path === "/api/projects") return { items: [] };
+    assert.equal(path, "/api/me");
+    accounts += 1;
+    if (accounts > 1) return libraryAccount();
+    return new Promise((_, reject) => {
+      options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Aborted"), { name: "AbortError" })), { once: true });
+    });
+  });
+  h.test.state.jobs = [job];
+  h.test.showLibrary();
+  await flushHandlers();
+  const deadlines = [...h.timerDelays].filter(([, delay]) => delay === 30000);
+  assert.equal(deadlines.length, 1, "The unfinished account request needs a deadline after the lists finish");
+  h.timers.get(deadlines[0][0])();
+  await flushHandlers();
+  assert.match(h.node("toast").textContent, /timed out/);
+  job = makeJob("background", "review");
+  await tickLibrary(h);
+  assert.equal(accounts, 2);
+  assert.equal(h.node("count-review").textContent, "1");
+  assert.equal([...h.timerDelays.values()].includes(10000), false);
+});
+
+await check("library search, project and status filters compose with pagination and layout", async () => {
+  const h = harness();
+  h.test.state.jobs = Array.from({ length: 51 }, (_, index) => ({
+    ...makeJob(`chart-${index}`, index % 3 === 0 ? "approved" : "review"),
+    display_name: `Report ${index}`, project_id: index < 26 ? "project-a" : "project-b",
+  }));
+  h.test.showLibrary();
+  assert.equal(h.node("job-list").children.length, 24);
+  assert.equal(h.node("library-previous").disabled, true);
+  await h.node("library-next").click();
+  assert.equal(h.node("library-page-note").textContent, "Page 2 of 3");
+  await h.node("library-next").click();
+  assert.equal(h.node("job-list").children.length, 3);
+  assert.equal(h.node("library-next").disabled, true);
+  h.node("chart-search").value = " REPORT 50 ";
+  await h.node("chart-search").dispatch("input");
+  assert.equal(h.node("job-list").children.length, 1);
+  assert.equal(h.node("job-list").querySelector("button").getAttribute("aria-label"), "Open Report 50");
+  assert.equal(h.node("library-page-note").textContent, "Page 1 of 1");
+  h.node("chart-search").value = "";
+  await h.node("chart-search").dispatch("input");
+  await h.chartFilters.find((button) => button.dataset.chartFilter === "review").click();
+  h.node("project-filter").value = "project-a";
+  await h.node("project-filter").dispatch("change");
+  assert.equal(h.node("job-list").children.length, 17);
+  assert.match(h.node("library-count").textContent, /^17 charts/);
+  assert.equal(h.chartFilters[1].getAttribute("aria-pressed"), "true");
+  await h.node("list-view-button").click();
+  assert.equal(h.node("job-list").classList.contains("is-list"), true);
+  assert.equal(h.node("grid-view-button").getAttribute("aria-pressed"), "false");
+  h.node("chart-search").value = "no matching chart";
+  await h.node("chart-search").dispatch("input");
+  assert.equal(h.node("job-list").children.length, 0);
+  assert.equal(h.node("library-no-results").hidden, false);
+  assert.equal(h.node("empty-view").hidden, true);
+});
+
+await check("the signed-in logo returns to the dashboard and protects dirty corrections", async () => {
+  const h = harness();
+  h.test.showWorkspace();
+  h.select(makeJob());
+  await h.editTitle("Keep these changes");
+  h.window.confirm = () => false;
+  let prevented = false;
+  await h.node("home-button").dispatch("click", { preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(h.node("home-button").href, "/app");
+  assert.equal(h.test.state.currentJob.id, "chart-a");
+  assert.equal(h.node("chart-title-input").value, "Keep these changes");
+  h.window.confirm = () => true;
+  await h.node("home-button").click();
+  assert.equal(h.window.location.pathname, "/app");
+  assert.equal(h.node("library-view").hidden, false);
+  assert.equal(h.test.state.currentJob, null);
+  assert.equal(h.test.state.editorDirty, false);
+});
+
+for (const status of ["review", "failed", "cancelled"]) {
+  await check(`zero credits cannot reprocess a ${status} chart`, async () => {
+    const h = harness();
+    h.test.state.account.credits = 0;
+    h.select(makeJob("chart-a", status));
+    let requests = 0;
+    h.replace("api", async () => { requests += 1; });
+    const retry = h.node("job-actions").querySelectorAll("button").find((button) => /Reprocess|Try again/.test(button.textContent));
+    assert.ok(retry);
+    assert.equal(retry.disabled, true);
+    await retry.dispatch("click");
+    assert.equal(requests, 0);
+    assert.equal(h.test.state.currentJob.status, status);
+  });
+}
+
+await check("the review divider supports keyboard resizing with accessible bounds", async () => {
+  const h = harness();
+  const divider = h.node("review-divider");
+  for (const [key, expected] of [["ArrowLeft", 50], ["Home", 30], ["ArrowLeft", 30], ["End", 70], ["ArrowRight", 70]]) {
+    let prevented = false;
+    await divider.dispatch("keydown", { key, preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(divider.getAttribute("aria-valuenow"), String(expected));
+    assert.equal(h.node("review-layout").style["--source-share"], `${expected}%`);
+  }
+  await divider.dispatch("dblclick");
+  assert.equal(divider.getAttribute("aria-valuenow"), "55");
+});
+
+await check("viewing and closing settings preserves a dirty editor without a discard prompt", async () => {
+  const h = harness();
+  h.select(makeJob());
+  await h.editTitle("Unsaved source review");
+  let prompts = 0;
+  h.window.confirm = () => { prompts += 1; return true; };
+  await h.node("settings-button").click();
+  assert.equal(h.node("settings-dialog").open, true);
+  await h.node("close-settings").click();
+  assert.equal(h.node("settings-dialog").open, false);
+  assert.equal(prompts, 0);
+  assert.equal(h.node("chart-title-input").value, "Unsaved source review");
+  assert.equal(h.test.state.editorDirty, true);
+});
+
+await check("Projects rechecks corrections entered during its pending request", async () => {
+  const h = harness();
+  h.select(makeJob());
+  const reply = deferred();
+  h.replace("loadProjects", h.test.loadProjects);
+  h.replace("api", () => reply.promise);
+  const pending = h.node("projects-button").click();
+  await h.editTitle("Typed while projects loaded");
+  h.window.confirm = () => false;
+  reply.resolve({ items: [] });
+  await pending;
+  assert.equal(h.test.state.currentJob.id, "chart-a");
+  assert.equal(h.node("chart-title-input").value, "Typed while projects loaded");
+  assert.equal(h.test.state.editorDirty, true);
+});
+
+for (const kind of ["projects", "jobs"]) {
+  await check(`older ${kind} replies cannot overwrite a newer list`, async () => {
+    const h = harness();
+    const older = deferred();
+    const newer = deferred();
+    let calls = 0;
+    h.replace("api", () => ++calls === 1 ? older.promise : newer.promise);
+    const load = kind === "projects" ? h.test.loadProjects : h.test.loadJobs;
+    const first = load();
+    const second = load();
+    newer.resolve({ items: kind === "projects" ? [{ id: "new", name: "Current project", chart_count: 0 }] : [makeJob("new")], next_cursor: null });
+    await second;
+    older.resolve({ items: kind === "projects" ? [{ id: "old", name: "Stale project", chart_count: 0 }] : [makeJob("old")], next_cursor: null });
+    await first;
+    const items = kind === "projects" ? h.test.library.projects : h.test.state.jobs;
+    assert.deepEqual(Array.from(items, (item) => item.id), ["new"]);
+  });
+}
+
+await check("creating a project closes successfully when the subsequent refresh fails", async () => {
+  const h = harness();
+  let creations = 0;
+  h.replace("api", async (path, options) => {
+    assert.equal(path, "/api/projects");
+    assert.equal(options.method, "POST");
+    creations += 1;
+    return { id: "created", name: "Report", chart_count: 0 };
+  });
+  h.replace("loadProjects", async () => { throw new Error("Refresh unavailable"); });
+  const confirmation = h.test.editProject();
+  libraryField(h, "project_name").value = " Report ";
+  await h.node("library-dialog-form").dispatch("submit");
+  await confirmation;
+  assert.equal(h.node("library-dialog").open, false);
+  assert.match(h.node("toast").textContent, /saved.*refresh/i);
+  assert.equal(h.test.library.projects[0].id, "created");
+  await h.node("library-dialog-form").dispatch("submit");
+  assert.equal(creations, 1, "A refresh failure must not leave the successful POST repeatable");
+});
+
+await check("deleting a project without changing its default keeps the charts", async () => {
+  const h = harness();
+  const project = { id: "project-a", name: "Report", chart_count: 1 };
+  const job = { ...makeJob(), project_id: project.id };
+  h.test.library.projects = [project];
+  h.test.state.jobs = [job];
+  let deletions = 0;
+  h.replace("api", async (path, options = {}) => {
+    if (!options.method) return project;
+    assert.equal(options.method, "DELETE");
+    assert.equal(path, "/api/projects/project-a?mode=keep_charts&expected_chart_count=1");
+    deletions += 1;
+    return { status: "deleted", charts_kept: 1, charts_deleted: 0 };
+  });
+  const confirmation = h.test.deleteProject(project);
+  await flushHandlers();
+  assert.equal(libraryField(h, "mode").value, "keep_charts");
+  await h.node("library-dialog-form").dispatch("submit");
+  await confirmation;
+  assert.equal(deletions, 1);
+  assert.equal(h.node("library-dialog").open, false);
+  assert.equal(h.test.library.projects.length, 0);
+  assert.equal(h.test.state.jobs.length, 1);
+  assert.equal(h.test.state.jobs[0].id, job.id);
+  assert.equal(h.test.state.jobs[0].project_id, null);
+});
+
+for (const mode of ["keep_charts", "delete_charts"]) {
+  await check(`deleting a project with ${mode} stays completed after a failed refresh`, async () => {
+    const h = harness();
+    const project = { id: "project-a", name: "Report", chart_count: 1 };
+    h.test.library.projects = [project];
+    h.test.state.jobs = [{ ...makeJob(), project_id: project.id }, { ...makeJob("outside"), project_id: null }];
+    let deletes = 0;
+    h.replace("api", async (path, options = {}) => {
+      if (!options.method) return project;
+      assert.equal(options.method, "DELETE");
+      assert.match(path, new RegExp(`mode=${mode}&expected_chart_count=1`));
+      deletes += 1;
+      return { status: "deleted" };
+    });
+    h.replace("loadProjects", async () => { throw new Error("Refresh unavailable"); });
+    const confirmation = h.test.deleteProject(project);
+    await flushHandlers();
+    libraryField(h, "mode").value = mode;
+    await h.node("library-dialog-form").dispatch("submit");
+    await confirmation;
+    assert.equal(h.node("library-dialog").open, false);
+    assert.equal(h.test.library.projects.length, 0);
+    assert.equal(h.test.state.jobs.length, mode === "keep_charts" ? 2 : 1);
+    assert.ok(h.test.state.jobs.every((job) => job.project_id !== project.id));
+    assert.match(h.node("toast").textContent, /saved.*refresh/i);
+    await h.node("library-dialog-form").dispatch("submit");
+    assert.equal(deletes, 1);
+  });
+}
+
+await check("deleting a chart remains completed after the following list refresh fails", async () => {
+  const h = harness();
+  const removed = makeJob();
+  const kept = makeJob("kept");
+  h.select(removed);
+  h.test.state.jobs = [removed, kept];
+  let deletions = 0;
+  h.replace("api", async (_path, options) => {
+    assert.equal(options.method, "DELETE");
+    deletions += 1;
+    return { status: "deleted" };
+  });
+  h.replace("loadJobs", async () => { throw new Error("List refresh unavailable"); });
+  const confirmation = h.test.deleteLibraryChart(removed);
+  await h.node("library-dialog-form").dispatch("submit");
+  await confirmation;
+  assert.equal(h.node("library-dialog").open, false);
+  assert.equal(h.test.state.currentJob, null);
+  assert.deepEqual(Array.from(h.test.state.jobs, (job) => job.id), ["kept"]);
+  assert.equal(h.node("library-view").hidden, false);
+  assert.match(h.node("toast").textContent, /saved.*refresh/i);
+  await h.node("library-dialog-form").dispatch("submit");
+  assert.equal(deletions, 1);
+});
+
+for (const operation of ["rename", "move"]) {
+  await check(`${operation} applies returned metadata without rerendering unsaved corrections`, async () => {
+    const h = harness();
+    const job = { ...makeJob(), project_id: "old", display_name: "Original name" };
+    h.select(job);
+    h.test.state.jobs = [job];
+    h.test.library.projects = [{ id: "old", name: "Old" }, { id: "new", name: "New" }];
+    await h.editTitle("Unsaved extracted title");
+    h.window.confirm = () => assert.fail("Metadata edits must preserve corrections without a discard prompt");
+    const changed = { ...job, display_name: operation === "rename" ? "New name" : job.display_name, project_id: operation === "move" ? "new" : "old" };
+    h.replace("api", async (path, options) => {
+      assert.equal(path, "/api/jobs/chart-a");
+      assert.equal(options.method, "PATCH");
+      return changed;
+    });
+    const confirmation = operation === "rename" ? h.test.renameChart(job) : h.test.moveChart(job);
+    await flushHandlers();
+    libraryField(h, operation === "rename" ? "name" : "project").value = operation === "rename" ? "New name" : "new";
+    await h.node("library-dialog-form").dispatch("submit");
+    await confirmation;
+    assert.equal(h.test.state.currentJob.project_id, changed.project_id);
+    assert.equal(h.test.state.currentJob.display_name, changed.display_name);
+    assert.equal(h.node("review-filename").textContent, changed.display_name);
+    assert.equal(h.node("chart-title-input").value, "Unsaved extracted title");
+    assert.equal(h.test.state.editorDirty, true);
+    if (operation === "move") {
+      const reopened = h.test.moveChart(h.test.state.currentJob);
+      await flushHandlers();
+      assert.equal(libraryField(h, "project").value, "new");
+      await h.node("library-dialog-close").click();
+      await reopened;
+    }
+  });
+}
+
+for (const operation of ["move", "delete project"]) {
+  await check(`a late ${operation} preflight cannot open a dialog after navigation`, async () => {
+    const h = harness();
+    const job = makeJob();
+    h.select(job);
+    const reply = deferred();
+    if (operation === "move") h.replace("loadProjects", h.test.loadProjects);
+    h.replace("api", () => reply.promise);
+    const pending = operation === "move" ? h.test.moveChart(job) : h.test.deleteProject({ id: "project-a" });
+    h.test.showLibrary();
+    reply.resolve(operation === "move" ? { items: [] } : { id: "project-a", name: "Report", chart_count: 1 });
+    await pending;
+    assert.equal(h.node("library-dialog").open, false);
+    assert.equal(h.node("library-view").hidden, false);
+  });
+}
+
+for (const failure of ["connection timeout", "body timeout", "network failure"]) {
+  await check(`${failure} permits modal dismissal but blocks an uncertain create retry`, async () => {
+    const h = harness();
+    const started = deferred();
+    let requests = 0;
+    h.context.fetch = async (_path, options) => {
+      requests += 1;
+      const blocked = () => new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(Object.assign(new Error("Aborted"), { name: "AbortError" })), { once: true });
+        started.resolve();
+      });
+      if (failure === "network failure") { started.resolve(); throw new TypeError("Network unavailable"); }
+      if (failure === "connection timeout") return blocked();
+      return { ok: true, status: 200, headers: new Headers({ "content-type": "application/json" }), json: blocked };
+    };
+    const confirmation = h.test.editProject();
+    libraryField(h, "project_name").value = "Report";
+    const submit = h.node("library-dialog-form").dispatch("submit");
+    await reached(started);
+    if (failure !== "network failure") {
+      const deadlines = [...h.timerDelays].filter(([, delay]) => delay === 30000);
+      assert.equal(deadlines.length, 1, "The whole request, including response body, needs a live deadline");
+      h.timers.get(deadlines[0][0])();
+    }
+    await submit;
+    assert.equal(h.node("library-dialog").open, true);
+    assert.equal(h.node("library-dialog-close").disabled, false);
+    assert.equal(h.node("library-dialog-submit").disabled, true);
+    assert.match(h.node("library-dialog-error").textContent, /could not confirm.*refresh/i);
+    await h.node("library-dialog-form").dispatch("submit");
+    assert.equal(requests, 1, "An uncertain mutation must not be blindly repeated");
+    await h.node("library-dialog-close").click();
+    await confirmation;
+    assert.equal(h.node("library-dialog").open, false);
+    assert.equal([...h.timerDelays.values()].includes(30000), false);
+  });
+}
 
 console.log(`Browser workflow regressions passed (${passed} scenarios)`);

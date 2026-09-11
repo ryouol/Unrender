@@ -1,0 +1,60 @@
+{
+  "format": "unrender-refined-platform-rollout/v1",
+  "recorded_date_utc": "2026-09-11",
+  "status": "deployed_and_verified_except_live_google",
+  "runtime_commit": "015624a0af219107eb33ff4dc501f07dedc7051e",
+  "pull_request": "https://github.com/ryouol/Unrender/pull/6",
+  "deployment": {"id": "dep-dai3fnu1egvs73dactq0", "live_at_utc": "2026-09-11T17:19:28Z", "maintenance_disabled_at_utc_approx": "2026-09-11T17:22:00Z", "preservation_and_health_verified_before_reopening": true},
+  "ci": [
+    {"scope": "branch", "run_id": "34625970573", "verify": "passed", "container": "passed"},
+    {"scope": "pull_request", "run_id": "34626014418", "verify": "passed", "container": "passed"},
+    {"scope": "main", "run_id": "34626482105", "verify": "passed", "container": "passed"}
+  ],
+  "backup_and_migration": {
+    "path": "/data/release-backups/pre-schema14-20260911T171807Z",
+    "schema_before": 10, "schema_after": 14, "deletion_indexes_verified": 8,
+    "isolated_restore_verified": true, "restored_tables_and_sources_verified": true,
+    "migration_rehearsal_verified": true, "repeat_initialize_verified": true,
+    "temporary_restore_removed": true, "recovery_set_retained": true
+  },
+  "final_preservation": {
+    "after_all_hosted_smoke_checks": true, "stable_tables_verified": 8,
+    "counts_before_and_after": {"api_keys": 0, "credit_ledger": 9, "jobs": 5, "provider_attempts": 5, "result_versions": 6, "sessions": 11, "uploads": 5, "users": 7},
+    "all_stable_table_snapshots_identical": true, "all_source_hashes_identical": true,
+    "aggregate_credits_before_and_after": 1, "sqlite_quick_check": "ok", "foreign_key_violations": 0,
+    "projects": 0, "google_identities": 0, "oauth_attempts": 0, "synthetic_accounts_removed": true,
+    "raw_account_data_and_credential_hashes_omitted": true
+  },
+  "public_https_health": {"live": {"http_status": 200, "status": "ok"}, "ready": {"http_status": 200, "status": "ready", "extractor": "modal", "worker": "running"}, "operations": {"http_status": 200, "status": "ok", "checks_passed": 6, "checks_failed": 0}},
+  "internal_health_probe": {"expected_production_host_header_used": true, "all_checks_passed": true, "private_data_mode": "0700", "runtime_uid": 10001},
+  "hosted_http_checks": {
+    "passed": 30, "failed": 0, "foreign_chart_surfaces_returning_404": 9,
+    "zero_credit_valid_png_http_status": 402, "valid_png_edge_pixels": 64,
+    "project_create_rename_list_and_keep_charts_delete": "passed",
+    "recent_auth_account_deletion": "passed", "deleted_session_http_status": 401,
+    "synthetic_cleanup": "confirmed_deleted", "fixture_note": "Valid 64-pixel PNG used for the final credit-rejection check."
+  },
+  "hosted_browser": {"existing_owner_session_preserved": true, "existing_charts_accessible": 5, "logo_returns_to_my_charts": true, "fresh_approved_workbook_opened": true, "workbook_data_rows_excluding_header": 18, "audit_rows_including_header": 6, "landing_screenshot_captured": true, "removed_example_module_absent": true, "overflow_detected": false, "console_errors": 0, "console_warnings": 0},
+  "google": {
+    "configured": true, "publicly_available": true, "dedicated_personal_project_client": true,
+    "production_audience_configured": true, "live_consent_verified": false,
+    "live_signin_verified": false, "existing_owner_linking_verified": false,
+    "required_next_step": "Sign in to the existing password account, open Account settings, choose Connect Google and confirm the current password. Then verify consent, cancellation, returning Google sign-in and preserved account, charts and credits.",
+    "automatic_email_linking": false, "credential_values_omitted": true
+  },
+  "configuration_and_spend": {
+    "only_new_application_configuration": ["UNRENDER_GOOGLE_CLIENT_ID", "UNRENDER_GOOGLE_CLIENT_SECRET"],
+    "registration_open": true, "initial_credits": 0, "email_enabled": false, "customer_billing_enabled": false,
+    "gpu_inference_calls": 0, "email_sends": 0, "billing_calls": 0,
+    "compute_disk_replicas_unchanged": true, "model_and_provider_pins_unchanged": true
+  },
+  "local_verification": {
+    "pytest_passed": 316, "pytest_skipped": 1, "workflow_scenarios": 73, "google_browser_scenarios": 17, "preview_browser_scenarios": 7,
+    "ruff": "passed", "security_ruff": "passed", "mypy": "passed", "container_http_checks": 24,
+    "container_restart_and_integrity": "passed", "container_packaged_files_compared_at_build_time": 69,
+    "post_build_sql_lint_comment_change_ast_identical": true,
+    "container_scan": {"python_findings": 0, "debian_critical": 3, "debian_high": 51, "baseline_unchanged": true, "fixed_package_versions_listed": false, "clean_vulnerability_scan": false}
+  },
+  "evidence": ["docs/REFINED_PLATFORM_REVIEW.md", "design-qa.md", "outputs/refined-qa/production-backup.json", "outputs/refined-qa/production-postdeploy.json", "outputs/refined-qa/production-lifecycle.json", "outputs/refined-qa/production-final-preservation.json", "outputs/refined-qa/docker-smoke.md"],
+  "remaining_limits": ["Live Google consent/sign-in and password-confirmed owner linking remain unverified.", "Existing legal, model-quality/distribution, accessibility, native-advisory and paid-launch gates remain unchanged."]
+}

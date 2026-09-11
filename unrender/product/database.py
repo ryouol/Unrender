@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 SCHEMA = """
@@ -281,6 +281,15 @@ CREATE TABLE IF NOT EXISTS startup_state (
 );
 INSERT OR IGNORE INTO startup_state(singleton,last_reconciled_at) VALUES (1,NULL);
 
+
+CREATE INDEX IF NOT EXISTS credit_ledger_user_id_idx ON credit_ledger(user_id);
+CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS uploads_user_id_idx ON uploads(user_id);
+CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS pending_deletions_user_id_idx ON pending_deletions(user_id);
+CREATE INDEX IF NOT EXISTS storage_reservations_user_id_idx ON storage_reservations(user_id);
+CREATE INDEX IF NOT EXISTS jobs_upload_id_idx ON jobs(upload_id);
+CREATE INDEX IF NOT EXISTS audit_rollups_job_id_idx ON audit_rollups(job_id);
 """
 
 
@@ -432,6 +441,8 @@ class Database:
                 self._migrate_v11_to_v12(conn)
             elif version == 12:
                 self._migrate_v12_to_v13(conn)
+            elif version == 13:
+                self._migrate_v13_to_v14(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -503,6 +514,24 @@ class Database:
         if self._table_exists(conn, "sessions"):
             self._add_column(conn, "sessions", "reauthenticated_at", "TEXT")
         self._migration_execute(conn, "UPDATE schema_meta SET version=11")
+
+    def _migrate_v13_to_v14(self, conn: sqlite3.Connection) -> None:
+        # Bulk deletion must not repeatedly scan other tenants' quota records.
+        for table, column in (
+            ("credit_ledger", "user_id"),
+            ("sessions", "user_id"),
+            ("uploads", "user_id"),
+            ("api_keys", "user_id"),
+            ("pending_deletions", "user_id"),
+            ("storage_reservations", "user_id"),
+            ("jobs", "upload_id"),
+            ("audit_rollups", "job_id"),
+        ):
+            if self._table_exists(conn, table):
+                self._migration_execute(
+                    conn, f"CREATE INDEX IF NOT EXISTS {table}_{column}_idx ON {table}({column})"
+                )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=14")
 
     def _migrate_v12_to_v13(self, conn: sqlite3.Connection) -> None:
         if self._table_exists(conn, "sessions"):

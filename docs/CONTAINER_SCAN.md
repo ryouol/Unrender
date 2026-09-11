@@ -120,3 +120,20 @@ FTS/MATCH and extension-loading call searches. No exploit payloads were run.
 Lower-severity findings have not been individually assessed. Release assessment
 remains incomplete until deployed operational assumptions are checked and the
 remaining findings receive a supported disposition.
+
+## Deployed identity and privilege check
+
+Read-only SSH inspection of live runtime `02597a6` on September 10 verified:
+
+- PID 1 is `unrender-serve`, with all UID/GID values equal to 10001.
+- Inheritable, permitted, effective and ambient capabilities are zero.
+- `NoNewPrivs` is 1; the capability bounding mask is `00000000000400cb`.
+- The operator SSH process also runs as UID/GID 10001.
+- The live database has zero virtual tables; `/etc/fstab` has no active entries.
+- `/proc/1/status` reports `Seccomp: 0`; this check does not establish a
+  seccomp policy or characterize Render's outer isolation boundary.
+
+These observations support the non-root/no-active-capabilities assumptions for
+the current application process. They do not patch affected packages, prove
+all mount-helper or operator workflows safe, or replace a scan of the final
+deployed image digest. No privileged command or exploit payload was executed.

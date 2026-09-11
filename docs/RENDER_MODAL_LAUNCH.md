@@ -6,9 +6,9 @@ UNRENDER is deployed at https://unrender.onrender.com using the Documents/Codex
 working checkout. The separate Desktop checkout is not the launch source.
 The backend and premium interface were merged separately through PRs
 [#2](https://github.com/ryouol/Unrender/pull/2) and
-[#3](https://github.com/ryouol/Unrender/pull/3). The service still uses an explicit
-deployment of `4ebdcaa`; aligning its branch with `main` does not turn on
-automatic deployments.
+[#3](https://github.com/ryouol/Unrender/pull/3). Public password accounts followed
+in [#4](https://github.com/ryouol/Unrender/pull/4). The service now tracks `main`
+with automatic deployments still off and explicitly runs `449a6de`.
 
 Render project `UNRENDER`, Production environment:
 https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
@@ -19,12 +19,53 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `4ebdcaa`; deployment `dep-daho7fh594qs73fs4mj0`.
+- Live runtime code: `449a6de`; deployment `dep-dahol44s728c73cua960`.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
   override. It has no app/Modal credentials or persistent disk. Its build remains
   `02597a6`; the September 11 04:17 UTC scheduled run passed.
+
+### Public account rollout — September 11, 04:56–05:00 UTC
+
+PR #4 passed verify/container checks on its branch and PR, and merge commit
+`449a6de` passed CI run `34563919196`. Simplify and specialized code-review
+findings are recorded in [PUBLIC_ACCOUNT_REVIEW.md](PUBLIC_ACCOUNT_REVIEW.md).
+
+With ingress closed and no active jobs or storage reservations, the schema-9
+recovery set `/data/release-backups/pre-schema10-20260911T0454Z` was created and
+restored in isolation. Only `UNRENDER_ALLOW_REGISTRATION` changed in the service
+environment, to true; initial credits remained zero and every SMTP/Stripe value
+remained empty. The saved flag was read back before explicit deployment. The
+service branch changed to main; compute, disk, replicas and other projects did
+not change, and automatic deployment remained off.
+
+Deployment `dep-dahojlp42hec739qvh6g` became live at 04:56:37 UTC. Schema 10
+preserved six existing active accounts, five charts, six versions and one credit.
+Legacy mailbox flags became unverified as intended; existing sessions continued
+to work. SQLite integrity, foreign keys, approved result/approval digest, source
+checksum and all health checks passed.
+
+A fresh synthetic zero-credit account passed public HTTPS signup, secure cookie
+checks, logout/login and private job listing. Seven requests for the owner's
+job, source, history and exports returned 404. A valid owned PNG upload returned
+402 before creating any upload, job, challenge, credit grant or provider attempt.
+Credentials stayed in the test process and were discarded after sign-out; one
+`release-check-…@example.invalid` account remains for this persistence receipt.
+
+The schema-10 recovery set
+`/data/release-backups/post-schema10-20260911T0459Z` was also created and restored
+in isolation. A second drained deployment of the same commit preserved the test
+session and a fresh login returned the same account. Render reported
+`dep-dahol44s728c73cua960` live at 04:59:31 UTC; maintenance was disabled after
+health and integrity checks. The owner browser retained its workspace and
+downloaded a fresh approved XLSX with 18 data rows and its Audit sheet. The
+approved support mailto link was verified in the hosted browser.
+
+The existing pinned `unrender-production/infer_one` contract resolved without
+inference. No GPU call, credit grant, customer billing or email sending was part
+of this release. Receipt: `release/launch-eval-results/public-accounts-v1.json`.
+Local port 8000 runs the updated saved-sample replay mode separately from Modal.
 
 ### Premium interface rollout — September 11, 04:30 UTC
 
@@ -49,8 +90,8 @@ session, existing charts and the new review workspace. A fresh XLSX download
 opened successfully with 18 data rows and an Audit sheet containing the source,
 job, model, approval status and approval timestamp. The browser download-event
 observer timed out for the blob download, but the newly written local workbook
-was independently inspected. Signup remains closed on this schema-9 runtime
-until the separate account-policy release is reviewed and deployed.
+was independently inspected. Signup remained closed on that schema-9 runtime until the account-policy
+release described above.
 
 Render owns the disk mount root. The first startup correctly refused to chmod
 `/data`; using the app-owned subdirectory fixed startup without running as root
@@ -77,9 +118,10 @@ normally stays within its minimum. This is not a provider-enforced dollar cap.
 [Render cron billing](https://render.com/docs/cronjobs) charges for active time
 with a minimum of US$1/month per cron service.
 
-Only invited accounts are enabled. Public registration, welcome credits, customer
-billing, and email delivery are off. The invitation commands in OPERATIONS.md let
-recipients choose their own password through a one-use link, without sending email.
+Public password registration is enabled with zero welcome credits. Customer
+billing and email delivery remain off. Account activation is separate from
+mailbox verification; see PUBLIC_ACCOUNTS.md. The invitation commands remain
+available for operator-provisioned access without email sending.
 Grant credits deliberately with `unrender-admin grant-credits email --credits N
 --reference pilot-001`; repeating the reference does not grant twice. Operator
 recovery links are supported; self-service email recovery remains deferred.
@@ -205,9 +247,10 @@ preprocessing was not silently changed during deployment.
 - Complete the base-image advisory assessment's deployment assumptions, provider
   timeout/cancellation coverage beyond the tested restart path, and intended-input
   numerical/correction-time evaluation.
-- Public legal/operator/support details still need completion before a broad
+- Public legal/operator details still need completion before a broad
   customer launch. Email setup is explicitly deferred, not silently considered
-  tested. This is an invited pilot deployment, not a claim that all release gates
+  tested. This is a controlled beta with public signup and operator-granted
+  extraction access, not a claim that all release gates
   are complete.
 
 The UI advertises 10 MiB uploads, 4 MP images, and the PDF page limit. The server

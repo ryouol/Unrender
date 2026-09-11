@@ -57,7 +57,7 @@ services:
       - key: UNRENDER_MODAL_MODEL_DIGEST
         value: "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e"
       - key: UNRENDER_MODAL_PROVIDER_RELEASE
-        value: "9435fb6f0b24068f7006401fd44d49e3a925330267dfb2302156eb677104b08d"
+        value: "e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787"
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET

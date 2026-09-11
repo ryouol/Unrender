@@ -69,7 +69,7 @@ Production app: https://modal.com/apps/royluo05/main/deployed/unrender-productio
 
 Deploy explicitly with `modal deploy modal_train.py::production_app`; the bare
 module selects the separate research app. Approved provider release:
-`9435fb6f0b24068f7006401fd44d49e3a925330267dfb2302156eb677104b08d`.
+`e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787`.
 All release pins are in `render.yaml`. The dedicated Modal API token is stored
 in Render's private environment. Never copy credentials into git, reports, or
 Roy-OS. Render supplies the HTTPS origin through `RENDER_EXTERNAL_URL`.

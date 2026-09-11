@@ -99,6 +99,24 @@ generation separately. A warm call still took 64 seconds, so reserving an always
 warm GPU is not justified by these observations alone. No resource, model,
 decoding, integrity-check or scaling setting changed during this inspection.
 
+### Timing instrumentation prepared after the investigation
+
+The next provider source emits one `inference_timings` JSON log per completed or
+failed function invocation. It records total wall time, completed stage durations
+for snapshot verification, imports, model/processor loading, preprocessing, and
+generation plus decoding. Stage durations use a monotonic host clock; asynchronous
+GPU work can cross stage boundaries, so they are not CUDA kernel timings. A failed
+stage has no completed duration, and a hard container termination may emit no
+final event. `succeeded` describes a returned provider response, not numerical
+accuracy or schema validity.
+
+The event contains no image, prompt, prediction, model path, account identifier,
+or exception text. A broken or closed log stream cannot replace the inference
+result or exception. CPU regression tests preserve the response contract, greedy
+generation settings and model cache reuse. This source change requires a new
+provider release pin and coordinated Modal/Render deployment before collecting
+live stage timings; the existing pilot receipts describe the previous release.
+
 ## Human correction-time protocol
 
 Human correction time is not measured by the automated run. Do not substitute an

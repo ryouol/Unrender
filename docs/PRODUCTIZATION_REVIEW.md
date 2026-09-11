@@ -426,3 +426,21 @@ time remains unmeasured. CI passed on fixture commit `653e8af`.
     supplied Modal observations and stored dispatch timestamps. Queue intervals
     are 5, 0 and 108 seconds at UI precision; execution remains distinct from
     GPU-only time, and fixture attribution is by timestamp rather than call ID.
+
+52. **Fixed P2 — diagnostic output could change inference outcomes**
+    (`modal_train.py:835` at review). The efficiency pass identified an unguarded
+    timing print in `finally`: a broken pipe could replace the response or mask
+    the original exception. Timing emission now suppresses `OSError`, with
+    success/failure regressions that inject a broken sink.
+53. **Fixed P2 — closed log streams raise a different exception**
+    (`modal_train.py:836` at review). The quality pass found that closed stdout
+    raises `ValueError`. The same best-effort boundary now handles it, and both
+    success and original-failure paths are covered. Success is recorded only
+    after response construction. Reuse, breaking-change, testing and context
+    passes reported no further actionable issues.
+
+Timing instrumentation validation: full local suite 213 passed / 1 skipped;
+the final focused provider suite passed 24 tests after sink-failure coverage was
+expanded. Modal's local-execution warnings are expected because tests replace
+the mounted-volume and GPU dependencies. Existing Starlette/httpx deprecation
+remains. Deployment and live per-stage measurements are separate pending work.

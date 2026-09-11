@@ -416,3 +416,136 @@ def test_inference_import_does_not_require_evaluation_dependencies():
         ],
         check=True,
     )
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_inference_timings_preserve_response_and_hide_customer_data(monkeypatch, capsys, fails):
+    import importlib.metadata
+
+    import modal_train
+    from unrender.eval import providers
+
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: modal_train.INFER_DIRECT_DEPENDENCIES.get(name, "test"),
+    )
+    monkeypatch.setattr(modal_train, "_production_model_snapshot", lambda *args: "private-model")
+    monkeypatch.setattr(modal_train, "_provider_release_digest", lambda **kwargs: "release-pin")
+    raw = (
+        '{"chart_type":"bar","title":"private chart",'
+        '"series":[{"name":"s","points":[{"x":"a","y":2}]}]}'
+    )
+
+    def provider(path, prompt, model, *, timings):
+        assert Path(path).read_bytes() == b"private image"
+        if fails:
+            raise ValueError("private exception detail")
+        timings["generate_decode_seconds"] = 1.25
+        return raw
+
+    monkeypatch.setattr(providers, "hf_vlm_provider", provider)
+    call = modal_train.infer_one.local
+    if fails:
+        with pytest.raises(ValueError, match="private exception detail"):
+            call(b"private image", "private repository", "revision", "digest")
+    else:
+        response = call(b"private image", "private repository", "revision", "digest")
+        assert response["raw"] == raw
+        assert response["provider_release"] == "release-pin"
+        assert set(response) == {"raw", "json", "csv", "parse_errors", "provider_release"}
+    output = capsys.readouterr().out
+    event = json.loads(output)
+    assert event["event"] == "inference_timings"
+    assert event["succeeded"] is not fails
+    assert event["total_seconds"] >= 0
+    assert "snapshot_verification_seconds" in event["stages"]
+    assert "private" not in output
+
+    for log_error in (BrokenPipeError, ValueError):
+
+        def broken_log(*args, error=log_error, **kwargs):
+            raise error("log sink unavailable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("builtins.print", broken_log)
+            if fails:
+                with pytest.raises(ValueError, match="private exception detail"):
+                    call(b"private image", "private repository", "revision", "digest")
+            else:
+                assert (
+                    call(b"private image", "private repository", "revision", "digest") == response
+                )
+
+
+def test_hf_timing_does_not_change_generation_or_cached_output(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import numpy as np
+    from PIL import Image
+
+    from unrender.eval import providers
+
+    calls = []
+    loads = []
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    class Processor:
+        def apply_chat_template(self, messages, **kwargs):
+            return "prompt"
+
+        def __call__(self, **kwargs):
+            return Inputs(input_ids=np.array([[1, 2]]))
+
+        def decode(self, tokens, **kwargs):
+            assert list(tokens) == [3, 4]
+            return "unchanged output"
+
+    class Model:
+        device = "cpu"
+
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return np.array([[1, 2, 3, 4]])
+
+    def load_processor(*args, **kwargs):
+        loads.append("processor")
+        return Processor()
+
+    def load_model(*args, **kwargs):
+        loads.append("model")
+        return Model()
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(no_grad=nullcontext))
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoProcessor=SimpleNamespace(from_pretrained=load_processor),
+            AutoModelForImageTextToText=SimpleNamespace(from_pretrained=load_model),
+        ),
+    )
+    monkeypatch.setattr(providers, "_HF_CACHE", {})
+    monkeypatch.setattr(providers, "HF_GEN_CONFIG", {})
+    monkeypatch.setattr(providers, "HF_MODEL_CONFIG", {})
+    source = tmp_path / "source.png"
+    Image.new("RGB", (2, 2)).save(source)
+    for collector in ({}, None, {}):
+        assert (
+            providers.hf_vlm_provider(source, "private prompt", "model", timings=collector)
+            == "unchanged output"
+        )
+        if collector is not None:
+            assert set(collector) == {
+                "imports_seconds",
+                "model_load_seconds",
+                "preprocess_seconds",
+                "generate_decode_seconds",
+            }
+            assert all(value >= 0 for value in collector.values())
+    assert loads == ["processor", "model"]
+    assert all(call["max_new_tokens"] == 4096 and call["do_sample"] is False for call in calls)

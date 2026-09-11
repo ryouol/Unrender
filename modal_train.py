@@ -785,6 +785,7 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
     """Production boundary: exact Hub commit + verified weights + source release."""
     import importlib.metadata
     import tempfile
+    import time
 
     from unrender.eval import providers as _providers
     from unrender.eval.providers import hf_vlm_provider
@@ -792,37 +793,58 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
     from unrender.schema.json_to_csv import chart_to_csv
     from unrender.schema.validate import parse_chart_json
 
-    runtime_packages = set(INFER_DIRECT_DEPENDENCIES) | {"numpy", "safetensors", "tokenizers"}
-    runtime_versions = {
-        package: importlib.metadata.version(package) for package in sorted(runtime_packages)
-    }
-    for package, expected in INFER_DIRECT_DEPENDENCIES.items():
-        if runtime_versions[package] != expected:
-            raise RuntimeError(f"Inference dependency drift: {package}")
-    snapshot = _production_model_snapshot(model_path, revision, model_digest)
-    provider_release = _provider_release_digest(
-        runtime_versions=runtime_versions,
-        model_path=model_path,
-        revision=revision,
-        model_digest=model_digest,
-        prompt_sha256=hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
-    )
+    started = time.perf_counter()
+    timings = {}
+    succeeded = False
+    try:
+        runtime_packages = set(INFER_DIRECT_DEPENDENCIES) | {"numpy", "safetensors", "tokenizers"}
+        runtime_versions = {
+            package: importlib.metadata.version(package) for package in sorted(runtime_packages)
+        }
+        for package, expected in INFER_DIRECT_DEPENDENCIES.items():
+            if runtime_versions[package] != expected:
+                raise RuntimeError(f"Inference dependency drift: {package}")
+        verification_started = time.perf_counter()
+        snapshot = _production_model_snapshot(model_path, revision, model_digest)
+        timings["snapshot_verification_seconds"] = time.perf_counter() - verification_started
+        provider_release = _provider_release_digest(
+            runtime_versions=runtime_versions,
+            model_path=model_path,
+            revision=revision,
+            model_digest=model_digest,
+            prompt_sha256=hashlib.sha256(EXTRACTION_PROMPT.encode("utf-8")).hexdigest(),
+        )
 
-    _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
-    _providers.HF_MODEL_CONFIG.clear()
+        _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
+        _providers.HF_MODEL_CONFIG.clear()
 
-    with tempfile.NamedTemporaryFile(suffix=".png") as f:
-        f.write(image_bytes)
-        f.flush()
-        raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot)
-    pred, errs = parse_chart_json(raw)
-    return {
-        "raw": raw,
-        "json": pred.model_dump() if pred else None,
-        "csv": chart_to_csv(pred) if pred else None,
-        "parse_errors": errs,
-        "provider_release": provider_release,
-    }
+        with tempfile.NamedTemporaryFile(suffix=".png") as f:
+            f.write(image_bytes)
+            f.flush()
+            raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot, timings=timings)
+        pred, errs = parse_chart_json(raw)
+        result = {
+            "raw": raw,
+            "json": pred.model_dump() if pred else None,
+            "csv": chart_to_csv(pred) if pred else None,
+            "parse_errors": errs,
+            "provider_release": provider_release,
+        }
+        succeeded = True
+        return result
+    finally:
+        with suppress(OSError, ValueError):
+            print(
+                json.dumps(
+                    {
+                        "event": "inference_timings",
+                        "succeeded": succeeded,
+                        "total_seconds": time.perf_counter() - started,
+                        "stages": timings,
+                    }
+                ),
+                flush=True,
+            )
 
 
 @app.function(image=train_image, volumes={V: VOL}, gpu=GPU, cpu=4.0, memory=32768, timeout=1200)

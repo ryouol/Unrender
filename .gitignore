@@ -22,6 +22,7 @@ outputs/
 *.png
 !docs/**/*.png
 !unrender/product/static/icons/*.png
+!release/launch-eval-v1/*.png
 
 # Tooling
 .ipynb_checkpoints/

@@ -394,3 +394,17 @@ contains conflicting observations about client-supplied prefixes. Its current
 confirms that services in the same workspace and region share private ingress.
 No unconditional forwarded-header trust was added. Header rewriting and direct
 ingress still need hosted verification before changing rate-limit attribution.
+
+49. **Fixed P2 — frozen pilot fixtures could be overwritten**
+    (`scripts/build_launch_eval.py:62` at review). Efficiency review found that
+    regeneration replaced existing images and hashes in place. Generation now
+    stages a complete set and refuses byte differences for an existing version.
+    Isolated checks passed first publication, identical rerun and changed-manifest
+    refusal without mutation. The final reuse/efficiency recheck was clean.
+50. **Fixed P2 — Git ignored the frozen input PNGs**
+    (`.gitignore:22`; `release/launch-eval-v1/manifest.json:9,52,101`). All three
+    reviewers found that ordinary staging omitted the images. A narrow exception
+    includes only this version's PNGs. Independent visual review confirmed all 15
+    values, categories, axes, legend, dimensions and source hashes. The set uses
+    the research renderer and is explicitly synthetic operational evidence, not
+    representative accuracy or human correction-time evidence.

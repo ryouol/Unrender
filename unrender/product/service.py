@@ -90,6 +90,8 @@ def public_job(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, An
     result: dict[str, Any] = {
         "id": row["id"],
         "source_name": row["source_name"],
+        "display_name": row["display_name"] or row["source_name"],
+        "project_id": row["project_id"],
         "source_mime": row["source_mime"],
         "page_index": row["page_index"],
         "crop": json.loads(row["crop_json"]) if row["crop_json"] else None,
@@ -294,7 +296,10 @@ class ProductService:
 
     def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
         tables = (
+            "projects",
             "account_challenges",
+            "google_identities",
+            "oauth_attempts",
             "sessions",
             "uploads",
             "jobs",
@@ -1126,7 +1131,7 @@ class ProductService:
                 )
             else:
                 conn.execute(
-                    "UPDATE users SET password_hash=?,account_active=1,"
+                    "UPDATE users SET password_hash=?,password_enabled=1,account_active=1,"
                     "email_verified=MAX(email_verified,?),"
                     "session_generation=session_generation+1 WHERE id=?",
                     (replacement, user["email_proof"], user["id"]),
@@ -1186,9 +1191,13 @@ class ProductService:
             normalized = ""
         with self.database.connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE email=?", (normalized,)).fetchone()
-        candidate_hash = user["password_hash"] if user else self._dummy_password_hash
+        candidate_hash = (
+            user["password_hash"]
+            if user and user["password_enabled"]
+            else self._dummy_password_hash
+        )
         password_matches = verify_password(password, candidate_hash)
-        if not user or not password_matches:
+        if not user or not user["password_enabled"] or not password_matches:
             raise ProductError("invalid_credentials", "Email or password is incorrect", 401)
         expected_hash = str(user["password_hash"])
         if password_needs_rehash(expected_hash):
@@ -1215,6 +1224,51 @@ class ProductService:
                     raise ProductError("invalid_credentials", "Credentials changed", 401)
                 expected_hash = str(current["password_hash"])
         return self.create_session(str(user["id"]), expected_password_hash=expected_hash)
+
+    def reauthenticate_password(self, *, user_id: str, session_token: str, password: str) -> None:
+        with self.database.connect() as conn:
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        candidate = (
+            user["password_hash"]
+            if user and user["password_enabled"]
+            else self._dummy_password_hash
+        )
+        matches = verify_password(password, candidate)
+        if not user or not user["password_enabled"] or not matches:
+            raise ProductError("invalid_credentials", "Password is incorrect", 401)
+        with self.database.transaction(immediate=True) as conn:
+            changed = conn.execute(
+                "UPDATE sessions SET reauthenticated_at=? WHERE token_hash=? AND user_id=? "
+                "AND expires_at>? AND session_generation=? AND EXISTS(SELECT 1 FROM users "
+                "WHERE id=? AND password_hash=? AND password_enabled=1 AND session_generation=?)",
+                (
+                    timestamp(),
+                    token_hash(session_token),
+                    user_id,
+                    timestamp(),
+                    user["session_generation"],
+                    user_id,
+                    candidate,
+                    user["session_generation"],
+                ),
+            ).rowcount
+            if not changed:
+                raise ProductError("invalid_credentials", "Sign in again before continuing", 401)
+
+    @staticmethod
+    def require_recent_auth(conn: sqlite3.Connection, *, user_id: str, session_token: str) -> None:
+        recent = timestamp(utcnow() - timedelta(minutes=5))
+        valid = conn.execute(
+            "SELECT 1 FROM sessions JOIN users ON users.id=sessions.user_id "
+            "WHERE sessions.token_hash=? AND users.id=? AND users.account_active=1 "
+            "AND sessions.expires_at>? AND sessions.reauthenticated_at>=? "
+            "AND sessions.session_generation=users.session_generation",
+            (token_hash(session_token), user_id, timestamp(), recent),
+        ).fetchone()
+        if not valid:
+            raise ProductError(
+                "reauthentication_required", "Confirm your identity to continue", 403
+            )
 
     def demo_session(self) -> dict[str, str]:
         if not self.settings.seed_demo_account:
@@ -1305,15 +1359,18 @@ class ProductService:
             self._audit(conn, user_id=user_id, event_type="session_created")
         return {"session": session_token, "csrf": csrf_token}
 
-    def session_user(self, session_token: str | None) -> sqlite3.Row | None:
+    def session_user(
+        self, session_token: str | None, *, allow_pending_google: bool = False
+    ) -> sqlite3.Row | None:
         if not session_token:
             return None
         with self.database.connect() as conn:
             return conn.execute(
                 "SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id "
                 "WHERE sessions.token_hash=? AND sessions.expires_at>? "
-                "AND sessions.session_generation=users.session_generation",
-                (token_hash(session_token), timestamp()),
+                "AND sessions.session_generation=users.session_generation "
+                "AND (sessions.oauth_login_nonce IS NULL OR ?)",
+                (token_hash(session_token), timestamp(), allow_pending_google),
             ).fetchone()
 
     def verify_csrf(self, session_token: str | None, csrf_token: str | None) -> bool:
@@ -1359,12 +1416,20 @@ class ProductService:
     def account(self, user_id: str) -> dict[str, Any]:
         with self.database.connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            google_connected = (
+                conn.execute(
+                    "SELECT 1 FROM google_identities WHERE user_id=?", (user_id,)
+                ).fetchone()
+                is not None
+            )
         if not user:
             raise ProductError("user_not_found", "Account not found", 404)
         return {
             "id": user["id"],
             "email": user["email"],
             "email_verified": bool(user["email_verified"]),
+            "has_password": bool(user["password_enabled"]),
+            "google_connected": google_connected,
             "credits": user["credit_balance"],
             "billing_configured": self.settings.billing_configured,
             "credit_pack_size": self.settings.credit_pack_size,
@@ -2203,7 +2268,7 @@ class ProductService:
     def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
         return public_job(self._job_row(user_id=user_id, job_id=job_id))
 
-    def job_source(self, *, user_id: str, job_id: str) -> bytes:
+    def job_source(self, *, user_id: str, job_id: str, thumbnail: bool = False) -> bytes:
         row = self._job_row(user_id=user_id, job_id=job_id)
         try:
             return self.storage.page_png(
@@ -2211,7 +2276,7 @@ class ProductService:
                 mime_type=row["source_mime"],
                 page_index=int(row["page_index"]),
                 crop=json.loads(row["crop_json"]) if row["crop_json"] else None,
-                max_edge=2200,
+                max_edge=640 if thumbnail else 2200,
             )
         except InvalidUpload as exc:
             raise ProductError("source_unavailable", str(exc), 422) from exc
@@ -2723,65 +2788,93 @@ class ProductService:
         return output.getvalue()
 
     def delete_job(self, *, user_id: str, job_id: str) -> bool:
-        deletion_paths: list[str] = []
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
             ).fetchone()
             if not row:
                 raise ProductError("job_not_found", "Extraction not found", 404)
-            if row["status"] in {"queued", "running"}:
-                raise ProductError("job_busy", "Cancel the extraction before deleting it", 409)
             self._audit(
                 conn,
                 user_id=user_id,
                 event_type="job_deleted",
                 details={"deleted_job_id": job_id},
             )
-            self._queue_deletion(
-                conn,
-                row["source_path"],
-                "job_deleted",
-                user_id=user_id,
-                byte_size=int(row["source_byte_size"]),
-            )
-            deletion_paths.append(str(row["source_path"]))
-            if row["upload_id"]:
-                shared = conn.execute(
-                    "SELECT 1 FROM jobs WHERE upload_id=? AND id<>? LIMIT 1",
-                    (row["upload_id"], job_id),
+            deletion_paths = self._delete_job_in_transaction(conn, row)
+        return self.finish_file_deletion(deletion_paths)
+
+    def _delete_job_in_transaction(self, conn: sqlite3.Connection, row: sqlite3.Row) -> list[str]:
+        if row["status"] in {"queued", "running"}:
+            raise ProductError("job_busy", "Cancel the extraction before deleting it", 409)
+        user_id, job_id = str(row["user_id"]), str(row["id"])
+        self._queue_deletion(
+            conn,
+            row["source_path"],
+            "job_deleted",
+            user_id=user_id,
+            byte_size=int(row["source_byte_size"]),
+        )
+        deletion_paths = [str(row["source_path"])]
+        if row["upload_id"]:
+            shared = conn.execute(
+                "SELECT 1 FROM jobs WHERE upload_id=? AND id<>? LIMIT 1",
+                (row["upload_id"], job_id),
+            ).fetchone()
+            if not shared:
+                upload = conn.execute(
+                    "SELECT * FROM uploads WHERE id=? AND user_id=?",
+                    (row["upload_id"], user_id),
                 ).fetchone()
-                if not shared:
-                    upload = conn.execute(
-                        "SELECT storage_path,byte_size FROM uploads WHERE id=? AND user_id=?",
-                        (row["upload_id"], user_id),
-                    ).fetchone()
-                    if upload:
-                        self._queue_deletion(
-                            conn,
-                            upload["storage_path"],
-                            "last_job_upload_deleted",
-                            user_id=user_id,
-                            byte_size=int(upload["byte_size"]),
-                        )
-                        deletion_paths.append(str(upload["storage_path"]))
-                        conn.execute(
-                            "DELETE FROM uploads WHERE id=? AND user_id=?",
-                            (row["upload_id"], user_id),
-                        )
-            conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, user_id))
-        self.drain_deletion_queue(paths=deletion_paths)
-        with self.database.connect() as conn:
-            remaining = sum(
-                int(
-                    conn.execute(
-                        "SELECT COUNT(*) AS count FROM pending_deletions WHERE storage_path=?",
-                        (path,),
-                    ).fetchone()["count"]
-                )
-                for path in deletion_paths
+                if upload:
+                    deletion_paths.append(self._delete_upload_in_transaction(conn, upload))
+        conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, user_id))
+        return deletion_paths
+
+    def _delete_upload_in_transaction(self, conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+        self._queue_deletion(
+            conn,
+            row["storage_path"],
+            "upload_deleted",
+            user_id=str(row["user_id"]),
+            byte_size=int(row["byte_size"]),
+        )
+        conn.execute("DELETE FROM uploads WHERE id=? AND user_id=?", (row["id"], row["user_id"]))
+        return str(row["storage_path"])
+
+    def discard_upload(self, *, user_id: str, upload_id: str) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT * FROM uploads WHERE id=? AND user_id=?", (upload_id, user_id)
+            ).fetchone()
+            if not row:
+                raise ProductError("upload_not_found", "Upload not found", 404)
+            path = self._delete_upload_in_transaction(conn, row)
+            self._audit(conn, user_id=user_id, event_type="upload_discarded")
+        return self.finish_file_deletion([path])
+
+    def finish_file_deletion(self, paths: list[str]) -> bool:
+        """Attempt bounded cleanup and report whether this operation still has queued files."""
+        if not paths:
+            return True
+        try:
+            self.drain_deletion_queue(paths=paths)
+            with self.database.connect() as conn:
+                for offset in range(0, len(paths), 200):
+                    batch = paths[offset : offset + 200]
+                    placeholders = ",".join("?" for _ in batch)
+                    if conn.execute(
+                        "SELECT 1 FROM pending_deletions WHERE storage_path IN "  # noqa: S608 -- placeholders only
+                        f"({placeholders}) LIMIT 1",
+                        batch,
+                    ).fetchone():
+                        return False
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning(
+                "source_deletion_deferred",
+                extra={"event_name": "source_deletion_deferred", "error_type": type(exc).__name__},
             )
-        return remaining == 0
+            return False
+        return True
 
     def _queue_deletion(
         self,

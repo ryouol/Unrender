@@ -11,7 +11,8 @@
     "pypdfium2",
     "openpyxl",
     "stripe",
-    "modal"
+    "modal",
+    "google-auth"
   ],
   "dependency_distribution_gate_passed": true,
   "policy_version": 2,

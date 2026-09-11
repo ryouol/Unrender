@@ -18,12 +18,13 @@ from fastapi import (
     FastAPI,
     File,
     Header,
+    Query,
     Request,
     Response,
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -32,13 +33,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from unrender.product import google_oauth
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import build_extractor
+from unrender.product.google_accounts import OAUTH_TTL_SECONDS, GoogleAccounts
+from unrender.product.library_web import install_library_routes
 from unrender.product.operations import OperationsProbe
 from unrender.product.public_site import document, error_document, sitemap
 from unrender.product.scheduled_backup import ScheduledBackup
-from unrender.product.security import normalize_email
+from unrender.product.security import normalize_email, random_token, token_hash
 from unrender.product.service import ProductError, ProductService
 from unrender.product.storage import InvalidUpload, Storage
 from unrender.product.worker import JobWorker
@@ -46,22 +50,23 @@ from unrender.product.worker import JobWorker
 logger = logging.getLogger("unrender.web")
 SESSION_COOKIE = "unrender_session"
 CSRF_COOKIE = "unrender_csrf"
+OAUTH_COOKIE = "unrender_oauth_browser"
 
 
 def _security_headers(path: str, *, secure_cookies: bool) -> dict[str, str]:
     headers = {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
-        "Referrer-Policy": "same-origin",
+        "Referrer-Policy": "no-referrer" if path.startswith("/auth/") else "same-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Resource-Policy": "same-origin",
         "Content-Security-Policy": (
-            "default-src 'self'; img-src 'self'; style-src 'self'; "
+            "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
             "script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; "
             "base-uri 'self'; form-action 'self'"
         ),
-        "Cache-Control": "no-store" if path.startswith("/api/") else "no-cache",
+        "Cache-Control": "no-store" if path.startswith(("/api/", "/auth/")) else "no-cache",
     }
     if secure_cookies:
         headers["Strict-Transport-Security"] = "max-age=31536000"
@@ -84,6 +89,9 @@ class SecurityHeadersMiddleware:
         async def send_with_headers(message: Message) -> None:
             nonlocal response_started
             if message["type"] == "http.response.start":
+                if scope.get("path") == "/auth/google/callback":
+                    # Uvicorn logs scope at response start; never log the OAuth code.
+                    scope["query_string"] = b""
                 response_started = True
                 headers = MutableHeaders(scope=message)
                 for name, value in _security_headers(
@@ -187,7 +195,9 @@ class BodyLimitMiddleware:
 
 
 def _is_auth_attempt(path: str, method: str) -> bool:
-    return method == "POST" and path.startswith("/api/auth/") and path != "/api/auth/logout"
+    return (method == "GET" and path.startswith("/auth/google/")) or (
+        method == "POST" and path.startswith("/api/auth/") and path != "/api/auth/logout"
+    )
 
 
 async def _run_admitted(operation: Awaitable[Any], semaphore: asyncio.Semaphore) -> Any:
@@ -270,6 +280,14 @@ class StrictRequest(BaseModel):
 class Credentials(StrictRequest):
     email: str = Field(max_length=254)
     password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordConfirmation(StrictRequest):
+    password: str = Field(min_length=1, max_length=256)
+
+
+class GoogleCompletion(StrictRequest):
+    intent: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class AccountEmailRequest(StrictRequest):
@@ -623,7 +641,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
         csrf_header: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ):
-        user = service.session_user(session)
+        user = service.session_user(
+            session,
+            allow_pending_google=request.url.path
+            in {"/api/auth/google/complete", "/api/auth/logout"},
+        )
         if not user:
             raise ProductError("authentication_required", "Sign in to continue", 401)
         if not service.verify_csrf(session, csrf_header):
@@ -645,6 +667,146 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     current_user_dependency = Depends(current_user)
     csrf_user_dependency = Depends(csrf_user)
     api_user_dependency = Depends(api_user)
+    install_library_routes(
+        app,
+        service,
+        current_user_dependency,
+        csrf_user_dependency,
+        session_cookie=SESSION_COOKIE,
+        clear_cookies=lambda response: _clear_cookies(response, settings),
+    )
+
+    google = GoogleAccounts(service)
+
+    def oauth_cookie(response: Response, browser: str | None = None) -> None:
+        response.set_cookie(
+            OAUTH_COOKIE,
+            browser or "",
+            max_age=OAUTH_TTL_SECONDS if browser else 0,
+            expires=None if browser else 0,
+            path="/auth/google",
+            secure=settings.secure_cookies,
+            httponly=True,
+            samesite="lax",
+        )
+
+    def begin_google(request: Request, mode: str, intent: str = "") -> tuple[str, str]:
+        browser = random_token()
+        attempt = google.begin(
+            browser, mode=mode, session=request.cookies.get(SESSION_COOKIE, ""), intent=intent
+        )
+        return browser, google_oauth.authorization_url(settings, **attempt)
+
+    @app.get("/auth/google/start")
+    def google_start(
+        request: Request,
+        intent: Annotated[str, Query(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")],
+    ):
+        browser, url = begin_google(request, "signin", intent)
+        response = RedirectResponse(url, status_code=303)
+        oauth_cookie(response, browser)
+        return response
+
+    @app.post("/api/auth/google/complete")
+    def complete_google_login(
+        payload: GoogleCompletion, request: Request, user: Any = csrf_user_dependency
+    ):
+        return google.complete_login(
+            user_id=user["id"],
+            session=request.cookies.get(SESSION_COOKIE, ""),
+            intent=payload.intent,
+        )
+
+    @app.post("/api/auth/reauthenticate")
+    def password_reauthentication(
+        payload: PasswordConfirmation, request: Request, user: Any = csrf_user_dependency
+    ):
+        service.require_customer_account(user["id"], "account changes")
+        service.reauthenticate_password(
+            user_id=user["id"],
+            session_token=request.cookies.get(SESSION_COOKIE, ""),
+            password=payload.password,
+        )
+        return {"ok": True}
+
+    @app.post("/api/auth/google/link")
+    def link_google(
+        payload: PasswordConfirmation,
+        request: Request,
+        response: Response,
+        user: Any = csrf_user_dependency,
+    ):
+        password_reauthentication(payload, request, user)
+        browser, url = begin_google(request, "link")
+        oauth_cookie(response, browser)
+        return {"url": url}
+
+    @app.get("/auth/google/reauthenticate")
+    def google_reauthentication(request: Request, user: Any = current_user_dependency):
+        service.require_customer_account(user["id"], "account changes")
+        browser, url = begin_google(request, "reauthenticate")
+        response = RedirectResponse(url, status_code=303)
+        oauth_cookie(response, browser)
+        return response
+
+    @app.get("/auth/google/callback")
+    def google_callback(
+        request: Request,
+        state: Annotated[str, Query(max_length=128)] = "",
+        code: Annotated[str, Query(max_length=4096)] = "",
+        error: Annotated[str, Query(max_length=128)] = "",
+    ):
+        destination = "/login"
+        try:
+            if not settings.google_configured:
+                raise ProductError("google_unavailable", "Google sign-in is unavailable", 503)
+            session = request.cookies.get(SESSION_COOKIE, "")
+            attempt = google.consume(
+                state=state, browser=request.cookies.get(OAUTH_COOKIE, ""), session=session
+            )
+            if attempt["mode"] != "signin":
+                destination = "/app?settings=account"
+            if error or not code:
+                raise ProductError("google_cancelled", "Google sign-in was cancelled", 400)
+            try:
+                claims = google_oauth.exchange_code(
+                    settings, code=code, verifier=attempt["verifier"], nonce=attempt["nonce"]
+                )
+            except Exception:
+                # Provider exceptions may embed tokens, credentials or response bodies.
+                raise ProductError(
+                    "google_failed", "Google sign-in failed; try again", 401
+                ) from None
+            user_id = google.finish(attempt, claims, session)
+            if attempt["mode"] == "signin":
+                values = service.create_session(user_id)
+                with database.transaction(immediate=True) as conn:
+                    conn.execute(
+                        "UPDATE sessions SET oauth_login_nonce=? WHERE token_hash=?",
+                        (attempt["client_nonce"] or None, token_hash(values["session"])),
+                    )
+                response = RedirectResponse("/app", status_code=303)
+                _cookies(response, values, settings)
+            else:
+                key = "connected" if attempt["mode"] == "link" else "reauthenticated"
+                response = RedirectResponse(f"/app?settings=account&{key}=1", status_code=303)
+        except ProductError as exc:
+            safe_codes = {
+                "google_expired",
+                "google_cancelled",
+                "google_failed",
+                "google_unavailable",
+                "google_link_required",
+                "google_already_linked",
+                "google_account_mismatch",
+                "registration_closed",
+                "reauthentication_required",
+            }
+            reason = exc.code if exc.code in safe_codes else "google_failed"
+            separator = "&" if "?" in destination else "?"
+            response = RedirectResponse(f"{destination}{separator}google={reason}", status_code=303)
+        oauth_cookie(response)
+        return response
 
     @app.get("/")
     def index():
@@ -696,6 +858,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def public_config():
         return {
             "registration_open": settings.allow_registration,
+            "google_available": settings.google_configured,
             "sample_available": settings.seed_demo_account,
             "email_available": settings.email_configured,
             "email_verification_required": settings.require_email_verification,
@@ -868,9 +1031,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.get_job(user_id=user["id"], job_id=job_id)
 
     @app.get("/api/jobs/{job_id}/source")
-    def job_source(job_id: str, user: Any = current_user_dependency):
+    def job_source(job_id: str, thumbnail: bool = False, user: Any = current_user_dependency):
         return Response(
-            service.job_source(user_id=user["id"], job_id=job_id), media_type="image/png"
+            service.job_source(user_id=user["id"], job_id=job_id, thumbnail=thumbnail),
+            media_type="image/png",
         )
 
     @app.get("/api/jobs/{job_id}/audit")

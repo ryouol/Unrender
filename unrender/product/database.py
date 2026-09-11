@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 14
 
 
 SCHEMA = """
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified INTEGER NOT NULL DEFAULT 0 CHECK (email_verified IN (0,1)),
     account_active INTEGER NOT NULL DEFAULT 0 CHECK (account_active IN (0,1)),
     password_hash TEXT NOT NULL,
+    password_enabled INTEGER NOT NULL DEFAULT 1 CHECK (password_enabled IN (0,1)),
     account_kind TEXT NOT NULL DEFAULT 'customer'
         CHECK (account_kind IN ('customer','demo')),
     credit_balance INTEGER NOT NULL DEFAULT 0 CHECK (credit_balance >= 0),
@@ -49,8 +50,29 @@ CREATE TABLE IF NOT EXISTS sessions (
     csrf_hash TEXT NOT NULL,
     session_generation INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0),
     expires_at TEXT NOT NULL,
+    reauthenticated_at TEXT,
+    oauth_login_nonce TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS google_identities (
+    subject TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_attempts (
+    state_hash TEXT PRIMARY KEY,
+    browser_hash TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    verifier TEXT NOT NULL,
+    client_nonce TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL CHECK (mode IN ('signin','link','reauthenticate')),
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    session_hash TEXT,
+    session_generation INTEGER,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS oauth_attempts_expiry_idx ON oauth_attempts(expires_at);
 
 CREATE TABLE IF NOT EXISTS uploads (
     id TEXT PRIMARY KEY,
@@ -65,11 +87,22 @@ CREATE TABLE IF NOT EXISTS uploads (
     expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS projects_user_created_idx ON projects(user_id,created_at DESC,id);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     upload_id TEXT REFERENCES uploads(id) ON DELETE SET NULL,
     source_name TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 120),
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
     source_mime TEXT NOT NULL,
     source_path TEXT NOT NULL,
     source_sha256 TEXT NOT NULL,
@@ -111,6 +144,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_user_created_idx ON jobs(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_status_created_idx ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS jobs_lease_expiry_idx ON jobs(status, lease_expires_at);
+CREATE INDEX IF NOT EXISTS jobs_project_idx ON jobs(user_id,project_id);
 
 CREATE TABLE IF NOT EXISTS result_versions (
     id TEXT PRIMARY KEY,
@@ -247,6 +281,15 @@ CREATE TABLE IF NOT EXISTS startup_state (
 );
 INSERT OR IGNORE INTO startup_state(singleton,last_reconciled_at) VALUES (1,NULL);
 
+
+CREATE INDEX IF NOT EXISTS credit_ledger_user_id_idx ON credit_ledger(user_id);
+CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS uploads_user_id_idx ON uploads(user_id);
+CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS pending_deletions_user_id_idx ON pending_deletions(user_id);
+CREATE INDEX IF NOT EXISTS storage_reservations_user_id_idx ON storage_reservations(user_id);
+CREATE INDEX IF NOT EXISTS jobs_upload_id_idx ON jobs(upload_id);
+CREATE INDEX IF NOT EXISTS audit_rollups_job_id_idx ON audit_rollups(job_id);
 """
 
 
@@ -329,6 +372,12 @@ class Database:
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
         storage_reservations = self._columns(conn, "storage_reservations")
+        if "client_nonce" in self._columns(conn, "oauth_attempts"):
+            return 13
+        if "project_id" in jobs:
+            return 12
+        if "password_enabled" in self._columns(conn, "users"):
+            return 11
         if "account_active" in self._columns(conn, "users"):
             return 10
         if "email_verified" in self._columns(conn, "users"):
@@ -386,6 +435,14 @@ class Database:
                 self._migrate_v8_to_v9(conn)
             elif version == 9:
                 self._migrate_v9_to_v10(conn)
+            elif version == 10:
+                self._migrate_v10_to_v11(conn)
+            elif version == 11:
+                self._migrate_v11_to_v12(conn)
+            elif version == 12:
+                self._migrate_v12_to_v13(conn)
+            elif version == 13:
+                self._migrate_v13_to_v14(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -394,6 +451,25 @@ class Database:
                 )
         self._ensure_v6_shape(conn)
         _execute_script(conn, SCHEMA)
+
+    def _migrate_v11_to_v12(self, conn: sqlite3.Connection) -> None:
+        self._migration_execute(
+            conn,
+            "CREATE TABLE IF NOT EXISTS projects ("
+            "id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),"
+            "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
+        )
+        self._add_column(
+            conn,
+            "jobs",
+            "display_name",
+            "TEXT NOT NULL DEFAULT '' CHECK (length(display_name)<=120)",
+        )
+        self._add_column(
+            conn, "jobs", "project_id", "TEXT REFERENCES projects(id) ON DELETE SET NULL"
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=12")
 
     def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
         self._add_column(
@@ -427,6 +503,42 @@ class Database:
         # Legacy reset links have no recorded delivery provenance, so never use
         # one as new evidence of mailbox ownership.
         self._migration_execute(conn, "UPDATE schema_meta SET version=10")
+
+    def _migrate_v10_to_v11(self, conn: sqlite3.Connection) -> None:
+        self._add_column(
+            conn,
+            "users",
+            "password_enabled",
+            "INTEGER NOT NULL DEFAULT 1 CHECK (password_enabled IN (0,1))",
+        )
+        if self._table_exists(conn, "sessions"):
+            self._add_column(conn, "sessions", "reauthenticated_at", "TEXT")
+        self._migration_execute(conn, "UPDATE schema_meta SET version=11")
+
+    def _migrate_v13_to_v14(self, conn: sqlite3.Connection) -> None:
+        # Bulk deletion must not repeatedly scan other tenants' quota records.
+        for table, column in (
+            ("credit_ledger", "user_id"),
+            ("sessions", "user_id"),
+            ("uploads", "user_id"),
+            ("api_keys", "user_id"),
+            ("pending_deletions", "user_id"),
+            ("storage_reservations", "user_id"),
+            ("jobs", "upload_id"),
+            ("audit_rollups", "job_id"),
+        ):
+            if self._table_exists(conn, table):
+                self._migration_execute(
+                    conn, f"CREATE INDEX IF NOT EXISTS {table}_{column}_idx ON {table}({column})"
+                )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=14")
+
+    def _migrate_v12_to_v13(self, conn: sqlite3.Connection) -> None:
+        if self._table_exists(conn, "sessions"):
+            self._add_column(conn, "sessions", "oauth_login_nonce", "TEXT")
+        if self._table_exists(conn, "oauth_attempts"):
+            self._add_column(conn, "oauth_attempts", "client_nonce", "TEXT NOT NULL DEFAULT ''")
+        self._migration_execute(conn, "UPDATE schema_meta SET version=13")
 
     def _ensure_v6_shape(self, conn: sqlite3.Connection) -> None:
         """Repair the only pre-release v6 shape that existed before audit rollups were final."""

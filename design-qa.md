@@ -1,89 +1,54 @@
-# UNRENDER — approved direction implementation QA
+# Refined platform design QA — September 11, 2026
 
-**final result: passed**
+final result: passed
 
-Reviewed September 10–11, 2026, against the approved Refined Instrument direction. This result covers the implemented local UI and its tested workflow. It does not certify the model's accuracy, the live deployment, legal readiness, or cloud permissions.
+The approved paper-unfold landing, visual chart library, cutout/pixel brand and clean correction workspace are implemented. No actionable P0/P1/P2 visual or interaction findings remain in the checked states. This design result does not certify model accuracy or the absence of all software defects.
 
-## Visual truth and capture conditions
+## Reference and capture method
 
-- Source: [approved design board](docs/design/approved-direction.png). Original file: `/Users/royluo/.codex/generated_images/01a08975-3779-7aa1-ab3b-fc2a28dcf1b8/exec-dde45047-86e0-444b-9e50-724386bcbe49.png`.
-- Implementation: `http://127.0.0.1:8000/`, using the Documents/Codex checkout and the real FastAPI application. Local extraction uses saved replay, with no Modal inference.
-- Source pixels: **1672 × 941**, a six-screen board with labels and canvas margins. The board does not specify independent CSS viewports or device density. It is not a 4K single-page screenshot.
-- Browser screenshots: **1440 × 1024**, **1100 × 900**, and **390 × 844** pixels at matching CSS viewport sizes; browser `devicePixelRatio` was **1**. No browser chrome, image stretching, or density resampling is included.
-- Comparisons use the corresponding board panel, theme, and workflow state. The board's miniature frames are not compared pixel-for-pixel to a full desktop page. Landing content uses the same four-point revenue example. Workspace evidence uses the owned 18-row replay fixture, so row density and source artwork differ intentionally.
+Visual truth: `/Users/royluo/.codex/generated_images/01a08975-3779-7aa1-ab3b-fc2a28dcf1b8/`:
 
-## Evidence
+- Landing: `exec-d8972c20-0a8b-4ee6-945d-ed66d601c7ae.png` (1422 × 1106).
+- Library: `exec-f495463b-0ead-4e7c-b171-884013f81e70.png` (1513 × 1039).
+- Review: `exec-f727b601-f4a9-48ed-9754-7bbed1a7d388.png` (1513 × 1039).
 
-| State | Screenshot | Viewport |
-|---|---|---|
-| Landing, light | [landing-light.png](docs/design/landing-light.png) | 1440 × 1024 |
-| Landing, dark | [landing-dark.png](docs/design/landing-dark.png) | 1440 × 1024 |
-| Example, corrected and approved | [example-approved.png](docs/design/example-approved.png) | 1440 × 1024 |
-| Create workspace | [sign-up.png](docs/design/sign-up.png) | 1440 × 1024 |
-| Upload selection | [upload.png](docs/design/upload.png) | 1440 × 1024 |
-| Saved result, review required | [review-light.png](docs/design/review-light.png) | 1440 × 1024 |
-| Approved result | [workspace-light.png](docs/design/workspace-light.png) | 1440 × 1024 |
-| Download started, dark | [approved-dark.png](docs/design/approved-dark.png) | 1440 × 1024 |
-| Tablet workspace, dark | [tablet-dark.png](docs/design/tablet-dark.png) | 1100 × 900 |
-| Mobile focused cell and visible source | [mobile-review.png](docs/design/mobile-review.png) | 390 × 844 |
-| Mobile sign-in | [mobile-sign-in.png](docs/design/mobile-sign-in.png) | 390 × 844 |
-| Mobile signup | [mobile-sign-up.png](docs/design/mobile-sign-up.png) | 390 × 844 |
+Local implementation: `http://127.0.0.1:8000/` and `/app`, captured through the Codex browser at 1440 × 1024 CSS pixels, with 1440 × 1024 screenshot pixels. References were scaled uniformly to 1440 pixels wide, top-aligned, and cropped/padded to 1024 high. Earlier contain-based comparisons and scrolled/full-page stitching captures were superseded. Final landing scroll position was explicitly checked at zero. Comparison boards place reference left and implementation right in a single input.
 
-The source board and implementation screenshots were opened together in the same comparison inputs: landing/light plus review/light; signup plus approved/dark plus mobile review; and landing/dark. They were inspected at original image resolution. Focused comparison covered the headline and CTA group, logo edges, form labels/focus state, source/table headings and cells, dark secondary controls, and approval/export copy. These details are readable in the full-resolution evidence; separate image crops were not needed.
+The private library uses three independently checked, sharp local fixtures. Their values are illustrative test data; they are not inference results. The reference has different chart types/content, two review charts and one approved chart; the captured library has one review chart and two approved after testing. The review comparison contains four quarterly values and an edited Q3 cell. Extra metadata, row removal, save-without-approval, and audit controls support existing product behavior beyond the concept drawing.
+
+## Final evidence
+
+- [Landing comparison](docs/screenshots/refined/landing-comparison-final.png), [typography detail](docs/screenshots/refined/landing-detail-final.png).
+- [Library comparison](docs/screenshots/refined/library-comparison-final.png), [heading and filters detail](docs/screenshots/refined/library-detail-final.png).
+- [Review comparison](docs/screenshots/refined/review-comparison-final.png), [editable table detail](docs/screenshots/refined/review-detail-final.png).
+- [Mobile landing](docs/screenshots/refined/landing-mobile.png), [mobile library](docs/screenshots/refined/library-mobile-viewport.png), [mobile review](docs/screenshots/refined/review-mobile-viewport.png), [mobile signup](docs/screenshots/refined/signup-mobile.png).
+- [976-pixel review](docs/screenshots/refined/review-tablet-final.png), [dark review](docs/screenshots/refined/review-dark-final.png).
+
+Mobile viewport captures are 390 × 844; tablet is 976 × 900. Full-page mobile stitching produced duplicated/blank areas in the browser capture, so viewport captures and actual DOM geometry were used instead. At 976 pixels, source and data top coordinates both measured 305.48 pixels, with widths 504.59 and 396.86; document overflow was false. Mobile intentionally stacks the source above the editor.
+
+## Findings and iterations
+
+1. **Resolved P2 — Landing type and artwork hierarchy.** Early captures used too much heading weight/space, then an overly light weight. Final Helvetica Neue 400, 86-pixel desktop cap, tighter tracking and hero spacing reproduce the approved two-line hierarchy. The final full and focused comparisons above supersede the earlier captures.
+2. **Resolved P2 — Chart menu overlapped status.** More-specific library menu CSS now positions the three-dot button beside the filename, independently of status. The final library capture verifies the separation.
+3. **Resolved P2 — Review hierarchy was too small and vertically loose.** Increased the review heading and table input size and reduced breadcrumb, stepper and pane gaps. Source and editor remain balanced in the final comparison; the 976-pixel check verifies side-by-side correction.
+4. **Resolved P2 — Preview requests competed for server capacity.** The library now serializes private 640-pixel thumbnails, retains mounted cards, and releases object URLs on account/view changes. Browser captures show all three previews; authenticated access and retry behavior also have integration coverage. The CSP explicitly permits image blob URLs.
+5. **Resolved P2 — Project deletion had an empty default value.** The form now explicitly selects keep-charts. Untouched submission was retested successfully in the browser, and the automated regression verifies the charts survive.
+6. **Resolved P2 — Unsaved edits retained an approved heading.** Editing an approved result now restores the Review heading/step and marks unsaved changes. Export remains blocked until saving; approving restores the approved state. The final review capture and workflow regression verify this.
 
 ## Required fidelity surfaces
 
-| Surface | Result and evidence |
-|---|---|
-| Fonts and typography | The lighter, neutral grotesk direction is implemented with Helvetica Neue, Helvetica, Arial, then sans-serif. Headlines use regular optical weight, tight tracking and the approved two-line landing wrap. Form and table text remains legible, with tabular numeric values and 16px mobile inputs. No remote font request is required. Windows/Linux fallbacks have not been visually sampled. |
-| Spacing and layout rhythm | Landing keeps the large left-aligned title, one primary CTA, and chart-to-table composition. Authentication is a focused column. Desktop review keeps source and values adjacent; secondary fields are in Details. At 1100px the sidebar becomes a horizontal strip, preserving the two-pane review. At 390px the source stays visible while editing the vertically stacked table. |
-| Colors and tokens | White/platinum surfaces, graphite text, cobalt actions and restrained borders match the selected direction. Dark mode uses explicit foreground/surface tokens, not an image inversion. Secondary buttons and links were corrected after visual review. Focus, error and success colors have distinct states. |
-| Image quality and assets | The generated blue brand mark has genuine alpha and optimized favicon derivatives. The displayed 192px asset is about 14KB. Standard icons use pinned MIT Phosphor assets. The exact four-point revenue chart is a 1600 × 1000 lossless PNG, about 46KB, rendered from its numbers. The original low-resolution replay fixture remains unchanged; magnification cannot recover absent detail. No fake enhancement or replacement of the uploaded source is claimed. |
-| Copy and product truth | The landing explains image → extracted table → human review → export. The interactive example is labeled illustrative and runs locally. Supported limits come from public configuration. Approval is attributed to the user. Download completion says “Download started,” since the browser controls saving. XLSX promises audit metadata, not an embedded source image or independently verified accuracy. |
+- **Typography:** Helvetica Neue/Helvetica/Arial stack, restrained 400 display weight, readable form text and tabular numeric input. Heading wrapping, real browser focus states and mobile text were inspected. Exact raster antialiasing in the generated reference is not reproducible as a font metric.
+- **Spacing:** Open white layout, horizontal navigation, three-card desktop grid, flat split editor, minimal radius/shadow. Native controls remain at least 44 pixels high. The app retains additional working metadata/history controls rather than hiding capabilities shown in the existing product.
+- **Colors:** White/graphite surfaces, restrained blue emphasis, semantic approval/error colors, and a separate dark palette. Dark artwork and brand assets were verified; source chart images retain their original colors.
+- **Images:** Generated paper-unfold artwork is shipped as sharp responsive WebP assets, with the approved cutout/pixel brand raster and licensed Phosphor icons. No CSS-drawn substitute for the illustration or logo. Private previews are bounded thumbnails; source magnification uses the larger protected source.
+- **Copy:** Static landing explains upload, review, approval and audited export without presenting a model demo. Limits come from public configuration. Local signup shows its three replay credits; production accounts start at zero and offer access contact. No fabricated performance/accuracy claims.
 
-## Comparison history and resolved findings
+## Interaction verification
 
-Each P2 observation blocked the visual handoff until the relevant view was captured again.
+Checked in the browser: landing anchors, motion pause, light/dark selection; mobile signup/signin layout; password logout/login; signed-in logo to My charts; project creation, chart move, project keep-charts deletion and chart deletion; keyboard pane resize and 200%/Fit magnification; editing, saving, approval and workbook download. The downloaded workbook contained Q1–Q4 values 12.4, 18.6, 16.8, 24.2 and an Audit sheet. Browser console checks on the final local build returned no errors/warnings. Automated suites additionally cover auth races, pending writes, status refresh, preview cleanup and deletion isolation.
 
-| Priority | Earlier evidence / issue | Fix and post-fix evidence |
-|---|---|---|
-| P2 | Original tablet workspace overflowed at 1100px; correction panes and controls could clip. Initial live capture: `outputs/design-redesign/06-live-tablet.png`. | Responsive sidebar strip and bounded grid tracks. [Tablet capture](docs/design/tablet-dark.png), document scroll width exactly 1100. |
-| P2 | Initial dark implementation used native WebKit button appearance, producing pale secondary buttons with light text. Capture: `outputs/design-redesign/16-approved-dark.png`. | Explicit button appearance and token colors. [Approved dark](docs/design/approved-dark.png) and [tablet dark](docs/design/tablet-dark.png) show readable controls. |
-| P2 | Four columns in a single-series table crowded the Remove action at 390px. Capture: `outputs/design-redesign/18-mobile-review.png`. | Hide redundant series column for a single series, retain the data input, and focus the visible category on Add row. [Mobile review](docs/design/mobile-review.png): table client and scroll widths both 330px, page scroll width 390px. |
-| P2 | Dark landing text links inherited the saturated action-background blue. Capture: `outputs/design-redesign/21-landing-dark.png`. | Use `--accent-ink` for link text. [Final dark landing](docs/design/landing-dark.png) was compared again with the source palette. |
-| P2 | Editing an approved chart kept Download workbook as the primary action even though export correctly refused unsaved data. | Dirty state now immediately offers Save & approve. Browser verified edit → PATCH/save → approval → Download workbook. Regression also covers discarded edits followed by failed navigation. |
-| P2 | Sample numeric input was 40px high, below the requested 44px tap target. | Raised to 44px; the existing table/dialog remains within the responsive layout. |
-| P3 | Mobile authentication repeated navigation in its header and tabs, pushing appearance onto a second header row. | Hide redundant mobile header navigation; retain account tabs and brand/theme. [Mobile sign-in](docs/design/mobile-sign-in.png). |
+Google buttons are intentionally off in the local replay launcher. Dedicated production OAuth configuration and live consent are a separate release verification, not inferred from these screenshots. Account deletion is exercised against isolated synthetic data in the container/API tests.
 
-## Functional and accessibility checks
+## Follow-up polish
 
-- Tested the browser-only example: open, correct 16.3 to 16.8, save, approve, export, reset, close, and restore focus. No account or inference is needed. Changes invalidate sample approval.
-- Tested local account creation, sign-in, sign-out, reload/session reconciliation, and account recovery entry with email delivery disabled. Recovery gives an operator-link path rather than offering unavailable email delivery.
-- Uploaded the owned `budget-quarter.webp` through the browser file chooser, selected the preview, ran saved replay, corrected data, approved, and initiated an XLSX download. Export generation/content is also covered by the backend tests; no claim is made that the browser download was opened in Excel during this UI pass.
-- Tested Fit and 2× source magnification, dirty export refusal, dirty approved primary action, saved approval, version list and audit activity, and the post-export next action.
-- Tested Light, Dark, System, and preference persistence. Tested mobile menu focus/navigation and the sticky example CTA after the hero scrolls out of view.
-- Checked keyboard-visible focus, labeled inputs, native modal focus containment, image alt text, 44px action targets, and reduced-motion CSS. Automated screen-reader and color-vision audits were not performed.
-- No page-level horizontal overflow at 390, 1100, or 1440px in the inspected primary states. Multi-series data may use intentional internal table scrolling.
-- In-app browser console inspection returned no logged errors (`[]`) after the final workflow and landing runs.
-
-## Automated validation
-
-Full local pytest: **244 passed, 1 skipped** (86.70s). After the last UI state changes, all **42 workflow scenarios**, auth-epoch, two-tab, account recovery and the **8 focused pytest checks** passed. Product CI lint/security/format checks and mypy (19 source files) passed. The wheel built with the new static pages, theme, chart and brand assets included. See [all review findings and scope](docs/UI_CODE_REVIEW.md).
-
-## Accepted differences and remaining limits
-
-- The operational workspace has an 18-row chart, tenant actions and audit history rather than the board's four-row illustration. The source pixels, record counts and filenames are real local replay data.
-- The dark export state is integrated into the workspace, preserving review context and a next action. CSV/JSON are in More, and XLSX is the primary download.
-- Local development exposes signup and saved replay for testing. Production configuration continues to control invitation-only access; this redesign does not enable public registration, SMTP or billing.
-- No decorative 3D, new animation framework or external type service was added. Motion is limited to useful short control transitions and respects reduced motion.
-- P3 follow-up: very narrow sidebar cards can wrap status/date over two lines. This remains readable and does not hide controls. Cross-platform font and real-device touch/screen-reader sampling remain useful before a broad launch.
-- The source board supplies no mobile layout. Mobile evidence therefore validates a responsive interpretation of the approved type/color/components, not a nonexistent pixel-perfect mobile reference.
-
-## Implementation checklist
-
-- [x] Approved board and rendered implementation opened and compared together.
-- [x] Typography, layout, colors, assets and copy reviewed explicitly.
-- [x] Desktop, tablet, mobile, light, dark, authentication, review and export states inspected.
-- [x] Actionable P0/P1/P2 visual and interaction findings fixed and rechecked.
-- [x] Core local journey works; console checked; local preview kept running.
-- [x] Business, operations and legal follow-ups are separated in [UI_REDESIGN.md](docs/UI_REDESIGN.md).
+Native select controls and numeric spinners differ slightly by browser. The working table retains explicit row-removal and chart-details controls; a future compact toolbar could reduce density further. These are P3 refinements and do not block the checked workflows.

@@ -614,6 +614,7 @@ def test_schema_v2_upgrades_to_storage_quota_and_idempotency_state(tmp_path: Pat
     with database.connect() as conn:
         conn.execute("DROP TABLE api_idempotency")
         conn.execute("ALTER TABLE jobs DROP COLUMN source_byte_size")
+        conn.execute("DROP INDEX pending_deletions_user_id_idx")
         conn.execute("ALTER TABLE pending_deletions DROP COLUMN user_id")
         conn.execute("ALTER TABLE pending_deletions DROP COLUMN byte_size")
         conn.execute("UPDATE schema_meta SET version=2")
@@ -698,6 +699,7 @@ def test_schema_v1_and_v3_shapes_preserve_rows_foreign_keys_and_expiry(
                 "('legacy-user','legacy-key','request-sha','{}',"
                 "'2026-01-01T00:00:00Z',NULL)"
             )
+            conn.execute("DROP INDEX pending_deletions_user_id_idx")
             conn.execute("ALTER TABLE pending_deletions DROP COLUMN user_id")
             conn.execute("ALTER TABLE pending_deletions DROP COLUMN byte_size")
         conn.execute("UPDATE schema_meta SET version=?", (legacy_version,))

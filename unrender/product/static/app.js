@@ -1,7 +1,9 @@
 const state = {
   account: null,
+  googleCompletionPending: false,
   jobs: [],
   jobsInitialized: false,
+  jobsRequest: 0,
   currentJob: null,
   upload: null,
   uploadPage: 0,
@@ -88,26 +90,45 @@ async function api(path, options = {}) {
   const requestOptions = { ...options };
   delete requestOptions.authEpoch;
   delete requestOptions.authRecord;
+  delete requestOptions.timeoutMs;
+  delete requestOptions.responseType;
+  const parentSignal = requestOptions.signal || state.authController.signal;
+  const timed = options.timeoutMs ? new AbortController() : null;
+  const cancel = () => timed?.abort();
+  if (timed) parentSignal.addEventListener("abort", cancel, { once: true });
+  if (parentSignal.aborted) cancel();
+  let expired = false;
+  const timer = timed ? window.setTimeout(() => { expired = true; timed.abort(); }, options.timeoutMs) : null;
   let response;
+  let payload;
   try {
     response = await fetch(path, {
       ...requestOptions,
       method,
       headers,
       body,
-      signal: requestOptions.signal || state.authController.signal,
+      signal: timed?.signal || parentSignal,
     });
+    if (!authContextMatches(epoch, authRecord)) throw staleAuthError();
+    const contentType = response.headers.get("content-type") || "";
+    payload = contentType.includes("application/json") ? await response.json()
+      : options.responseType === "blob" && response.ok ? await response.blob() : null;
   } catch (error) {
-    if (!authContextMatches(epoch, authRecord) || error?.name === "AbortError") {
+    if (!authContextMatches(epoch, authRecord) || parentSignal.aborted) {
       throw staleAuthError();
     }
+    if (expired) {
+      const timeout = new Error(method === "GET" ? "The request timed out. Please try again." : "We could not confirm whether this change completed. Close this dialog and refresh your workspace before retrying.");
+      timeout.code = "request_timeout";
+      timeout.uncertainMutation = method !== "GET";
+      throw timeout;
+    }
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) error.uncertainMutation = true;
     throw error;
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+    if (timed) parentSignal.removeEventListener("abort", cancel);
   }
-  if (!authContextMatches(epoch, authRecord)) {
-    throw staleAuthError();
-  }
-  const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json") ? await response.json() : null;
   if (!authContextMatches(epoch, authRecord)) {
     throw staleAuthError("A previous account response was discarded");
   }
@@ -361,6 +382,7 @@ function updateLogoutGate() {
     for (const control of controls) control.disabled = pending || failed;
   }
   byId("open-sample-button").disabled = pending || failed;
+  updateGoogleLoginGate();
 }
 
 function applyAuthRecord(record, { wipe = true } = {}) {
@@ -577,50 +599,34 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   if (clearCsrf) document.cookie = "unrender_csrf=; Max-Age=0; Path=/; SameSite=Lax";
   state.account = null;
   state.jobs = [];
+  resetLibrary();
+  resetSettings();
   state.jobsInitialized = false;
-  state.currentJob = null;
+  clearSelectedChart();
   state.upload = null;
   state.uploadPage = 0;
   state.crop = null;
   state.cropStart = null;
-  state.editorRows = [];
-  state.editorSeries = [];
-  state.editorPage = 0;
-  state.editorDirty = false;
-  setHidden("export-completion", true);
-  byId("editor-change-note").textContent = "";
   if (clearSubmission) clearDurableJobSubmission();
   state.jobSubmissionPending = false;
   state.principalMarker = null;
   state.pollDelay = 1500;
   byId("job-list").replaceChildren();
-  byId("job-actions").replaceChildren();
-  byId("audit-list").replaceChildren();
-  byId("version-list").replaceChildren();
-  byId("result-table").replaceChildren();
-  byId("series-editor-list").replaceChildren();
-  byId("chart-type-input").replaceChildren();
   byId("api-key-list").replaceChildren();
   byId("api-key-form").reset();
-  byId("source-zoom").value = "1";
-  byId("job-source-image").className = "";
   byId("login-form").reset();
   byId("register-form").reset();
   byId("generate-key-button").hidden = false;
   byId("generate-key-button").disabled = false;
   if (byId("api-key-dialog").open) byId("api-key-dialog").close();
   for (const id of [
-    "job-status", "job-title", "job-meta", "source-page-label", "edit-state",
     "page-counter", "credit-count", "account-email", "result-loading",
     "editor-page-summary",
   ]) {
     byId(id).textContent = "";
   }
-  for (const id of ["job-source-image", "upload-preview"]) byId(id).removeAttribute("src");
+  byId("upload-preview").removeAttribute("src");
   byId("file-input").value = "";
-  byId("result-form").reset();
-  byId("result-form").inert = false;
-  byId("result-form").removeAttribute("aria-busy");
   byId("dropzone").removeAttribute("aria-busy");
   byId("file-input").disabled = false;
   for (const id of ["open-sample-button", "run-sample-button", "queue-job-button", "buy-credits-button"]) {
@@ -634,7 +640,6 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
   ]) byId(id).value = String(value);
   byId("crop-selection").hidden = true;
   byId("crop-selection").removeAttribute("style");
-  byId("review-notice").hidden = true;
   byId("result-loading").hidden = true;
   byId("toggle-audit-button").textContent = "Show activity";
   byId("toggle-versions-button").textContent = "Show versions";
@@ -644,10 +649,7 @@ function resetPrivateState({ clearCsrf = true, clearSubmission = true } = {}) {
     byId(id).textContent = "";
     byId(id).hidden = true;
   }
-  setHidden("result-form", true);
   setHidden("page-review", true);
-  setHidden("audit-list", true);
-  setHidden("version-list", true);
 }
 
 function routeTo(path) {
@@ -661,6 +663,9 @@ function showPublic({ clearCsrf = true, clearSubmission = true } = {}) {
   setHidden("workspace-view", true);
   setHidden("account-bar", true);
   setHidden("public-nav", false);
+  setHidden("product-nav", true);
+  byId("home-button").href = "/";
+  byId("home-button").setAttribute("aria-label", "Unrender home");
   switchAuth(window.location?.pathname === "/signup" ? "register" : "login", { focus: false });
   updateLogoutGate();
 }
@@ -670,6 +675,8 @@ function applyPublicConfig() {
   if (config.max_upload_bytes && config.max_image_pixels && config.max_pdf_pages) {
     byId("upload-limits").textContent = `PNG, JPEG, WebP, or PDF up to ${config.max_upload_bytes / (1024 * 1024)} MB · Images up to ${config.max_image_pixels / 1000000} MP · PDFs up to ${config.max_pdf_pages} pages`;
   }
+  for (const id of ["google-signin", "google-signup", "google-signin-divider", "google-signup-divider"]) byId(id).hidden = !config.google_available;
+  updateGoogleLoginGate();
   const registrationOpen = state.publicConfig.registration_open;
   byId("account-help-links").hidden = false;
   byId("resend-verification-link").hidden = !state.publicConfig.email_available;
@@ -691,6 +698,10 @@ function showWorkspace() {
   setHidden("workspace-view", false);
   setHidden("account-bar", false);
   setHidden("public-nav", true);
+  setHidden("product-nav", false);
+  byId("home-button").href = "/app";
+  byId("home-button").setAttribute("aria-label", "Unrender dashboard");
+  byId("settings-button").textContent = state.account.email?.slice(0, 2).toUpperCase() || "U";
   const isolatedDemo = state.account.demo_account;
   byId("run-sample-button").hidden = !state.account.demo_mode;
   byId("account-email").textContent = isolatedDemo ? "Ephemeral sample" : state.account.email;
@@ -707,21 +718,27 @@ function showWorkspace() {
   byId("empty-upload-button").disabled = needsCredits;
   byId("export-another-button").disabled = isolatedDemo || needsCredits;
   byId("workspace-access-notice").hidden = !needsCredits;
-  byId("workspace-example-link").hidden = !needsCredits;
+  byId("workspace-example-link").hidden = true;
   byId("workspace-access-link").hidden = !needsCredits || state.account.billing_configured;
   byId("create-key-button").hidden = isolatedDemo;
   const accessNote = byId("workspace-access-note");
   accessNote.hidden = !needsCredits;
   accessNote.textContent = state.account.billing_configured
     ? "Add extraction credits to upload a chart. Your existing charts remain available for review and export."
-    : "Your workspace is ready. You’ll need extraction credits before you can upload. During the beta, credits are granted separately by the Unrender team. You can explore the example in the meantime.";
+    : "Your workspace is ready. You’ll need extraction credits before you can upload. During the beta, credits are granted separately by the Unrender team. Your existing charts remain available for review and export.";
   byId("retention-note").textContent = isolatedDemo ? "" : `Charts are retained for ${state.account.retention_days} days after their last update. Download exports you need to keep.`;
 }
 
 function showMainView(name) {
-  for (const view of ["empty-view", "upload-view", "job-view"]) {
-    setHidden(view, view !== name);
-  }
+  if (name === "empty-view") name = "library-view";
+  for (const view of ["library-view", "projects-view", "empty-view", "upload-view", "job-view"]) setHidden(view, view !== name);
+  byId("empty-view").hidden = name !== "library-view" || state.jobs.length > 0;
+  byId("library-button").setAttribute("aria-current", name === "projects-view" ? "false" : "page");
+  byId("projects-button").setAttribute("aria-current", name === "projects-view" ? "page" : "false");
+  if (document.body.dataset.view !== name) window.scrollTo?.({ top: 0, behavior: "instant" });
+  document.body.dataset.view = name;
+  setLibraryPreviewsActive(name === "library-view");
+  if (name === "library-view") renderLibrary();
 }
 
 async function fetchAccount(options = {}) {
@@ -749,6 +766,7 @@ async function refreshAccount(options = {}) {
 }
 
 async function reconcilePrincipal() {
+  if (state.googleCompletionPending) return;
   const canonical = syncAuthRecordFromStorage({ wipe: true });
   if (blocksPrincipalRestore(canonical)) return;
   const authEpoch = state.authEpoch;
@@ -769,11 +787,10 @@ async function reconcilePrincipal() {
     }
     applyAccount(account);
     if (previous !== account.principal_marker || !state.jobsInitialized) {
-      await loadJobs();
+      await Promise.all([loadJobs(), loadProjects()]);
       if (await recoverDurableJobSubmission()) return;
       if (state.upload || !byId("upload-view").hidden) return;
-      if (state.jobs.length) await openJob(state.jobs[0].id);
-      else showMainView("empty-view");
+      showLibrary();
     }
   } catch (error) {
     if (!isStaleRequest(error) && error.status !== 401) showToast(error);
@@ -795,7 +812,7 @@ function handleExternalAuthChange(event) {
 
 function handleAuthLifecycleBoundary() {
   const canonical = syncAuthRecordFromStorage({ wipe: true });
-  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal();
+  if (!blocksPrincipalRestore(canonical)) void reconcilePrincipal().then(() => refreshLibrary());
 }
 
 function installAuthCoordination() {
@@ -819,6 +836,9 @@ function installAuthCoordination() {
 }
 
 async function boot() {
+  const entryPath = window.location?.pathname;
+  const entryQuery = new URLSearchParams(window.location?.search || "");
+  state.googleCompletionPending = true;
   installAuthCoordination();
   try {
     state.publicConfig = await api("/api/public-config");
@@ -826,14 +846,33 @@ async function boot() {
     state.publicConfig = { registration_open: false, sample_available: false };
   }
   applyPublicConfig();
+  const googleError = googleReturnError(entryQuery.get("google"));
+  let completionError = null;
+  try { await completeGoogleLogin(entryPath); }
+  catch (error) { completionError = error; }
+  finally { state.googleCompletionPending = false; }
+  if (completionError) {
+    showPublic({ clearCsrf: false });
+    showError("auth-error", completionError);
+    return;
+  }
   const canonical = syncAuthRecordFromStorage({ wipe: false });
   if (blocksPrincipalRestore(canonical)) {
     showPublic({ clearCsrf: false });
+    if (googleError) showError("auth-error", googleError);
     return;
   }
   try {
     await reconcilePrincipal();
-    if (!state.account) showPublic({ clearCsrf: false });
+    if (!state.account) {
+      showPublic({ clearCsrf: false });
+      if (googleError) showError("auth-error", googleError);
+    } else if (entryQuery.get("settings") === "account") {
+      openSettings();
+      if (googleError) showError("settings-error", googleError);
+      if (entryQuery.get("connected") === "1") showToast("Google is now connected to this account.");
+      if (entryQuery.get("reauthenticated") === "1") showToast("Identity verified. You can now confirm account deletion in Settings.");
+    }
   } catch (error) {
     if (error.status === 401) showPublic();
     else showError("auth-error", error);
@@ -850,9 +889,9 @@ function switchAuth(mode, { focus = true } = {}) {
   setHidden("login-form", !login);
   setHidden("register-form", login || invitationOnly);
   setHidden("invitation-note", !invitationOnly);
-  byId("auth-title").textContent = login ? "Welcome back." : invitationOnly ? "Your next chart starts here." : "Create your workspace.";
+  byId("auth-title").textContent = login ? "Welcome back." : invitationOnly ? "Your next chart starts here." : "Create your account.";
   byId("auth-description").textContent = login ? "Sign in to your workspace."
-    : invitationOnly ? "Unrender is available by invitation during the pilot. Use the setup link from your inviter, or explore the example first."
+    : invitationOnly ? "Unrender is available by invitation during the pilot. Use the setup link from your inviter to continue."
     : "A private place for your charts and reviewed data.";
   clearError("auth-error");
   if (focus && !invitationOnly) byId(login ? "login-form" : "register-form").querySelector("input").focus();
@@ -895,12 +934,11 @@ async function submitAuth(event, mode) {
     });
     if (!committed) throw staleAuthError("A sign-out barrier superseded this login");
     applyAccount(account);
-    await loadJobs();
+    await Promise.all([loadJobs(), loadProjects()]);
     if (await recoverDurableJobSubmission()) return;
-    showMainView(state.jobs.length ? "job-view" : "empty-view");
-    if (state.jobs.length) await openJob(state.jobs[0].id);
+    showLibrary();
     showToast(mode === "register"
-      ? (account.credits > 0 ? "Workspace created. Upload a chart to begin." : "Workspace created. Explore the example or request extraction access.")
+      ? (account.credits > 0 ? "Workspace created. Upload a chart to begin." : "Account created. Request extraction access to upload your first chart.")
       : "Signed in. Your workspace is ready.");
   } catch (error) {
     showError("auth-error", error);
@@ -1038,49 +1076,25 @@ async function logout() {
 
 async function loadJobs() {
   const authEpoch = state.authEpoch;
+  const request = ++state.jobsRequest;
   const jobs = [];
   let cursor = null;
   do {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-    const payload = await api(`/api/jobs${query}`, { authEpoch });
+    const payload = await api(`/api/jobs${query}`, { authEpoch, timeoutMs: 30000 });
     if (authEpoch !== state.authEpoch) throw staleAuthError();
     jobs.push(...payload.items);
     cursor = payload.next_cursor;
   } while (cursor);
   if (authEpoch !== state.authEpoch) throw staleAuthError();
+  if (request !== state.jobsRequest) return;
   state.jobs = jobs;
   state.jobsInitialized = true;
   renderJobList();
 }
 
 function renderJobList() {
-  const list = byId("job-list");
-  list.replaceChildren();
-  if (!state.jobs.length) {
-    const empty = document.createElement("p");
-    empty.className = "job-list-empty";
-    empty.textContent = "Your charts will appear here. Start with an image or a PDF page.";
-    list.append(empty);
-    return;
-  }
-  for (const job of state.jobs) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("aria-current", String(state.currentJob?.id === job.id));
-    button.addEventListener("click", () => openJob(job.id));
-    const name = document.createElement("strong");
-    name.textContent = job.source_name;
-    const meta = document.createElement("span");
-    const status = document.createElement("span");
-    status.textContent = statusLabel(job.status);
-    status.className = `status-${job.status}`;
-    const date = document.createElement("time");
-    date.dateTime = job.created_at;
-    date.textContent = formatDate(job.created_at);
-    meta.append(status, date);
-    button.append(name, meta);
-    list.append(button);
-  }
+  if (!byId("library-view").hidden) renderLibrary();
 }
 
 function startUpload() {
@@ -1358,6 +1372,7 @@ async function openJob(jobId, { throwOnError = false } = {}) {
   if (state.editorDirty && state.currentJob?.id === jobId) return state.currentJob;
   if (!discardEditorChanges()) return null;
   stopPolling();
+  setLibraryPreviewsActive(false);
   const view = beginViewSelection();
   const authEpoch = state.authEpoch;
   if (state.currentJob?.id !== jobId) {
@@ -1367,12 +1382,17 @@ async function openJob(jobId, { throwOnError = false } = {}) {
   try {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
-    const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal });
+    const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal, timeoutMs: 30000 });
+    await waitForLibraryPreview();
     if (view.epoch !== state.viewEpoch) throw staleAuthError();
     state.currentJob = job;
+    state.jobs = state.jobs.map((item) => item.id === job.id ? {
+      ...item, status: job.status, updated_at: job.updated_at,
+      display_name: job.display_name, project_id: job.project_id,
+    } : item);
     if (previousStatus && previousStatus !== state.currentJob.status) {
       state.pollDelay = 1500;
-      await Promise.all([loadJobs(), refreshAccount()]);
+      await Promise.all([loadJobs(), refreshAccount({ timeoutMs: 30000 })]);
       if (view.epoch !== state.viewEpoch) throw staleAuthError();
     }
     else renderJobList();
@@ -1394,7 +1414,13 @@ async function openJob(jobId, { throwOnError = false } = {}) {
     }
     return null;
   } finally {
-    if (authEpoch === state.authEpoch && view.epoch === state.viewEpoch) setHidden("workspace-loading", true);
+    if (authEpoch === state.authEpoch && view.epoch === state.viewEpoch) {
+      setHidden("workspace-loading", true);
+      if (!byId("library-view").hidden) {
+        setLibraryPreviewsActive(true);
+        renderLibrary();
+      }
+    }
   }
 }
 
@@ -1423,7 +1449,8 @@ function renderJob() {
   const job = state.currentJob;
   if (!job) return;
   byId("job-status").textContent = statusLabel(job.status);
-  byId("job-title").textContent = job.source_name;
+  byId("job-title").textContent = job.status === "approved" ? "Approved data" : ["review"].includes(job.status) ? "Review data" : statusLabel(job.status);
+  byId("review-filename").textContent = chartName(job);
   byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
   byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
@@ -1441,7 +1468,16 @@ function renderJob() {
   byId("result-loading").textContent = job.error?.message || job.progress_stage;
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
-  const currentStep = job.status === "approved" ? "export" : resultReady ? "review" : "extract";
+  renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
+  if (resultReady) renderEditor(job.result);
+  renderJobActions();
+  setHidden("audit-list", true);
+  setHidden("version-list", true);
+  byId("toggle-audit-button").textContent = "Show activity";
+  byId("toggle-versions-button").textContent = "Show versions";
+}
+
+function renderWorkflowSteps(currentStep) {
   let completed = true;
   for (const step of byId("workflow-steps").querySelectorAll("[data-step]")) {
     const current = step.dataset.step === currentStep;
@@ -1451,12 +1487,6 @@ function renderJob() {
     if (current) step.setAttribute("aria-current", "step");
     else step.removeAttribute("aria-current");
   }
-  if (resultReady) renderEditor(job.result);
-  renderJobActions();
-  setHidden("audit-list", true);
-  setHidden("version-list", true);
-  byId("toggle-audit-button").textContent = "Show activity";
-  byId("toggle-versions-button").textContent = "Show versions";
 }
 
 function renderJobActions() {
@@ -1489,23 +1519,37 @@ function renderJobActions() {
     for (const format of job.status === "review" ? ["XLSX", "CSV", "JSON"] : ["CSV", "JSON"]) {
       menu.append(actionButton(`${job.status === "review" ? "Export draft" : "Download"} ${format}`, "button-quiet", () => downloadExport(job, format.toLowerCase())));
     }
-    menu.append(actionButton("Reprocess · 1 credit", "button-quiet", () => jobMutation("reprocess")));
+    const reprocess = actionButton("Reprocess · 1 credit", "button-quiet", () => jobMutation("reprocess"));
+    reprocess.disabled = !state.account || state.account.credits <= 0;
+    menu.append(reprocess);
+    menu.append(actionButton("Rename chart", "button-quiet", () => renameChart(job)));
+    menu.append(actionButton("Move to project", "button-quiet", () => moveChart(job)));
     menu.append(actionButton("Delete chart", "button-danger", deleteCurrentJob));
     more.append(menu);
     actions.append(more);
   } else if (["failed", "cancelled"].includes(job.status)) {
-    actions.append(actionButton("Try again · 1 credit", "button-primary", () => jobMutation("reprocess")));
+    const retry = actionButton("Try again · 1 credit", "button-primary", () => jobMutation("reprocess"));
+    retry.disabled = !state.account || state.account.credits <= 0;
+    actions.append(retry);
     actions.append(actionButton("Delete chart", "button-danger", deleteCurrentJob));
   }
 }
 
-function markEditorDirty() {
+function markEditorDirty(event) {
+  if (event?.target?.dataset.kind) event.target.classList.add("cell-edited");
   if (state.editorDirty) return;
   state.editorDirty = true;
   byId("editor-change-note").textContent = "Unsaved changes";
   byId("edit-state").textContent = "Needs review";
   setHidden("export-completion", true);
-  if (state.currentJob) renderJobActions();
+  if (state.currentJob) {
+    byId("job-status").textContent = "Unsaved changes";
+    byId("job-title").textContent = "Review data";
+    byId("job-meta").textContent = `Last saved · ${formatDate(state.currentJob.updated_at)}`;
+    setHidden("review-notice", false);
+    renderWorkflowSteps("review");
+    renderJobActions();
+  }
 }
 
 function discardEditorChanges() {
@@ -1615,45 +1659,26 @@ async function jobMutation(action) {
   }
 }
 
+function clearSelectedChart() {
+  state.currentJob = null;
+  state.editorDirty = false;
+  state.editorRows = [];
+  state.editorSeries = [];
+  state.editorPage = 0;
+  byId("result-form").reset();
+  byId("result-form").inert = false;
+  byId("result-form").removeAttribute("aria-busy");
+  byId("job-source-image").removeAttribute("src");
+  byId("job-source-image").style.width = "";
+  byId("job-source-image").className = "";
+  byId("source-zoom").value = "1";
+  for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
+  for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
+  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);
+}
+
 async function deleteCurrentJob() {
-  const job = state.currentJob;
-  if (!job || !window.confirm("Delete this source, result, and audit trail? This cannot be undone.")) return;
-  const viewEpoch = state.viewEpoch;
-  const authEpoch = state.authEpoch;
-  try {
-    const deletion = await api(`/api/jobs/${routeSegment(job.id)}`, {
-      method: "DELETE", signal: state.viewController.signal,
-    });
-    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
-    const view = beginViewSelection();
-    state.currentJob = null;
-    state.editorDirty = false;
-    state.editorRows = [];
-    state.editorSeries = [];
-    state.editorPage = 0;
-    state.jobs = state.jobs.filter((item) => item.id !== job.id);
-    byId("result-form").reset();
-    byId("result-form").inert = false;
-    byId("result-form").removeAttribute("aria-busy");
-    byId("job-source-image").removeAttribute("src");
-    for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) {
-      byId(id).replaceChildren();
-    }
-    for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "result-loading"]) {
-      byId(id).textContent = "";
-    }
-    for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);
-    renderJobList();
-    showMainView("empty-view");
-    await loadJobs();
-    if (authEpoch !== state.authEpoch || view.epoch !== state.viewEpoch || state.currentJob) throw staleAuthError();
-    if (state.jobs.length && !await openJob(state.jobs[0].id)) return;
-    showToast(deletion?.status === "deletion_queued"
-      ? "Extraction hidden; source deletion will retry automatically"
-      : "Extraction deleted");
-  } catch (error) {
-    showToast(error);
-  }
+  if (state.currentJob) return deleteLibraryChart(state.currentJob);
 }
 
 function editorRows(result) {
@@ -2255,10 +2280,15 @@ function closeKeyDialog() {
 }
 
 function bindEvents() {
+  for (const id of ["google-signin", "google-signup"]) byId(id)?.addEventListener("click", startGoogleLogin);
+  bindLibraryEvents();
+  bindSettingsEvents();
+  bindReviewResize();
   byId("source-zoom").addEventListener("change", (event) => {
     const image = byId("job-source-image");
-    image.classList.toggle("source-zoom-2", event.target.value === "2");
-    image.classList.toggle("source-zoom-4", event.target.value === "4");
+    const fit = event.target.value === "1";
+    image.classList.toggle("source-actual", !fit);
+    image.style.width = fit ? "" : `${image.naturalWidth * (event.target.value === "actual" ? 1 : Number(event.target.value))}px`;
   });
   byId("login-tab").addEventListener("click", () => switchAuth("login"));
   byId("register-tab").addEventListener("click", () => switchAuth("register"));
@@ -2268,7 +2298,8 @@ function bindEvents() {
   byId("logout-button").addEventListener("click", logout);
   byId("retry-logout-button").addEventListener("click", logout);
   byId("home-button").addEventListener("click", (event) => {
-    if (!discardEditorChanges()) event.preventDefault();
+    if (state.account) { event.preventDefault(); showLibrary(); }
+    else if (!discardEditorChanges()) event.preventDefault();
   });
   byId("export-another-button").addEventListener("click", startUpload);
   byId("result-form").addEventListener("input", markEditorDirty);
@@ -2279,9 +2310,7 @@ function bindEvents() {
     event.returnValue = "";
   });
   for (const id of ["new-upload-button", "empty-upload-button"]) byId(id).addEventListener("click", startUpload);
-  byId("cancel-upload-button").addEventListener("click", () => {
-    if (state.currentJob) openJob(state.currentJob.id); else showMainView("empty-view");
-  });
+  byId("cancel-upload-button").addEventListener("click", discardUpload);
   byId("file-input").addEventListener("change", (event) => prepareFile(event.target.files[0]));
   const dropzone = byId("dropzone");
   dropzone.addEventListener("dragover", (event) => {
@@ -2322,7 +2351,7 @@ function bindEvents() {
   byId("editor-next-page").addEventListener("click", () => changeEditorPage(1));
   byId("toggle-versions-button").addEventListener("click", toggleVersions);
   byId("toggle-audit-button").addEventListener("click", toggleAudit);
-  byId("create-key-button").addEventListener("click", openKeyDialog);
+  byId("create-key-button").addEventListener("click", () => { closeSettings(); openKeyDialog(); });
   byId("close-key-dialog").addEventListener("click", closeKeyDialog);
   byId("copy-key-button").addEventListener("click", copyApiKeySecret);
   byId("dismiss-key-button").addEventListener("click", invalidateApiKeyDialog);

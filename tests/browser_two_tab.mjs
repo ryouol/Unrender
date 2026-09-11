@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import { appPath, source } from "./browser_product_source.mjs";
 import vm from "node:vm";
 import { TextEncoder } from "node:util";
 import { webcrypto } from "node:crypto";
@@ -18,6 +18,7 @@ class FakeNode {
     this.textContent = "";
     this.value = "";
     this.children = [];
+    this.style = {};
     this.attributes = new Map();
   }
   append(...children) { this.children.push(...children); }
@@ -142,11 +143,11 @@ function makeTab({ broadcast = true } = {}) {
   };
   context.globalThis = context;
   vm.createContext(context);
-  const appPath = new URL("../unrender/product/static/app.js", import.meta.url);
-  const source = fs.readFileSync(appPath, "utf8").replace(/\nbindEvents\(\);\nboot\(\);\s*$/, "");
   vm.runInContext(
     `${source}
 renderJobList = () => {};
+renderLibrary = () => {};
+loadProjects = async () => {};
 renderJob = () => {};
 showMainView = () => {};
 globalThis.__tab = {

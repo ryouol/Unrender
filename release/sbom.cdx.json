@@ -56,6 +56,12 @@
       "version": "2026.7.22"
     },
     {
+      "name": "cffi",
+      "purl": "pkg:pypi/cffi@2.1.1",
+      "type": "library",
+      "version": "2.1.1"
+    },
+    {
       "name": "charset-normalizer",
       "purl": "pkg:pypi/charset-normalizer@3.5.1",
       "type": "library",
@@ -72,6 +78,12 @@
       "purl": "pkg:pypi/contourpy@1.3.3",
       "type": "library",
       "version": "1.3.3"
+    },
+    {
+      "name": "cryptography",
+      "purl": "pkg:pypi/cryptography@50.0.1",
+      "type": "library",
+      "version": "50.0.1"
     },
     {
       "name": "cycler",
@@ -102,6 +114,12 @@
       "purl": "pkg:pypi/frozenlist@1.8.0",
       "type": "library",
       "version": "1.8.0"
+    },
+    {
+      "name": "google-auth",
+      "purl": "pkg:pypi/google-auth@2.58.0",
+      "type": "library",
+      "version": "2.58.0"
     },
     {
       "name": "grpclib",
@@ -216,6 +234,24 @@
       "purl": "pkg:pypi/protobuf@6.33.6",
       "type": "library",
       "version": "6.33.6"
+    },
+    {
+      "name": "pyasn1",
+      "purl": "pkg:pypi/pyasn1@0.6.4",
+      "type": "library",
+      "version": "0.6.4"
+    },
+    {
+      "name": "pyasn1-modules",
+      "purl": "pkg:pypi/pyasn1-modules@0.4.2",
+      "type": "library",
+      "version": "0.4.2"
+    },
+    {
+      "name": "pycparser",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "type": "library",
+      "version": "3.0"
     },
     {
       "name": "pydantic",
@@ -389,7 +425,7 @@
     "properties": [
       {
         "name": "unrender:requirements-app-lock-sha256",
-        "value": "425d021526c2d895bf8e8cd1db7deb367a43b489d7067c1e10a83869217758d1"
+        "value": "d4a89a0d123690c5f3cfd9322185680aac24e3ae18d3e7a01f66bd1fca38dc17"
       },
       {
         "name": "unrender:license-review-status",
@@ -397,7 +433,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:3b5285a9-fdfe-5d4f-8d09-fa0c3505b4fb",
+  "serialNumber": "urn:uuid:1a9bc58a-d5a9-50d9-bf66-3a8b01430509",
   "specVersion": "1.6",
   "version": 1
 }

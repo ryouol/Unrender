@@ -42,6 +42,7 @@
         if (!response.ok) throw new Error("Account options could not be loaded. Refresh to try again.");
         const config = await response.json();
         byId("email-help-links").hidden = !config.email_available;
+        byId("google-account-help").hidden = !config.google_available || completing;
         if (completing) return;
         if (config.email_available) {
           form.hidden = false;

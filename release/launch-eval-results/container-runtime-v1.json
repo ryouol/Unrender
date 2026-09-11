@@ -1,0 +1,69 @@
+{
+  "scope": "Current deployed package inventory compared with a complete local Linux AMD64 image scan; not a Render image digest attestation",
+  "observed_at": "2026-09-11T02:00:13.641798+00:00",
+  "runtime_commit": "35f49f688cddd25cdb02acfd9fb30f4f9bdf79f6",
+  "web_deploy": "dep-dahm06cs728c73ck22p0",
+  "local_image_digest": "sha256:e5db89ab615a16fda1e314efe6e564e9ea8af26b6138765893985f07c12066c3",
+  "base_index_digest": "sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0",
+  "base_amd64_manifest": "sha256:d1053354624536b044162aaab1e418bd000ea35184fb1ae098ab3166b1072e72",
+  "current_base_tag_same_amd64_manifest": true,
+  "scanner": {
+    "Version": "0.74.0",
+    "VulnerabilityDB": {
+      "Version": 2,
+      "NextUpdate": "2026-09-11T19:09:41.721418747Z",
+      "UpdatedAt": "2026-09-10T19:09:41.721419017Z",
+      "DownloadedAt": "2026-09-11T01:41:38.286849Z"
+    }
+  },
+  "checks": {
+    "deployed_application_file_hashes_match_commit": 73,
+    "debian_manifest_byte_identical": true,
+    "debian_manifest_sha256": "af77db86bf264fe7416b3682c4c52244f5e107679ccba10ba5e7157b54515793",
+    "python_package_versions_identical": 65,
+    "vulnerability_pairs_identical": true,
+    "deployed_virtual_tables": 0,
+    "active_fstab_entries": 0
+  },
+  "runtime_process": {
+    "Uid": "10001\t10001\t10001\t10001",
+    "Gid": "10001\t10001\t10001\t10001",
+    "CapInh": "0000000000000000",
+    "CapPrm": "0000000000000000",
+    "CapEff": "0000000000000000",
+    "CapBnd": "00000000000400cb",
+    "CapAmb": "0000000000000000",
+    "NoNewPrivs": "1",
+    "Seccomp": "0"
+  },
+  "findings": {
+    "debian": {
+      "LOW": 57,
+      "HIGH": 51,
+      "MEDIUM": 57,
+      "UNKNOWN": 6,
+      "CRITICAL": 3
+    },
+    "python-pkg": {}
+  },
+  "additional_advisory": {
+    "debian_tracker_id": "TEMP-0000000-639065",
+    "upstream_id": "GHSA-5qpq-xqfv-j9pg",
+    "scanner_severity": "UNKNOWN",
+    "upstream_severity": "HIGH",
+    "package": "liblzma5",
+    "installed_version": "5.8.1-1+deb13u1",
+    "upstream_fixed_version": "5.8.4",
+    "debian_fixed_version_listed": false,
+    "source": "https://github.com/tukaani-project/xz/security/advisories/GHSA-5qpq-xqfv-j9pg"
+  },
+  "new_inference_calls": 0,
+  "limitations": [
+    "Package metadata scans do not prove binary reachability or detect every embedded dependency.",
+    "The local image digest is not the deployed Render image digest; package inventories and app file hashes were independently compared.",
+    "No findings are suppressed or claimed patched; the high/critical advisory assessment remains in CONTAINER_SCAN.md.",
+    "The newly listed XZ advisory needs an affected-decoder reinitialization sequence after allocation failure; no such product use was found, but this is not a proof covering every transitive parser or operator workflow."
+  ],
+  "previous_comparison_commit": "be6c99ba765cc7fcda0725eb0827440ac567aa95",
+  "ci_run": 34552450793
+}

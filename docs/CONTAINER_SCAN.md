@@ -137,3 +137,40 @@ These observations support the non-root/no-active-capabilities assumptions for
 the current application process. They do not patch affected packages, prove
 all mount-helper or operator workflows safe, or replace a scan of the final
 deployed image digest. No privileged command or exploit payload was executed.
+
+## Deployed package comparison and refreshed scan — September 11 UTC
+
+Runtime `35f49f6` was inspected over read-only operator SSH after an initial check
+of `be6c99b`. The deployed Debian
+package manifest is byte-for-byte identical to a fresh local AMD64 build, and
+all 65 Python distribution names/versions match. All 73 deployed application
+source/static file hashes match that committed source. The process still has
+UID/GID 10001, no active/inheritable/ambient capabilities and `NoNewPrivs=1`;
+the database has no virtual tables and fstab has no active entries.
+
+Trivy 0.74.0 with its database updated September 10 at 19:09:41 UTC scanned both
+the complete local image and the narrowly exported live package manifests.
+Their package/advisory pairs match: zero Python findings, plus Debian 3 critical,
+51 high, 57 medium, 57 low and 6 unknown. No finding lists a fixed Debian version.
+The high/critical package findings above are unchanged. The official current
+Python tag resolves to the same pinned AMD64 manifest, so changing the index
+digest would not change this platform's packages.
+
+The additional unknown entry is liblzma5 5.8.1-1+deb13u1,
+[GHSA-5qpq-xqfv-j9pg](https://github.com/tukaani-project/xz/security/advisories/GHSA-5qpq-xqfv-j9pg).
+Upstream rates it high and fixes it in XZ 5.8.4; the
+[Debian tracker](https://security-tracker.debian.org/tracker/TEMP-0000000-639065)
+does not yet list a fixed packaged version. The trigger requires repeated
+initialization of an affected decoder around an allocation failure. Upstream
+explicitly excludes XZ-format and raw-stream decoders. Product code has no direct
+LZMA API use, and scheduled recovery archives are uncompressed tar files. This
+does not prove every transitive parser or trusted operator workflow unaffected;
+the advisory remains visible and is not suppressed.
+
+The receipt is `release/launch-eval-results/container-runtime-v1.json`. Its local
+image digest is `sha256:e5db89ab615a16fda1e314efe6e564e9ea8af26b6138765893985f07c12066c3`.
+This is an independently verified package-inventory comparison, not an attestation
+of Render's final image digest or a clean bill for embedded native dependencies.
+It narrows the deployed-inventory gap without closing the remaining advisory
+assessment. Only public package manifests and application hashes were collected;
+no customer data, database contents, runtime secrets or GPU calls were involved.

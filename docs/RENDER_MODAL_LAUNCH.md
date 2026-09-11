@@ -16,7 +16,7 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `be6c99b`; deployment `dep-dahlkaifngtc73d1je80`.
+- Live runtime code: `35f49f6`; deployment `dep-dahm06cs728c73ck22p0`.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
@@ -116,6 +116,16 @@ preprocessing was not silently changed during deployment.
 
 ## Verification and remaining launch work
 
+- The whole-diff simplify/code review and focused rechecks are complete. Runtime
+  `35f49f6` clears inherited cloud backup/SMTP destinations from the local sample
+  launcher and rejects invalid reset challenges before expensive password work.
+  CI run 34552450793 passed 240 tests / one skipped, dependency audits, package
+  build and container smoke. Hosted recovery of the existing zero-credit test
+  account passed new-password sign-in, old-session revocation and used-link
+  rejection; the owner account was not reset and no email or inference ran.
+  Database integrity, provider pin, backup status and approved work survived.
+  See PRODUCTIZATION_REVIEW.md for all findings, review limits and the combined
+  PR's size/staging concern.
 - The pinned container built successfully on Render. Local constrained capacity
   testing used 512 MB, no swap, and half a CPU; peak cgroup memory was 222.7 MiB.
   That harness used replay and is not a hosted concurrency benchmark.

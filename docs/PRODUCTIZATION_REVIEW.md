@@ -537,3 +537,14 @@ with account/credential fencing, public/account UI, provider publication/deadlin
 and operator/deployment stages, keeping each feature's regressions together.
 This is a review-size concern, not a newly discovered runtime failure. PR #2
 remains a combined draft; no history was rewritten and no review comments posted.
+
+Runtime `35f49f6` subsequently passed CI run 34552450793 (240 tests / one skipped,
+dependency audits, package/container builds and smoke checks) and was deployed
+under maintenance after confirming zero active jobs. Hosted operator recovery on
+the existing zero-credit test account passed password replacement, old-session
+revocation and used-link rejection. Owner sign-in, the retained approved chart,
+all three exports and XLSX audit sheet passed; the owner's one extraction credit
+is unchanged. The provider pin, SQLite integrity and persisted backup status were
+verified after deployment. No email, upload or inference ran. The receipt is
+`release/launch-eval-results/recovery-release-v1.json`; the refreshed deployed
+package comparison and remaining advisory limits are in CONTAINER_SCAN.md.

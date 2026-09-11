@@ -123,3 +123,51 @@ class ChartLibrary:
                 details={"fields": sorted(changes)},
             )
             return public_job(conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+
+    def delete_project(
+        self,
+        user_id: str,
+        project_id: str,
+        *,
+        mode: str,
+        expected_chart_count: int | None,
+    ) -> dict[str, Any]:
+        if mode not in {"keep_charts", "delete_charts"}:
+            raise ProductError(
+                "invalid_request", "Choose whether to keep or delete the charts", 422
+            )
+        paths: list[str] = []
+        with self.service.database.transaction(immediate=True) as conn:
+            project = self._project(conn, user_id, project_id)
+            count = project["chart_count"]
+            if mode == "delete_charts":
+                if expected_chart_count is None:
+                    raise ProductError(
+                        "invalid_request", "Confirm the number of charts to delete", 422
+                    )
+                if expected_chart_count != count:
+                    raise ProductError(
+                        "project_changed", "Charts changed. Review the project again", 409
+                    )
+                if project["active_count"]:
+                    raise ProductError(
+                        "project_busy", "Cancel active extractions before deleting", 409
+                    )
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE project_id=? AND user_id=?", (project_id, user_id)
+                ).fetchall()
+                for row in rows:
+                    paths.extend(self.service._delete_job_in_transaction(conn, row))
+            conn.execute("DELETE FROM projects WHERE id=? AND user_id=?", (project_id, user_id))
+            self.service._audit(
+                conn,
+                user_id=user_id,
+                event_type="project_deleted",
+                details={"mode": mode, "chart_count": count},
+            )
+        deleted = self.service.finish_file_deletion(paths)
+        return {
+            "status": "deleted" if deleted else "deletion_queued",
+            "charts_deleted": count if mode == "delete_charts" else 0,
+            "charts_kept": count if mode == "keep_charts" else 0,
+        }

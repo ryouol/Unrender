@@ -2785,65 +2785,84 @@ class ProductService:
         return output.getvalue()
 
     def delete_job(self, *, user_id: str, job_id: str) -> bool:
-        deletion_paths: list[str] = []
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
             ).fetchone()
             if not row:
                 raise ProductError("job_not_found", "Extraction not found", 404)
-            if row["status"] in {"queued", "running"}:
-                raise ProductError("job_busy", "Cancel the extraction before deleting it", 409)
             self._audit(
                 conn,
                 user_id=user_id,
                 event_type="job_deleted",
                 details={"deleted_job_id": job_id},
             )
-            self._queue_deletion(
-                conn,
-                row["source_path"],
-                "job_deleted",
-                user_id=user_id,
-                byte_size=int(row["source_byte_size"]),
-            )
-            deletion_paths.append(str(row["source_path"]))
-            if row["upload_id"]:
-                shared = conn.execute(
-                    "SELECT 1 FROM jobs WHERE upload_id=? AND id<>? LIMIT 1",
-                    (row["upload_id"], job_id),
+            deletion_paths = self._delete_job_in_transaction(conn, row)
+        return self.finish_file_deletion(deletion_paths)
+
+    def _delete_job_in_transaction(self, conn: sqlite3.Connection, row: sqlite3.Row) -> list[str]:
+        if row["status"] in {"queued", "running"}:
+            raise ProductError("job_busy", "Cancel the extraction before deleting it", 409)
+        user_id, job_id = str(row["user_id"]), str(row["id"])
+        self._queue_deletion(
+            conn,
+            row["source_path"],
+            "job_deleted",
+            user_id=user_id,
+            byte_size=int(row["source_byte_size"]),
+        )
+        deletion_paths = [str(row["source_path"])]
+        if row["upload_id"]:
+            shared = conn.execute(
+                "SELECT 1 FROM jobs WHERE upload_id=? AND id<>? LIMIT 1",
+                (row["upload_id"], job_id),
+            ).fetchone()
+            if not shared:
+                upload = conn.execute(
+                    "SELECT * FROM uploads WHERE id=? AND user_id=?",
+                    (row["upload_id"], user_id),
                 ).fetchone()
-                if not shared:
-                    upload = conn.execute(
-                        "SELECT storage_path,byte_size FROM uploads WHERE id=? AND user_id=?",
-                        (row["upload_id"], user_id),
-                    ).fetchone()
-                    if upload:
-                        self._queue_deletion(
-                            conn,
-                            upload["storage_path"],
-                            "last_job_upload_deleted",
-                            user_id=user_id,
-                            byte_size=int(upload["byte_size"]),
-                        )
-                        deletion_paths.append(str(upload["storage_path"]))
-                        conn.execute(
-                            "DELETE FROM uploads WHERE id=? AND user_id=?",
-                            (row["upload_id"], user_id),
-                        )
-            conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, user_id))
-        self.drain_deletion_queue(paths=deletion_paths)
+                if upload:
+                    deletion_paths.append(self._delete_upload_in_transaction(conn, upload))
+        conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, user_id))
+        return deletion_paths
+
+    def _delete_upload_in_transaction(self, conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+        self._queue_deletion(
+            conn,
+            row["storage_path"],
+            "upload_deleted",
+            user_id=str(row["user_id"]),
+            byte_size=int(row["byte_size"]),
+        )
+        conn.execute("DELETE FROM uploads WHERE id=? AND user_id=?", (row["id"], row["user_id"]))
+        return str(row["storage_path"])
+
+    def discard_upload(self, *, user_id: str, upload_id: str) -> bool:
+        with self.database.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT * FROM uploads WHERE id=? AND user_id=?", (upload_id, user_id)
+            ).fetchone()
+            if not row:
+                raise ProductError("upload_not_found", "Upload not found", 404)
+            path = self._delete_upload_in_transaction(conn, row)
+            self._audit(conn, user_id=user_id, event_type="upload_discarded")
+        return self.finish_file_deletion([path])
+
+    def finish_file_deletion(self, paths: list[str]) -> bool:
+        """Attempt bounded cleanup and report whether this operation still has queued files."""
+        self.drain_deletion_queue(paths=paths)
         with self.database.connect() as conn:
-            remaining = sum(
-                int(
-                    conn.execute(
-                        "SELECT COUNT(*) AS count FROM pending_deletions WHERE storage_path=?",
-                        (path,),
-                    ).fetchone()["count"]
-                )
-                for path in deletion_paths
-            )
-        return remaining == 0
+            for offset in range(0, len(paths), 200):
+                batch = paths[offset : offset + 200]
+                placeholders = ",".join("?" for _ in batch)
+                if conn.execute(
+                    "SELECT 1 FROM pending_deletions WHERE storage_path IN "
+                    f"({placeholders}) LIMIT 1",  # noqa: S608 -- placeholders only
+                    batch,
+                ).fetchone():
+                    return False
+        return True
 
     def _queue_deletion(
         self,

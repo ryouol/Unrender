@@ -27,6 +27,7 @@ dependencies = [
     "openpyxl>=3.1,<4",
     "stripe>=12,<14",
     "modal>=1.5,<2",
+    "google-auth[requests]>=2.40,<3",
 ]
 
 [project.urls]
@@ -115,5 +116,5 @@ check_untyped_defs = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["pypdfium2", "pypdfium2.*", "openpyxl"]
+module = ["pypdfium2", "pypdfium2.*", "openpyxl", "google.auth.*", "google.oauth2.*", "requests"]
 ignore_missing_imports = true

@@ -62,9 +62,9 @@ class ChartLibrary:
 
     def create_project(self, user_id: str, name: str) -> dict[str, Any]:
         name = library_name(name, 80)
-        self.service.require_customer_account(user_id, "projects")
         project_id, now = self.service._id(), timestamp()
         with self.service.database.transaction(immediate=True) as conn:
+            self.service.require_customer_account(user_id, "projects")
             count = conn.execute(
                 "SELECT COUNT(*) FROM projects WHERE user_id=?", (user_id,)
             ).fetchone()[0]

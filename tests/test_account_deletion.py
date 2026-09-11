@@ -196,3 +196,26 @@ def test_account_delete_http_requires_csrf_fresh_self_auth_and_explicit_confirma
         assert "unrender_csrf" not in client.cookies
         assert client.get("/api/me").status_code == 401
         assert app.state.service.account(other)["credits"] == 3
+
+
+def test_committed_account_deletion_reports_pending_cleanup_when_operations_lock_is_busy(
+    tmp_path,
+    monkeypatch,
+):
+    service = service_for(tmp_path, seed_demo_account=False)
+    owner, session = authenticated_owner(service)
+    job = chart_for(service, owner)
+    path = Path(service._job_row(user_id=owner, job_id=job["id"])["source_path"])
+    drain = service.drain_deletion_queue
+
+    def locked(**kwargs):
+        raise TimeoutError("operations lock unavailable")
+
+    monkeypatch.setattr(service, "drain_deletion_queue", locked)
+    result = AccountLifecycle(service).delete_account(owner, session["session"])
+    assert result["status"] == "deletion_queued"
+    assert service.session_user(session["session"]) is None
+    assert path.exists()
+    monkeypatch.setattr(service, "drain_deletion_queue", drain)
+    service.drain_deletion_queue()
+    assert not path.exists()

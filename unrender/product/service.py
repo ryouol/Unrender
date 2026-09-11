@@ -2851,17 +2851,26 @@ class ProductService:
 
     def finish_file_deletion(self, paths: list[str]) -> bool:
         """Attempt bounded cleanup and report whether this operation still has queued files."""
-        self.drain_deletion_queue(paths=paths)
-        with self.database.connect() as conn:
-            for offset in range(0, len(paths), 200):
-                batch = paths[offset : offset + 200]
-                placeholders = ",".join("?" for _ in batch)
-                if conn.execute(
-                    "SELECT 1 FROM pending_deletions WHERE storage_path IN "
-                    f"({placeholders}) LIMIT 1",  # noqa: S608 -- placeholders only
-                    batch,
-                ).fetchone():
-                    return False
+        if not paths:
+            return True
+        try:
+            self.drain_deletion_queue(paths=paths)
+            with self.database.connect() as conn:
+                for offset in range(0, len(paths), 200):
+                    batch = paths[offset : offset + 200]
+                    placeholders = ",".join("?" for _ in batch)
+                    if conn.execute(
+                        "SELECT 1 FROM pending_deletions WHERE storage_path IN "
+                        f"({placeholders}) LIMIT 1",  # noqa: S608 -- placeholders only
+                        batch,
+                    ).fetchone():
+                        return False
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning(
+                "source_deletion_deferred",
+                extra={"event_name": "source_deletion_deferred", "error_type": type(exc).__name__},
+            )
+            return False
         return True
 
     def _queue_deletion(

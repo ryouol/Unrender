@@ -7,8 +7,10 @@ working checkout. The separate Desktop checkout is not the launch source.
 The backend and premium interface were merged separately through PRs
 [#2](https://github.com/ryouol/Unrender/pull/2) and
 [#3](https://github.com/ryouol/Unrender/pull/3). Public password accounts followed
-in [#4](https://github.com/ryouol/Unrender/pull/4). The service now tracks `main`
-with automatic deployments still off and explicitly runs `449a6de`.
+in [#4](https://github.com/ryouol/Unrender/pull/4). The refined platform followed
+in [#6](https://github.com/ryouol/Unrender/pull/6). The service tracks `main`
+with automatic deployments still off and explicitly runs merge commit
+`015624a0af219107eb33ff4dc501f07dedc7051e`, schema 14.
 
 Render project `UNRENDER`, Production environment:
 https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
@@ -19,12 +21,75 @@ https://dashboard.render.com/project/prj-dahh1gbl550s73840e5g
 - Health: `/health/ready`; live HTTPS returned `ready`, `modal`, worker `running`.
 - Automatic deploys and PR previews are off. Failure notifications use the
   service's explicit failure-only override. No other project's configuration changed.
-- Live runtime code: `449a6de`; deployment `dep-dahol44s728c73cua960`.
+- Live runtime code: `015624a0af219107eb33ff4dc501f07dedc7051e`; deployment
+  `dep-dai3fnu1egvs73dactq0`, live September 11 at 17:19:28 UTC.
 - Hourly monitor: `unrender-monitor`, `crn-dahl5uh594qs73ffkbk0`, Docker,
   Ohio, 512 MB / half-CPU. It runs at minute 17 UTC in the same Production
   environment, with auto-deploy off and an explicit failure-only notification
   override. It has no app/Modal credentials or persistent disk. Its build remains
   `02597a6`; the September 11 04:17 UTC scheduled run passed.
+
+### Refined platform rollout — September 11, 17:18–17:22 UTC
+
+PR #6 merged as `015624a0af219107eb33ff4dc501f07dedc7051e`. Branch, PR and main CI
+runs `34625970573`, `34626014418` and `34626482105` all passed their verify and
+container jobs. Local verification passed 316 tests with one skip, 73 workflow,
+17 Google and 7 preview browser scenarios. The local container passed 24 HTTP
+checks and restart/integrity checks. Its scan retains the documented Debian
+baseline (3 critical, 51 high; no fixed package version listed), with zero Python
+findings. A later lint-comment relocation leaves the Python AST unchanged; the
+image's byte comparisons describe the source snapshot at build time. See
+[REFINED_PLATFORM_REVIEW.md](REFINED_PLATFORM_REVIEW.md).
+
+With maintenance enabled and work drained, the coordinated schema-10 recovery
+set `/data/release-backups/pre-schema14-20260911T171807Z` was restored in an
+isolated temporary directory. Stable snapshots of eight tables and all source
+hashes matched; the restore migrated to schema 14, initialized successfully a
+second time and verified all eight deletion indexes. The temporary restore was
+removed; the recovery set remains available for rollback.
+
+Deployment `dep-dai3fnu1egvs73dactq0` became live at 17:19:28 UTC. Exact pre/post
+comparisons preserved seven users, eleven sessions, five uploads, five charts,
+six result versions, nine ledger rows, five provider attempts and one aggregate
+credit (API keys remained zero). SQLite integrity/FKs, private mode 0700 under
+UID 10001, readiness and every operations check passed. Maintenance was disabled
+at approximately 17:22 UTC, after preservation and health checks. Internal
+health requests used the expected production Host header; all actual health
+checks returned 200 with every operations check true. Independent public HTTPS
+checks also returned 200 for live, ready and operations health, with all six
+operations checks true.
+
+Thirty live HTTPS checks passed using a synthetic zero-credit password account:
+signup/session, nine foreign-chart/source/history/export surfaces returning 404,
+a valid 64-pixel PNG rejected with 402, private project creation/rename/list and
+deletion with charts kept, recent-authentication account deletion, and rejection
+of the deleted session with 401. Synthetic accounts were removed. An initial
+16-pixel upload fixture correctly returned 422; correcting the fixture produced
+the expected credit rejection and did not require an application fix.
+After all smoke checks, a final snapshot again matched every pre-upgrade stable
+table and source exactly. Projects, Google identities and OAuth attempts remained
+zero, confirming synthetic cleanup without changing the owner's account.
+
+The owner browser kept its existing session and all five charts. A fresh approved
+XLSX opened with 18 data rows and its Audit sheet (six rows including its header).
+The logo returned to My charts. The hosted landing was captured without the
+removed example module or overflow, and the current browser console had no
+errors or warnings. No GPU inference,
+email or billing call was made, and compute, disk, replicas and model/provider
+pins were unchanged.
+
+The only new application configuration was the dedicated Google client ID/secret
+from a separate personal Google project. The client is configured for the
+production audience and the application advertises Google sign-in. **Real Google
+consent, sign-in and linking remain unverified.** The existing owner account is
+a password account: sign in with that password, then use Account settings →
+Connect Google and confirm the password. Matching email never links accounts.
+Returning Google sign-in and preserved ownership/credits must be verified after
+that explicit linking step. See [GOOGLE_SIGNIN.md](GOOGLE_SIGNIN.md).
+
+Sanitized rollout receipt:
+[refined-platform-v1.json](../release/launch-eval-results/refined-platform-v1.json).
+The earlier rollout sections below remain historical evidence.
 
 ### Public account rollout — September 11, 04:56–05:00 UTC
 

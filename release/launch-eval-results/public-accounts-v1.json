@@ -1,0 +1,98 @@
+{
+  "recorded_utc": "2026-09-11T05:01:00Z",
+  "runtime_commit": "449a6de7d783506d171cbe24ee525748815c3a37",
+  "render_service": "srv-dahid9uq1p3s73dmjt1g",
+  "deployment": "dep-dahojlp42hec739qvh6g",
+  "deployment_live_at": "2026-09-11T04:56:37.31974Z",
+  "restart_deployment": "dep-dahol44s728c73cua960",
+  "restart_live_at": "2026-09-11T04:59:31.646514Z",
+  "maintenance_disabled": true,
+  "branch": "main",
+  "automatic_deploys": false,
+  "instances": 1,
+  "disk_gb": 1,
+  "schema_before": 9,
+  "schema_after": 10,
+  "sqlite_integrity": "ok",
+  "foreign_key_errors": 0,
+  "existing_accounts_preserved": 6,
+  "account_count_after_smoke": 7,
+  "existing_active_accounts_after_migration": 6,
+  "existing_mailbox_flags_cleared": 6,
+  "retained_jobs": {
+    "approved": 1,
+    "review": 4
+  },
+  "retained_versions": 6,
+  "aggregate_credits_before_and_after": 1,
+  "approved_work_digest_before_and_after": "9a206d428dc2bfd5ad48f536191b1b381d177a3a76caafa481c836cbb143d482",
+  "approved_source_integrity": true,
+  "registration_open": true,
+  "initial_credits": 0,
+  "email_available": false,
+  "billing_available": false,
+  "provider_app": "unrender-production",
+  "provider_function": "infer_one",
+  "provider_release": "e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787",
+  "provider_resolution_without_inference": "passed",
+  "inference_calls_in_this_release": 0,
+  "hosted_account_checks": {
+    "public_https_signup": "passed",
+    "secure_httponly_samesite_cookie": "passed",
+    "logout_login": "passed",
+    "other_tenant_routes_404": 7,
+    "zero_credit_valid_upload_http_status": 402,
+    "session_survived_restart": true,
+    "fresh_login_after_restart": true,
+    "signed_out_after_smoke": true,
+    "credentials_written_to_disk": false,
+    "new_account_rows": {
+      "uploads": 0,
+      "jobs": 0,
+      "account_challenges": 0,
+      "credit_ledger": 0,
+      "provider_attempts": 0
+    }
+  },
+  "coordinated_backups_and_isolated_restores": [
+    "/data/release-backups/pre-schema10-20260911T0454Z",
+    "/data/release-backups/post-schema10-20260911T0459Z"
+  ],
+  "health": {
+    "readiness": "ready",
+    "extractor": "modal",
+    "worker": "running",
+    "all_operations_checks": true
+  },
+  "hosted_browser": {
+    "existing_owner_session": "passed",
+    "approved_workbook_download": "passed",
+    "workbook_data_rows": 18,
+    "sheets": [
+      "Extracted data",
+      "Audit"
+    ],
+    "approval_metadata": "passed",
+    "approved_support_mailto": "passed"
+  },
+  "automated_checks": {
+    "pytest_passed": 268,
+    "pytest_skipped": 1,
+    "browser_workflow_scenarios": 45,
+    "ci_runs": [
+      34563673535,
+      34563919196
+    ]
+  },
+  "limits": [
+    "A synthetic zero-credit account is retained for the persistence receipt.",
+    "No current customer-accuracy or human-correction-time benchmark is established.",
+    "Remaining native advisories, cloud access attestation and legal operator/terms inputs are separate launch gates.",
+    "Local port 8000 uses saved-sample replay, not production inference."
+  ],
+  "documentation_review": {
+    "status": "passed after correction",
+    "finding": "README.md:148 ambiguously described public/commercial release as blocked despite the controlled beta being live.",
+    "resolution": "Clarified that broad public or commercial launch readiness remains gated by the separate owner/counsel inputs."
+  }
+}

@@ -29,7 +29,7 @@ Customer chart sources, extracted values, corrections, exports, identities, sess
 - cross-process serialized, crash-atomic migrations plus coordinated mutation-locked/hash-inventoried backup and verified restore tooling;
 - privacy-safe provider lifecycle, latency, and error-code logs;
 - no paid call in default replay/demo mode;
-- production startup fails closed when public registration, demo seeding/replay, HTTP origins, a disabled worker, a mutable/non-digested model snapshot, or an unapproved provider release is configured; the provider release covers reviewed source, prompt, runtime packages, and model identity.
+- production startup fails closed when public registration grants automatic credits, password-only public registration has SMTP/billing configured, demo seeding/replay, HTTP origins, a disabled worker, a mutable/non-digested model snapshot, or an unapproved provider release is configured; the provider release covers reviewed source, prompt, runtime packages, and model identity.
 
 ## Abuse cases considered
 

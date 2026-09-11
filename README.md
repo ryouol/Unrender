@@ -44,10 +44,12 @@ docker compose up --build
 ## Production accounts and Render
 
 See [`docs/RENDER_MODAL_LAUNCH.md`](docs/RENDER_MODAL_LAUNCH.md) for the Render + Modal
-configuration, hosted verification, and remaining public-release gates. The invited
-pilot is live at https://unrender.onrender.com. Public signup and email are off.
-Enabling public signup later requires verified email and zero welcome credits;
-password recovery revokes sessions and API keys while retaining saved work.
+configuration, hosted verification, and remaining public-release gates. The
+controlled beta is live at https://unrender.onrender.com with password signup,
+sign-in and persistent workspaces. New accounts start with zero extraction
+credits; access is granted separately. Email and billing remain off. See
+[`docs/PUBLIC_ACCOUNTS.md`](docs/PUBLIC_ACCOUNTS.md) for activation, recovery,
+credit grants and the 30-day chart-retention policy.
 
 ## Configure real extraction
 
@@ -69,7 +71,7 @@ UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
 UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration without verified email or with automatic credits, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, loads a published private Modal release or the named Hub commit, verifies its complete read-only snapshot against the pinned digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender-production/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration with automatic credits or password-only public registration with email/billing configured, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, loads a published private Modal release or the named Hub commit, verifies its complete read-only snapshot against the pinned digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender-production/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
 
 ## Product workflow
 
@@ -143,4 +145,4 @@ The base Qwen/Unsloth model artifacts used by the research pipeline are publishe
 
 ## License
 
-The repository's own code is Apache-2.0; see [`LICENSE`](LICENSE). That does not determine the obligations of the combined product. The former PyMuPDF AGPL/commercial-license dependency has been removed from product code and locks; PDF handling now uses locked pypdfium2/PDFium, whose upstream permissive terms and shipped dependency notices are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The checked-in CycloneDX inventory and machine policy validate that replacement. This engineering gate is not legal approval: public/commercial release remains blocked until the owner and qualified counsel approve the entity, privacy/terms, retention, subprocessors, support/refund terms, and intended distribution model in [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md).
+The repository's own code is Apache-2.0; see [`LICENSE`](LICENSE). That does not determine the obligations of the combined product. The former PyMuPDF AGPL/commercial-license dependency has been removed from product code and locks; PDF handling now uses locked pypdfium2/PDFium, whose upstream permissive terms and shipped dependency notices are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The checked-in CycloneDX inventory and machine policy validate that replacement. This engineering gate is not legal approval: broad public or commercial launch readiness remains blocked until the owner and qualified counsel approve the entity, privacy/terms, retention, subprocessors, support/refund terms, and intended distribution model in [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md).

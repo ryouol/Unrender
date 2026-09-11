@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 SCHEMA = """
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     session_generation INTEGER NOT NULL DEFAULT 0 CHECK (session_generation >= 0),
     expires_at TEXT NOT NULL,
     reauthenticated_at TEXT,
+    oauth_login_nonce TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS oauth_attempts (
     browser_hash TEXT NOT NULL,
     nonce TEXT NOT NULL,
     verifier TEXT NOT NULL,
+    client_nonce TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL CHECK (mode IN ('signin','link','reauthenticate')),
     user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     session_hash TEXT,
@@ -361,6 +363,8 @@ class Database:
         idempotency = self._columns(conn, "api_idempotency")
         pending = self._columns(conn, "pending_deletions")
         storage_reservations = self._columns(conn, "storage_reservations")
+        if "client_nonce" in self._columns(conn, "oauth_attempts"):
+            return 13
         if "project_id" in jobs:
             return 12
         if "password_enabled" in self._columns(conn, "users"):
@@ -426,6 +430,8 @@ class Database:
                 self._migrate_v10_to_v11(conn)
             elif version == 11:
                 self._migrate_v11_to_v12(conn)
+            elif version == 12:
+                self._migrate_v12_to_v13(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -497,6 +503,13 @@ class Database:
         if self._table_exists(conn, "sessions"):
             self._add_column(conn, "sessions", "reauthenticated_at", "TEXT")
         self._migration_execute(conn, "UPDATE schema_meta SET version=11")
+
+    def _migrate_v12_to_v13(self, conn: sqlite3.Connection) -> None:
+        if self._table_exists(conn, "sessions"):
+            self._add_column(conn, "sessions", "oauth_login_nonce", "TEXT")
+        if self._table_exists(conn, "oauth_attempts"):
+            self._add_column(conn, "oauth_attempts", "client_nonce", "TEXT NOT NULL DEFAULT ''")
+        self._migration_execute(conn, "UPDATE schema_meta SET version=13")
 
     def _ensure_v6_shape(self, conn: sqlite3.Connection) -> None:
         """Repair the only pre-release v6 shape that existed before audit rollups were final."""

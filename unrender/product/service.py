@@ -1359,15 +1359,18 @@ class ProductService:
             self._audit(conn, user_id=user_id, event_type="session_created")
         return {"session": session_token, "csrf": csrf_token}
 
-    def session_user(self, session_token: str | None) -> sqlite3.Row | None:
+    def session_user(
+        self, session_token: str | None, *, allow_pending_google: bool = False
+    ) -> sqlite3.Row | None:
         if not session_token:
             return None
         with self.database.connect() as conn:
             return conn.execute(
                 "SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id "
                 "WHERE sessions.token_hash=? AND sessions.expires_at>? "
-                "AND sessions.session_generation=users.session_generation",
-                (token_hash(session_token), timestamp()),
+                "AND sessions.session_generation=users.session_generation "
+                "AND (sessions.oauth_login_nonce IS NULL OR ?)",
+                (token_hash(session_token), timestamp(), allow_pending_google),
             ).fetchone()
 
     def verify_csrf(self, session_token: str | None, csrf_token: str | None) -> bool:
@@ -1425,7 +1428,7 @@ class ProductService:
             "id": user["id"],
             "email": user["email"],
             "email_verified": bool(user["email_verified"]),
-            "password_enabled": bool(user["password_enabled"]),
+            "has_password": bool(user["password_enabled"]),
             "google_connected": google_connected,
             "credits": user["credit_balance"],
             "billing_configured": self.settings.billing_configured,

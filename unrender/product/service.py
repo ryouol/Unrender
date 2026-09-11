@@ -2863,8 +2863,8 @@ class ProductService:
                     batch = paths[offset : offset + 200]
                     placeholders = ",".join("?" for _ in batch)
                     if conn.execute(
-                        "SELECT 1 FROM pending_deletions WHERE storage_path IN "
-                        f"({placeholders}) LIMIT 1",  # noqa: S608 -- placeholders only
+                        "SELECT 1 FROM pending_deletions WHERE storage_path IN "  # noqa: S608 -- placeholders only
+                        f"({placeholders}) LIMIT 1",
                         batch,
                     ).fetchone():
                         return False

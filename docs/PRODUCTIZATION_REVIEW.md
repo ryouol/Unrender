@@ -417,3 +417,12 @@ exactness from JSON equality and adds separate read-only server timing/attempt
 receipts; it does not claim independent reconstruction of client timings. All
 three production attempts reached review without retry, and human correction
 time remains unmeasured. CI passed on fixture commit `653e8af`.
+
+51. **Fixed P3 — provider log memory units could be mistaken for configuration**
+    (`docs/LAUNCH_EVALUATION.md:89` at review). The latency investigation initially
+    repeated the log's `32.8GiB` label as the configured requirement. It now quotes
+    that label explicitly and separately records the SDK setting, 32768 MiB
+    (32 GiB). Read-only review found the three timing rows consistent with the
+    supplied Modal observations and stored dispatch timestamps. Queue intervals
+    are 5, 0 and 108 seconds at UI precision; execution remains distinct from
+    GPU-only time, and fixture attribution is by timestamp rather than call ID.

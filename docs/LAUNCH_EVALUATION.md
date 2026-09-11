@@ -32,7 +32,8 @@ Runtime `e497a18` on Render used the pinned Modal model recorded in
 `release/launch-eval-results/pilot-v1/meta.json`. All three attempts reached review
 without retry. The stored, uncorrected provider receipts match the application
 results and can be rescored offline. Three extraction credits were consumed;
-actual dollar cost and cold/warm GPU timings were not measured.
+actual dollar cost was not measured. A later read-only inspection of Modal's call
+table established the container cold/warm classifications below.
 
 | Fixture | Exact values recovered | Observed upload-to-result time |
 |---|---:|---:|
@@ -63,6 +64,40 @@ mkdir -p outputs/local-verification/launch-eval
 
 The three jobs remain unapproved in the production account, identified by their
 filenames. No human correction timing has been recorded.
+
+## Provider latency investigation
+
+On September 11 at 00:19 UTC, the Modal `unrender-production / infer_one` call
+table was inspected without submitting new inference. Its EDT enqueue timestamps
+match the three server dispatch timestamps to displayed-second precision. The
+manually transcribed fields are saved in
+`release/launch-eval-results/pilot-v1/modal-timings.json`.
+
+| Fixture | Enqueued → started (approximately) | Modal startup | Modal execution | Container |
+|---|---:|---:|---:|---|
+| Labelled bar | 5 s | 3.755 s | 84.566 s | Cold |
+| Unlabelled line | 0 s | 0 s | 64.375 s | Warm |
+| Unlabelled grouped bar | 108 s | 3.468 s | 82.897 s | Cold |
+
+The enqueue-to-start interval uses second-resolution UI timestamps. Do not add
+the startup column to that interval: the fields have different boundaries, and
+this table is not an additive breakdown of the client timer. Modal labels zero
+startup as a warm container; that does not establish model-cache or file-cache
+warmth. Execution includes work inside the function, not only GPU generation.
+
+The function log also reported L4 scheduling pressure and suggested relaxing its
+memory requirement, displayed literally as `memory=32.8GiB`. The configured SDK
+value is 32768 MiB (32 GiB). This is function-level evidence, not a log correlated
+to one fixture. Checkpoint-shard progress for the two cold containers covered
+about 2.5–2.7 seconds; it excludes imports, integrity verification, processor
+loading and generation. The production snapshot path re-verifies materialized
+files on every call, but its duration has not yet been measured.
+
+The next diagnostic is per-stage timing before changing resources or decoding:
+measure snapshot verification, model/processor loading, preprocessing and
+generation separately. A warm call still took 64 seconds, so reserving an always
+warm GPU is not justified by these observations alone. No resource, model,
+decoding, integrity-check or scaling setting changed during this inspection.
 
 ## Human correction-time protocol
 

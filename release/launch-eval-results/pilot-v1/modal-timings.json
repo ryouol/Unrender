@@ -1,0 +1,33 @@
+{
+  "source": "Manual transcription of the Modal infer_one Function Calls table",
+  "observed_at": "2026-09-11T00:19:39Z",
+  "timezone": "America/Toronto (EDT, UTC-04:00)",
+  "correlation": "Enqueue times match saved server dispatch timestamps to displayed-second precision; not joined by provider call ID",
+  "limits": "UI timestamps have one-second precision. Startup is not additive to enqueue-to-start. Execution is not GPU-only time. No per-stage timings or dollar costs are available.",
+  "calls": [
+    {
+      "fixture_id": "labelled-bar",
+      "enqueued_at": "2026-09-10T19:58:35-04:00",
+      "started_at": "2026-09-10T19:58:40-04:00",
+      "startup_seconds": 3.755,
+      "execution_seconds": 84.566,
+      "status": "Succeeded"
+    },
+    {
+      "fixture_id": "unlabelled-line",
+      "enqueued_at": "2026-09-10T20:00:07-04:00",
+      "started_at": "2026-09-10T20:00:07-04:00",
+      "startup_seconds": 0.0,
+      "execution_seconds": 64.375,
+      "status": "Succeeded"
+    },
+    {
+      "fixture_id": "unlabelled-grouped-bar",
+      "enqueued_at": "2026-09-10T20:01:15-04:00",
+      "started_at": "2026-09-10T20:03:03-04:00",
+      "startup_seconds": 3.468,
+      "execution_seconds": 82.897,
+      "status": "Succeeded"
+    }
+  ]
+}

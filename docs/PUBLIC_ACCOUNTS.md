@@ -14,20 +14,22 @@ worker safeguards. The account settings for the email-deferred beta are:
 ```text
 UNRENDER_ALLOW_REGISTRATION=true
 UNRENDER_REQUIRE_EMAIL_VERIFICATION=false
-UNRENDER_INITIAL_CREDITS=0
+UNRENDER_INITIAL_CREDITS=3
 UNRENDER_SEED_DEMO=false
 ```
 
 Leave SMTP and Stripe configuration empty. Do not enable development mode or
 replay to open registration. No account creation, sign-in or visit to the
-illustrative landing-page example invokes Modal.
+static landing-page illustration invokes Modal.
 
-New accounts start with zero extraction credits. Uploads require available
-credits and are rejected before file storage when the allowance is exhausted.
-The signup page explains this before submission. The empty workspace disables
-upload actions and links to the illustrative example; it does not present a
-purchase flow while billing is unavailable. Grant credits deliberately through
-the running service's trusted admin shell:
+New password and Google accounts start with three free testing credits, recorded
+once in the existing credit ledger. Existing accounts keep their balances; sign-in
+and Google linking do not add credits. Production public signup permits at most
+three welcome credits per account. Set the allowance to 0 to stop future grants.
+Uploads require available credits and are rejected before file storage when the
+allowance is exhausted. The signup page explains the allowance before submission.
+Billing stays unavailable. Additional credits remain an explicit operator action
+through the running service's trusted admin shell:
 
 ```bash
 unrender-admin grant-credits analyst@example.com --credits 1 --reference beta-access-001
@@ -37,8 +39,10 @@ Use a unique, stable reference for each intended grant; repeating a reference
 does not grant twice. Check the recipient against the person receiving access.
 Refresh the signed-in workspace after a grant. One extraction attempt consumes
 one credit once dispatched to the provider, including a dispatched failure.
-Credit controls bound application-authorized extraction attempts; they are not
-a dollar cap on the shared Render or Modal account.
+Credit controls bound attempts per account; public signup can create additional
+accounts, so welcome credits are not an abuse-proof per-person limit or a dollar
+cap on the shared Render or Modal account. Existing global dispatch budgets,
+provider deadlines and concurrency limits remain necessary.
 
 ## Access and recovery
 
@@ -88,8 +92,11 @@ using both the email challenge and their current password. Existing operator
 setup links remain usable; they activate access without verifying a mailbox.
 
 Verify the deployed configuration, then create a fresh account through `/signup`,
-sign out and sign back in. Confirm the account remains unverified, has zero
-credits, cannot upload or buy credits, and can open the illustrative example.
+sign out and sign back in. Confirm the account remains unverified, has three
+credits with one welcome ledger entry, can access upload, and cannot buy credits.
+Sign out and sign back in again to verify the balance does not increase. Repeat
+for a new Google account; connecting Google to a password account must not grant
+additional credits. Creating and signing in to an account must not call inference.
 An unrelated account must not see any existing charts. Verify an existing
 approved chart and its exports survive the deployment without spending an
 inference credit. Record actual deployment and hosted checks in

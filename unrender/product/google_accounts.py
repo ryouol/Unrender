@@ -150,6 +150,14 @@ class GoogleAccounts:
                 (user_id, email, owns_email(claims), timestamp()),
                 user_id=None,
             )
+            if self.service.settings.initial_credits:
+                self.service._change_credits(
+                    conn,
+                    user_id=user_id,
+                    delta=self.service.settings.initial_credits,
+                    reason="welcome_allowance",
+                    idempotency_key=f"welcome:{user_id}",
+                )
             self._insert_identity(conn, subject, user_id)
             self.service._audit(conn, user_id=user_id, event_type="account_created")
             return user_id

@@ -16,6 +16,8 @@
           link.querySelector("span").textContent = "Request access";
         }
         document.getElementById("landing-access-note").textContent = "Account access is currently by invitation.";
+      } else if (Number.isInteger(config?.initial_credits) && config.initial_credits > 0) {
+        document.getElementById("landing-access-note").textContent = `Start with ${config.initial_credits} free testing credit${config.initial_credits === 1 ? "" : "s"}. One credit per extraction attempt.`;
       } else if (config?.initial_credits === 0) {
         document.getElementById("landing-access-note").textContent = "Accounts are free. Extraction access is granted separately.";
       }

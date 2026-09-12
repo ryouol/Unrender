@@ -181,8 +181,8 @@ class Settings:
                 raise ValueError("Replay extraction is demo-only and cannot run in production")
             if self.seed_demo_account:
                 raise ValueError("UNRENDER_SEED_DEMO must be false in production")
-            if self.allow_registration and self.initial_credits != 0:
-                raise ValueError("Public production registration must start with zero credits")
+            if self.allow_registration and self.initial_credits > 3:
+                raise ValueError("Public production registration allows at most 3 testing credits")
             if self.allow_registration:
                 if self.require_email_verification:
                     if not self.email_configured:

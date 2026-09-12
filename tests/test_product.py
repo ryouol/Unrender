@@ -155,9 +155,10 @@ def test_configuration_rejects_unsafe_production_and_live_billing(tmp_path: Path
             worker_enabled=True,
             modal_model_path="approved/unrender-model",
         ).validate()
-    with pytest.raises(ValueError, match="zero credits"):
+    with pytest.raises(ValueError, match="at most 3 testing credits"):
         settings_for(
             tmp_path,
+            initial_credits=4,
             environment="production",
             base_url="https://example.com",
             extractor_backend="modal",

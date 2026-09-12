@@ -45,7 +45,7 @@ services:
       - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
         value: "false"
       - key: UNRENDER_INITIAL_CREDITS
-        value: "0"
+        value: "3"
       - key: UNRENDER_SEED_DEMO
         value: "false"
       - key: UNRENDER_PROVIDER_TIMEOUT_SECONDS

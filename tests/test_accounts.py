@@ -184,13 +184,14 @@ def production_settings(tmp_path):
     )
 
 
-def test_production_signup_requires_zero_spend_and_explicit_email_policy(tmp_path):
+def test_production_signup_bounds_testing_credits_and_requires_explicit_email_policy(tmp_path):
     settings = production_settings(tmp_path)
     settings.validate()
     with pytest.raises(ValueError, match="email and billing disabled"):
         replace(settings, require_email_verification=False).validate()
-    with pytest.raises(ValueError, match="zero credits"):
-        replace(settings, initial_credits=3).validate()
+    replace(settings, initial_credits=3).validate()
+    with pytest.raises(ValueError, match="at most 3 testing credits"):
+        replace(settings, initial_credits=4).validate()
     with pytest.raises(ValueError, match="verified email"):
         replace(settings, smtp_password="").validate()
 
@@ -223,8 +224,9 @@ def test_password_only_production_rejects_even_partial_email_or_billing(tmp_path
     settings.validate()
     with pytest.raises(ValueError, match="email and billing disabled"):
         replace(settings, **{field: "configured"}).validate()
-    with pytest.raises(ValueError, match="zero credits"):
-        replace(settings, initial_credits=1).validate()
+    replace(settings, initial_credits=3).validate()
+    with pytest.raises(ValueError, match="at most 3 testing credits"):
+        replace(settings, initial_credits=4).validate()
 
 
 def test_password_signup_production_session_restart_and_zero_spend(tmp_path, monkeypatch):

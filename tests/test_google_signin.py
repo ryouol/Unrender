@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -67,7 +68,9 @@ def signin(client, *, complete=True):
     return response
 
 
-def test_google_signup_returning_login_zero_credit_and_completion(app):
+@pytest.mark.parametrize("credits", [0, 3])
+def test_google_signup_returning_login_welcome_credit_and_completion(app, credits):
+    app = create_app(replace(app.state.settings, initial_credits=credits))
     with TestClient(app, base_url="http://localhost") as client:
         assert client.get("/api/public-config").json()["google_available"] is True
         assert client.get("/auth/google/start", follow_redirects=False).status_code == 422
@@ -97,7 +100,7 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
         assert complete.status_code == 200
         user = client.get("/api/me").json()
         assert complete.json()["principal_marker"] == user["principal_marker"]
-        assert user["credits"] == 0 and user["google_connected"] and not user["has_password"]
+        assert user["credits"] == credits and user["google_connected"] and not user["has_password"]
         assert user["email_verified"]
         assert (
             client.post(
@@ -115,13 +118,22 @@ def test_google_signup_returning_login_zero_credit_and_completion(app):
         client.post("/api/auth/logout", headers=csrf_headers(client))
         assert signin(client).headers["location"] == "/app"
         returned = client.get("/api/me").json()
-        assert returned["id"] == user["id"] and returned["credits"] == 2
+        assert returned["id"] == user["id"] and returned["credits"] == credits + 2
         with app.state.service.database.connect() as conn:
+            welcome = conn.execute(
+                "SELECT delta,balance_after,idempotency_key FROM credit_ledger "
+                "WHERE reason='welcome_allowance'"
+            ).fetchall()
+            assert [tuple(row) for row in welcome] == (
+                [(credits, credits, f"welcome:{user['id']}")] if credits else []
+            )
             assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
             assert conn.execute("SELECT COUNT(*) FROM provider_attempts").fetchone()[0] == 0
 
 
-def test_google_never_links_by_email_and_explicit_password_link_preserves_account(app):
+@pytest.mark.parametrize("credits", [0, 3])
+def test_google_never_links_by_email_and_explicit_password_link_preserves_account(app, credits):
+    app = create_app(replace(app.state.settings, initial_credits=credits))
     service = app.state.service
     with TestClient(app, base_url="http://localhost") as client:
         service.register("owner@gmail.com", PASSWORD)
@@ -150,7 +162,7 @@ def test_google_never_links_by_email_and_explicit_password_link_preserves_accoun
         )
         assert response.headers["location"] == "/app?settings=account&connected=1"
         after = client.get("/api/me").json()
-        assert after["id"] == before["id"] and after["credits"] == 2
+        assert after["id"] == before["id"] and after["credits"] == credits + 2
         assert after["google_connected"] and after["has_password"] and after["email_verified"]
         client.post("/api/auth/logout", headers=csrf_headers(client))
         assert signin(client).headers["location"] == "/app"
@@ -234,8 +246,6 @@ def test_google_reauthentication_requires_connected_subject_and_current_session(
 
 
 def test_returning_google_user_can_login_when_new_registration_closes(app):
-    from dataclasses import replace
-
     with TestClient(app, base_url="http://localhost") as client:
         signin(client)
         user_id = client.get("/api/me").json()["id"]
@@ -243,3 +253,42 @@ def test_returning_google_user_can_login_when_new_registration_closes(app):
     with TestClient(create_app(settings), base_url="http://localhost") as returning:
         assert signin(returning).headers["location"] == "/app"
         assert returning.get("/api/me").json()["id"] == user_id
+
+
+@pytest.mark.parametrize("method", ["password", "google"])
+def test_signup_welcome_grant_failure_rolls_back_account(app, monkeypatch, method):
+    app = create_app(replace(app.state.settings, initial_credits=3))
+    with TestClient(app, base_url="http://localhost") as client:
+        service = app.state.service
+        original = service._change_credits
+
+        def fail_after_grant(*args, **kwargs):
+            original(*args, **kwargs)
+            raise ProductError("service_capacity_reached", "Capacity reached", 503)
+
+        monkeypatch.setattr(service, "_change_credits", fail_after_grant)
+        if method == "google":
+            assert signin(client).headers["location"] == "/login?google=google_failed"
+        else:
+            assert (
+                client.post(
+                    "/api/auth/register", json={"email": "owner@gmail.com", "password": PASSWORD}
+                ).status_code
+                == 503
+            )
+        with service.database.connect() as conn:
+            for table in ("users", "credit_ledger", "google_identities", "sessions"):
+                assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        monkeypatch.setattr(service, "_change_credits", original)
+        if method == "google":
+            assert signin(client).headers["location"] == "/app"
+        else:
+            assert (
+                client.post(
+                    "/api/auth/register", json={"email": "owner@gmail.com", "password": PASSWORD}
+                ).status_code
+                == 201
+            )
+        assert client.get("/api/me").json()["credits"] == 3
+        with service.database.connect() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM credit_ledger").fetchone()[0] == 1

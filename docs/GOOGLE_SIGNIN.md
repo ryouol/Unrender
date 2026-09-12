@@ -2,8 +2,11 @@
 
 Google authenticates identity; UNRENDER retains its existing private accounts, native
 cookie sessions, chart ownership and credit ledger. This adds no hosted auth database
-and makes no inference calls. Every new Google account starts with zero credits,
-including in development. Returning users retain their existing allowance.
+and makes no inference calls. New Google and password accounts receive the configured
+`UNRENDER_INITIAL_CREDITS` allowance once (3 testing credits for this beta).
+Returning users and linked accounts retain their existing balance; login, linking
+and reauthentication never grant another allowance. Account creation and its
+welcome ledger entry commit together. Set the allowance to 0 to disable new grants.
 
 ## Deployment configuration
 
@@ -27,7 +30,7 @@ loopback origin used by `UNRENDER_BASE_URL`, for example:
 `http://127.0.0.1:8000/auth/google/callback`
 
 Only `openid email profile` scopes are requested. No offline access, Gmail scopes,
-Google API access-token persistence, refresh tokens, or automatic credit grants.
+Google API access-token persistence or refresh tokens.
 The application controls account creation through `UNRENDER_ALLOW_REGISTRATION`;
 closing registration does not prevent an already connected Google identity signing in.
 Google Testing status alone is not an access gate for these basic identity scopes.
@@ -97,7 +100,7 @@ Authentication requests share bounded concurrency/global admission controls.
 Before deployment take a coordinated backup. Rollback requires restoring the prior
 schema backup into a fresh data directory rather than reverting code over the upgraded schema (currently 14).
 Tests exercise real RSA-signed JWT validation, wrong audience/issuer/signature,
-nonce/expiry/denial, browser mismatch/replay, explicit linking, zero grants, native
+nonce/expiry/denial, browser mismatch/replay, explicit linking, one-time welcome grants (including zero-credit configuration), native
 session continuation and recent-auth invalidation. No real Google consent or cloud
 client configuration is implied by these local tests; verify the dedicated client's
 actual consent, returning sign-in and cancellation after deployment configuration.

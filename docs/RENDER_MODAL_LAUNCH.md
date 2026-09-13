@@ -1,6 +1,32 @@
 # Render + Modal launch
 
-## Current deployment — September 11, 2026
+## Current deployment — September 12, 2026
+
+The live beta at https://unrender.onrender.com runs merge commit
+`a14b961db721004a4ad77d4e2ab5cdac343d1ef9`, schema 14.
+[PR #8](https://github.com/ryouol/Unrender/pull/8) added a one-time configured
+welcome grant to Google signup and sets the public beta allowance to three
+credits for both Google and password accounts. Existing balances, returning
+sign-in, and explicit linking do not receive another grant. Email and billing
+remain disabled; the existing Render service, disk, and pinned Modal model are
+unchanged. Later documentation-only commits do not require a runtime redeploy.
+
+Deployment `dep-dai9d4m743jc73e8fb8g` became live at 00:03:07 UTC. A coordinated
+backup preceded deployment. Pre/post snapshots preserved the existing user,
+session, ledger and three-credit balance; only `UNRENDER_INITIAL_CREDITS` changed.
+The hosted password signup check received three credits with one welcome ledger
+entry, rejected duplicate signup, and retained its balance after sign-out/sign-in.
+The synthetic verification account was removed without changing other accounts.
+Public configuration, landing copy and both health routes were checked after
+maintenance was disabled. No inference, email or billing was invoked by this rollout.
+
+Local validation: 320 tests passed / 1 skipped; 73 workflow browser scenarios,
+types and security lint passed. Branch, PR and main CI verify/container jobs passed.
+The Google grant path is covered by local integration tests; this rollout did not
+create a new real Google identity. See [engineering review](ENGINEERING_REVIEW.md)
+and [readiness](LAUNCH_READINESS.md) for remaining evidence gaps.
+
+## Historical refined-platform rollout — September 11, 2026
 
 UNRENDER is deployed at https://unrender.onrender.com using the Documents/Codex
 working checkout. The separate Desktop checkout is not the launch source.
@@ -9,7 +35,7 @@ The backend and premium interface were merged separately through PRs
 [#3](https://github.com/ryouol/Unrender/pull/3). Public password accounts followed
 in [#4](https://github.com/ryouol/Unrender/pull/4). The refined platform followed
 in [#6](https://github.com/ryouol/Unrender/pull/6). The service tracks `main`
-with automatic deployments still off and explicitly runs merge commit
+with automatic deployments still off. This historical rollout ran merge commit
 `015624a0af219107eb33ff4dc501f07dedc7051e`, schema 14.
 
 Render project `UNRENDER`, Production environment:

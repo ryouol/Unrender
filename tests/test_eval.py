@@ -192,9 +192,10 @@ def test_geometry_target_roundtrip_recovers_values():
     recover values within tolerance on real renders, and the parser must tolerate
     code fences / prose around the JSON (geometry-supervision plumbing)."""
     import random as _random
+
     from unrender.data_gen.chart_specs import random_spec
     from unrender.data_gen.geometry import capture_geometry
-    from unrender.data_gen.geometry_target import to_target, from_target
+    from unrender.data_gen.geometry_target import from_target, to_target
     from unrender.eval.geometry_decode import decode_geometry
 
     scores = []

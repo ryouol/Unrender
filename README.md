@@ -1,148 +1,144 @@
 # Unrender
 
-Unrender is a review-first workspace for turning chart images and PDF pages into structured data. It keeps the source beside an editable table, records every correction, and exports JSON, CSV, or XLSX. The XLSX audit sheet carries source, model, status, and approval metadata; JSON and CSV are data-only exports.
+**Turn chart images into editable data, with the source and review history attached.**
 
-The product is designed for research and consulting teams that need chart data they can inspect and defend. It does **not** promise automatic accuracy: extraction results remain unverified until a person reviews and approves them.
+[Open the live app](https://unrender.onrender.com/) · [Watch the demo](https://screen.studio/share/4lFdVojh) · [Engineering review guide](docs/ENGINEERING_REVIEW.md) · [CI](https://github.com/ryouol/Unrender/actions/workflows/ci.yml)
 
-## What is usable now
+Unrender helps analysts recover numbers from charts in reports, presentations, and screenshots when the original spreadsheet is unavailable. Upload a chart, compare the extracted table with its source, correct it, approve it, and export CSV, JSON, or an Excel workbook with an Audit sheet.
 
-- Account-generation, cross-tab session revocation, CSRF, tenant, API-key, and rate-limit boundaries
-- Validated PNG, JPEG, WebP, and PDF uploads with page selection and crop support
-- Persistent `queued → running → review → approved` jobs with fenced worker leases, bounded restart recovery, pre-dispatch refunds, capacity reservations, reference-aware source deletion, and a retryable deletion outbox
-- Non-destructive reprocessing that restores the last reviewed or approved result when a new attempt fails or is cancelled
-- Side-by-side source review, a bounded paged editor for maximum-size results, version history, and an audit trail
-- JSON, CSV, and XLSX exports; XLSX includes an audit sheet
-- A tenant-idempotent programmatic upload/status API with credit, bandwidth, outstanding-upload, and storage quotas
-- An isolated, ephemeral saved-sample workspace that runs without a GPU or external call
-- An existing Modal inference adapter for the evaluated Qwen3-VL LoRA
-- Optional Stripe **test-mode only** credit checkout with signed, idempotent webhooks
+This repository contains both the web product and the research pipeline behind its post-trained chart extraction model. The product's promise is **reviewable data**, not guaranteed automatic accuracy.
 
-This repository is a production candidate, not a hosted production service. Launch blockers and owner actions are explicit in [`docs/LAUNCH_READINESS.md`](docs/LAUNCH_READINESS.md).
+![Unrender review workspace with the original chart beside an editable table](docs/screenshots/refined/review-desktop-final.png)
 
-## Run the zero-cost demo
+*Actual local application capture with illustrative fixture data. Screenshots demonstrate the interface; they do not measure model accuracy. [Capture provenance and more views](docs/screenshots/README.md).*
 
-Python 3.11 is required.
+## Try it
+
+| Route | What to expect |
+|---|---|
+| [Live beta](https://unrender.onrender.com/) | Google or email/password signup; **3 free testing credits per new account**. Uploads call the pinned model on Modal. Email delivery and customer billing are off. |
+| [Video walkthrough](https://screen.studio/share/4lFdVojh) | Owner-recorded product demo hosted on Screen Studio. Treat it as a workflow demonstration, not a benchmark or latency measurement. |
+| Local replay, below | No cloud credentials or GPU required. Runs only the bundled saved fixture; arbitrary chart inference requires Modal. |
+
+Live input limits: PNG, JPEG, WebP, or PDF; **10 MiB per file**, images up to **4 MP**, PDFs up to **25 pages**. Choose one chart with readable axes and labels. Charts have a 30-day retention window; download exports you want to keep.
+
+One extraction attempt reserves one credit. It is refunded if the attempt ends before provider dispatch. Once dispatched, the attempt consumes the credit even if inference fails or is cancelled. Signing in or connecting Google does not grant another welcome allowance. See [account policy](docs/PUBLIC_ACCOUNTS.md).
+
+<details>
+<summary>More product screenshots — landing page, chart library, and dark mode</summary>
+
+### Landing page
+
+![Unrender public landing page](docs/screenshots/refined/landing-desktop-final.png)
+
+### Private chart library
+
+![Chart library with search, status filters, projects, and illustrative charts](docs/screenshots/refined/library-desktop-final.png)
+
+### Approved result in dark mode
+
+![Approved chart and data in the dark review workspace](docs/screenshots/refined/review-dark-final.png)
+
+These are September 11 local application captures using illustrative data. The landing artwork is a concept illustration; the library and table values are fixtures. They are not customer uploads or live model predictions.
+
+</details>
+
+## Run locally
+
+Prerequisites: **Python 3.11**, Git, and Node.js for browser regression tests. No frontend build step or GPU is needed for replay.
 
 ```bash
+git clone https://github.com/ryouol/Unrender.git
+cd Unrender
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes -r requirements-dev.lock
 python -m pip install --require-hashes -r requirements-build.lock
 python -m pip install --no-deps --no-build-isolation -e .
-cp .env.example .env
-unrender-serve
+sh scripts/run_local.sh
 ```
 
-Open `http://127.0.0.1:8000`, then choose **Open the reviewed sample**. Each sample visitor receives an isolated ephemeral tenant that can run only the bundled verification fixture and cannot create API keys, use billing, or upload arbitrary files. Replay performs no paid inference.
+Open [localhost:8000](http://127.0.0.1:8000/), choose **Sign in → Run saved model replay**, and wait for the review table. Change a value, save and approve, then download the workbook and inspect its **Audit** sheet. This is an isolated ephemeral sample workspace; sign-out removes it.
 
-The same demo runs in a container:
+The launcher explicitly disables Google, email, billing, and external inference, and stores local data under ignored `outputs/local-runtime/`. Its replay extractor accepts the bundled fixture only. Local limits differ from production; the UI reads them from `/api/public-config`. Copying `.env.example` is unnecessary for this launcher.
+
+Alternatively, use the development container (port 8000 must be free):
 
 ```bash
 docker compose up --build
 ```
 
-## Production accounts and Render
+Compose keeps data in a named local volume. Both launch methods are for local evaluation; production configuration deliberately rejects replay mode. For real extraction, follow [Render + Modal deployment](docs/RENDER_MODAL_LAUNCH.md) and [operations](docs/OPERATIONS.md). Model weights and cloud credentials are not bundled with a clone.
 
-See [`docs/RENDER_MODAL_LAUNCH.md`](docs/RENDER_MODAL_LAUNCH.md) for the Render + Modal
-configuration, hosted verification, and remaining public-release gates. The
-controlled beta is live at https://unrender.onrender.com with password signup,
-sign-in and persistent workspaces. New accounts start with zero extraction
-credits; access is granted separately. Email and billing remain off. See
-[`docs/PUBLIC_ACCOUNTS.md`](docs/PUBLIC_ACCOUNTS.md) for activation, recovery,
-credit grants and the 30-day chart-retention policy.
+## How it is built
 
-## Configure real extraction
-
-The current production adapter calls the existing `modal_train.py::infer_one` deployment boundary. Set these values through your deployment secret manager:
-
-```dotenv
-UNRENDER_ENV=production
-UNRENDER_BASE_URL=https://unrender.example.com
-UNRENDER_DATA_DIR=/data/unrender
-UNRENDER_EXTRACTOR=modal
-UNRENDER_WORKER_ENABLED=true
-UNRENDER_SEED_DEMO=false
-UNRENDER_ALLOW_REGISTRATION=false
-UNRENDER_MODAL_APP=unrender-production
-UNRENDER_MODAL_FUNCTION=infer_one
-UNRENDER_MODAL_MODEL=owner/approved-unrender-model
-UNRENDER_MODAL_REVISION=<full 40-character model commit>
-UNRENDER_MODAL_MODEL_DIGEST=<SHA-256 of the complete resolved model snapshot>
-UNRENDER_MODAL_PROVIDER_RELEASE=<64-character approved provider release digest>
+```mermaid
+flowchart TD
+    UI[Browser: HTML, CSS, JavaScript] -->|Session + CSRF| Web[FastAPI]
+    API[API client] -->|Bearer key + idempotency key| Web
+    Web --> Service[Product service: ownership, credits, versions, audit]
+    Service --> DB[(SQLite WAL)]
+    Service --> Files[Private persistent files]
+    DB --> Worker[Embedded durable worker]
+    Worker --> Source[Render PDF page / crop image]
+    Source --> Extractor[Extractor boundary]
+    Extractor -->|Production| Modal[Modal: pinned post-trained Qwen3-VL-4B]
+    Extractor -->|Local only| Replay[Deterministic saved fixture]
+    Worker -->|Validated ChartData| DB
+    Service --> Export[CSV / JSON / XLSX + Audit sheet]
 ```
 
-Production startup rejects HTTP base URLs, replay extraction, seeded demo accounts, public registration with automatic credits or password-only public registration with email/billing configured, a disabled worker, local/mutable model paths, non-commit revisions, missing model-manifest verification, and an unapproved provider release. The production Modal function uses a dedicated inference-cache volume rather than the mutable research volume, loads a published private Modal release or the named Hub commit, verifies its complete read-only snapshot against the pinned digest, and measures reviewed source plus runtime package versions into the canaried release digest. `unrender-admin check-provider-contract` resolves the exact `unrender-production/infer_one` deployment without invoking billable inference. Provision invited accounts with `unrender-admin create-user analyst@example.com --credits 25`; its password prompts are not command-line arguments. Keep one application replica per SQLite data volume; the documented scale-up path is a managed database, object storage, and a dedicated queue worker.
+**Hosting:** one Render container serves the frontend, API, and embedded worker. SQLite and private source files live on one persistent disk. Modal runs GPU inference separately. Google provides sign-in identity; application accounts, sessions, credits, and chart ownership stay in Unrender. There is no Vercel frontend or GCP application backend in this deployment.
 
-## Product workflow
+**Model:** production uses the project's post-trained Qwen3-VL-4B table LoRA, served through `modal_train.py::infer_one`. The app checks pinned model and provider release identities. Local replay returns deterministic fixture data and never calls that model. [Architecture and trust boundaries](docs/ARCHITECTURE.md) · [Google sign-in](docs/GOOGLE_SIGNIN.md).
 
-1. Upload a chart image or PDF and choose the page/crop.
-2. Unrender reserves one chart credit and records a durable job.
-3. The worker renders the selected source and calls the configured extractor.
-4. The result enters review; it is never presented as verified automatically.
-5. Corrections create immutable result versions.
-6. Approval and exports are appended to the audit trail.
-7. A cancellation/failure before provider dispatch returns its reserved credit exactly once. Once provider dispatch is durably recorded, the attempt consumes the credit even if the provider fails or cancellation arrives later; this prevents unbounded free paid inference.
+**Workflow:** upload → queued → running → review → approved → export. Corrections create immutable result versions; reprocessing preserves the previous result if the new attempt fails. Source files are removed through a durable deletion outbox. XLSX contains the audit metadata; CSV and JSON are data-only exports.
 
-The saved fixture costs zero credits because it makes no provider call.
+## Engineering evaluation
 
-## API
-
-Create an API key in the workspace, then submit a chart:
+Start with the [review guide](docs/ENGINEERING_REVIEW.md) for a reading order, test map, failure cases, and evidence boundaries.
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/api/v1/extractions?page_index=0" \
-  -H "Authorization: Bearer $UNRENDER_API_KEY" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -F "file=@chart.png"
-```
-
-Every submission requires a tenant-scoped idempotency key. An exact retry inside the configured 720-hour default replay window returns the stored response without creating another job or reserving another credit; changed or expired keys return `409`. The expired response is compacted to a tombstone for another 365 days by default, after which the record may be removed, so clients must never recycle keys. Poll `GET /api/v1/extractions/{job_id}` with the same bearer key. Interactive schemas are intentionally disabled; the stable response, retention horizon, and error contracts are maintained in [`docs/API.md`](docs/API.md).
-
-## Verify a change
-
-```bash
-ruff check unrender/product unrender/schema/chart_schema.py tests/test_product.py
+# In the activated virtual environment above:
+ruff check unrender/product unrender/schema/chart_schema.py tests
+ruff check --select S unrender/product
 mypy unrender/product
 pytest -q
-node --check unrender/product/static/app.js
-python scripts/check_release_licenses.py
-docker build -t unrender:local .
 ```
 
-The product suite covers the complete saved-sample workflow, review/edit/approve/export behavior, visible/restorable result versions, tenant isolation, streamed-body and upload safety, tenant quotas, submission/refund idempotency, bounded restart recovery, API keys, and Stripe test events. The research/evaluation suite remains part of the default test run.
+`pytest` also invokes the workflow, Google, previews, and landing Node harnesses. For a focused UI-only rerun, use `node tests/browser_workflow.mjs` or the other harnesses in the [test map](docs/ENGINEERING_REVIEW.md#test-map).
 
-## Model evidence, stated narrowly
+The full release checks, including locked dependency audits, package build, and production container smoke tests, are defined in [CI](.github/workflows/ci.yml). The `a14b961` runtime release passed **320 tests, 1 skipped**, plus the documented browser checks; branch, PR, and main CI passed. This is a dated result, not a guarantee that every environment or future change passes. [Release evidence](docs/RENDER_MODAL_LAUNCH.md).
 
-On the frozen 300-chart `common300` synthetic set, the current table LoRA scores 38.9% `cell@5_exact`, versus 13.5% for the pinned base model. It is at parity with the saved GPT-5.5 comparison on a small overlap and behind the saved Claude and Gemini comparisons. On eight public OWID charts it scores 67% versus 31% for the base, but that set has a contamination caveat and is too small for a launch claim.
-
-Those values are research evidence, not a product accuracy guarantee. Receipts and caveats live in [`RESULTS.md`](RESULTS.md), [`RESULT_TO_CLAIM.md`](RESULT_TO_CLAIM.md), and [`MODEL_STATUS_REVIEW.md`](MODEL_STATUS_REVIEW.md).
-
-The base Qwen/Unsloth model artifacts used by the research pipeline are published as Apache-2.0. The fine-tuned weights currently live on the owner's private Modal volume; publishing and independent license/provenance review remain owner gates.
-
-## Repository map
-
-| Path | Purpose |
+| Start here | Responsibility |
 |---|---|
-| `unrender/product/` | Product web app, service layer, persistence, storage, worker, and extractor boundary |
-| `unrender/schema/` | Strict chart data contract and exports |
-| `unrender/data_gen/` | Deterministic synthetic chart generation |
-| `unrender/eval/` | Providers, metrics, scoring, reports, and comparisons |
-| `unrender/train/` | LoRA training workflow |
-| `modal_train.py` | Modal generation, training, evaluation, and single-image inference functions |
-| `tests/test_product.py` | Product workflow, security-boundary, durability, and billing regression tests |
-| `docs/` | Product decision, architecture, operations, launch, legal, and security handoff |
+| [`unrender/product/web.py`](unrender/product/web.py) | HTTP routes, sessions, CSRF, request admission |
+| [`unrender/product/service.py`](unrender/product/service.py) | Ownership, credit ledger, chart lifecycle, versions, exports |
+| [`unrender/product/database.py`](unrender/product/database.py) | Schema migrations, transactions, operational locking |
+| [`unrender/product/storage.py`](unrender/product/storage.py) | Upload validation, private files, publication and deletion |
+| [`unrender/product/worker.py`](unrender/product/worker.py) | Leases, provider dispatch, cancellation, restart recovery |
+| [`unrender/product/extractors.py`](unrender/product/extractors.py) | Replay and pinned Modal boundaries |
+| [`unrender/product/static/`](unrender/product/static/) | Landing page, auth, chart library, review editor |
+| [`unrender/schema/`](unrender/schema/) | Typed chart contract |
+| [`unrender/train/`](unrender/train/), [`unrender/eval/`](unrender/eval/), [`unrender/data_gen/`](unrender/data_gen/) | Training, scoring, and synthetic data generation |
+| [`tests/`](tests/), [`release/`](release/) | Regression tests, frozen evaluation inputs, saved receipts |
 
-## Documentation
+For programmatic use, see [API contracts](docs/API.md). Submissions require a tenant-scoped idempotency key; exact retries within the replay window do not create another job or charge another credit.
 
-- [`docs/PRODUCT_DECISION.md`](docs/PRODUCT_DECISION.md) — buyer, problem, positioning, pricing assumptions, and kill criteria
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — trust boundaries and job lifecycle
-- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deploy, backup, restore, alerts, and incident steps
-- [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — controls, threats, and accepted limits
-- [`docs/LAUNCH_READINESS.md`](docs/LAUNCH_READINESS.md) — evidence-backed gate checklist and owner blockers
-- [`docs/REMEDIATION_EVIDENCE.md`](docs/REMEDIATION_EVIDENCE.md) — exact-review fixes, local gate results, and external release gates
-- [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md) — license/provenance inventory and counsel questions
-- [`docs/LAUNCH_PLAN.md`](docs/LAUNCH_PLAN.md) — 30-day distribution and measurement plan
+## Evidence and limitations
 
-## License
+**Status: deployed controlled beta.** A running service and passing tests do not establish a broadly validated or enterprise-ready product.
 
-The repository's own code is Apache-2.0; see [`LICENSE`](LICENSE). That does not determine the obligations of the combined product. The former PyMuPDF AGPL/commercial-license dependency has been removed from product code and locks; PDF handling now uses locked pypdfium2/PDFium, whose upstream permissive terms and shipped dependency notices are recorded in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The checked-in CycloneDX inventory and machine policy validate that replacement. This engineering gate is not legal approval: broad public or commercial launch readiness remains blocked until the owner and qualified counsel approve the entity, privacy/terms, retention, subprocessors, support/refund terms, and intended distribution model in [`docs/LEGAL_REVIEW.md`](docs/LEGAL_REVIEW.md).
+- **Accuracy:** saved `common300` research results report 38.9% `cell@5_exact` for the table LoRA versus 13.5% for its pinned base. A separate three-chart production pilot recovered 15/15 values on crisp synthetic inputs. Neither is a representative customer benchmark. Human correction time remains unmeasured. [Research results](RESULTS.md) · [Claim boundaries](RESULT_TO_CLAIM.md) · [Pilot evidence](docs/LAUNCH_EVALUATION.md).
+- **Latency and cost:** the three pilot uploads took approximately 68–193 seconds end to end. Actual dollar cost was not measured. Signup credits are per account, not an abuse-proof per-person allowance or a provider spending cap.
+- **Scale:** one application replica per SQLite volume. Multi-node operation requires database, file storage, queue, and rate-limiting changes. There are no shared-team roles or enterprise SSO.
+- **Recovery:** email delivery and self-service email recovery are off. Google-only users recover through Google; password-account recovery needs operator verification. Backups have a separate retention policy from live deletion.
+- **Remaining release gates:** broader quality evaluation, legal/provenance approval, external accessibility/security validation, and container advisory disposition. The recorded Debian scan contains unresolved findings; see [container scan](docs/CONTAINER_SCAN.md) and the [readiness checklist](docs/LAUNCH_READINESS.md).
+
+Older dated research reviews, including [the June model review](MODEL_STATUS_REVIEW.md), describe earlier experiments. Use the current release evidence for deployment state.
+
+## Documentation and license
+
+[Engineering review](docs/ENGINEERING_REVIEW.md) · [Architecture](docs/ARCHITECTURE.md) · [Operations](docs/OPERATIONS.md) · [Security model](docs/SECURITY_MODEL.md) · [Launch readiness](docs/LAUNCH_READINESS.md) · [Product decision](docs/PRODUCT_DECISION.md)
+
+Repository code is [Apache-2.0](LICENSE). Dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); model/data provenance and product legal review remain separate concerns documented in [LEGAL_REVIEW.md](docs/LEGAL_REVIEW.md).

@@ -93,8 +93,11 @@ def test_wrapper_unwrapped():
 
 
 def test_existing_repairs_still_work():
-    raw = 'Here you go:\n```json\n{"chart_type":"bar","title":null,"x_axis":{"label":null,"unit":null},' \
-          '"y_axis":{"label":null,"unit":null},"series":[{"name":null,"points":[{"x":"A","y":1},]}]}\n```'
+    raw = (
+        'Here you go:\n```json\n{"chart_type":"bar","title":null,'
+        '"x_axis":{"label":null,"unit":null},"y_axis":{"label":null,"unit":null},'
+        '"series":[{"name":null,"points":[{"x":"A","y":1},]}]}\n```'
+    )
     pred, _ = parse_chart_json(raw)
     assert pred is not None
 

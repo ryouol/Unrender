@@ -49,7 +49,9 @@ def test_build_roundtrips_to_eval_sample(tmp_path):
                       "source": "FRED UNRATE"}
     gt = ChartData.model_validate_json(s.gt_json)
     assert gt.chart_type == "line"
-    assert [(p.x, p.y) for p in gt.series[0].points] == [("2019", 3.7), ("2020", 8.1), ("2021", 5.3)]
+    assert [(p.x, p.y) for p in gt.series[0].points] == [
+        ("2019", 3.7), ("2020", 8.1), ("2021", 5.3),
+    ]
 
     # The Modal variant carries the same row with a /vol-absolute image path.
     modal = load_eval_samples(str(root / "test.modal.jsonl"))[0]

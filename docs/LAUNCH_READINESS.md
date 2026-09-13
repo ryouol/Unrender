@@ -72,6 +72,6 @@ Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** need
 5. Complete the remaining monitoring/cancellation coverage and recovery objectives; existing alerts, daily backups and restore receipts are linked above.
 6. Complete external accessibility/security and native-advisory assessment; the requested source code reviews are complete.
 7. Conduct design-partner validation before enabling any paid mode.
-5. Complete the recorded live Google acceptance matrix: cancellation, returning sign-in, and explicit linking using a separate controlled password account. The current owner account is already Google-connected; no automatic email-based account merge is permitted.
+8. Complete the recorded live Google acceptance matrix: cancellation, returning sign-in, and explicit linking using a separate controlled password account. The current owner account is already Google-connected; no automatic email-based account merge is permitted.
 
 Until those actions are complete, the honest release label is **controlled beta with three welcome testing credits**, not generally available or enterprise-ready.

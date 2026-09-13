@@ -42,7 +42,7 @@ def _make_dataset(path, n):
 def test_fingerprint_order_independent_content_sensitive_and_dedup():
     assert fingerprint_ids(["a", "b", "c"]) == fingerprint_ids(["c", "a", "b"])  # order-independent
     assert fingerprint_ids(["a", "b"]) != fingerprint_ids(["a", "c"])            # content-sensitive
-    assert fingerprint_ids(["a", "a", "b"]) == fingerprint_ids(["a", "b"])       # membership (dedup)
+    assert fingerprint_ids(["a", "a", "b"]) == fingerprint_ids(["a", "b"])  # dedup
     fp = fingerprint_ids(["a"])
     assert isinstance(fp, str) and len(fp) == 16
 
@@ -51,7 +51,8 @@ def test_fingerprint_order_independent_content_sensitive_and_dedup():
 
 def test_run_coverage_guard_raises_on_missing_id(tmp_path):
     from unrender.eval.run_baselines import run
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 2)
     with pytest.raises(SystemExit, match="coverage"):
         run("perfect", "mock", str(data), str(tmp_path / "o"), 0, 0,
             only_ids={"0000001", "ZZZZZZZ"})
@@ -59,7 +60,8 @@ def test_run_coverage_guard_raises_on_missing_id(tmp_path):
 
 def test_run_records_fingerprints_and_pinned_revision(tmp_path):
     from unrender.eval.run_baselines import run
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 3)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 3)
     out = tmp_path / "o"
     run("perfect", "mock", str(data), str(out), 0, 0, only_ids={"0000001", "0000002"})
     meta = json.loads((out / "meta.json").read_text())
@@ -75,14 +77,18 @@ def test_hf_hub_model_requires_pinned_revision(tmp_path):
     from the merged model's processor (a base-vs-LoRA confound, audit finding I).
     A local model dir is exempt (fingerprinted by content)."""
     from unrender.eval.run_baselines import run
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 2)
     # Hub id (not a local path) without --revision -> refuse before any model load.
     with pytest.raises(SystemExit, match="revision"):
         run("hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o"), 0, 0)
     # Passing an explicit revision clears the guard (it then proceeds to load, which
     # needs torch — so we only assert the guard itself no longer raises SystemExit).
     try:
-        run("hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o2"), 0, 0, revision="deadbeef")
+        run(
+            "hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o2"),
+            0, 0, revision="deadbeef",
+        )
     except SystemExit as e:
         assert "revision" not in str(e)
     except Exception:
@@ -91,7 +97,8 @@ def test_hf_hub_model_requires_pinned_revision(tmp_path):
 
 def test_resume_config_mismatch_raises(tmp_path):
     from unrender.eval.run_baselines import run
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 2)
     out = tmp_path / "o"
     run("perfect", "mock", str(data), str(out), 0, 0)                       # greedy
     with pytest.raises(SystemExit, match="resume-config"):                  # different decoder
@@ -104,7 +111,8 @@ def test_resume_config_mismatch_raises(tmp_path):
 def test_score_subset_does_not_clobber_full_report(tmp_path):
     from unrender.eval.run_baselines import run
     from unrender.eval.score import score
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 3)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 3)
     out = tmp_path / "o"
     run("perfect", "mock", str(data), str(out), 0, 0)
     pred = str(out / "predictions.jsonl")
@@ -119,7 +127,8 @@ def test_score_subset_does_not_clobber_full_report(tmp_path):
 def test_score_coverage_guard_raises_on_missing_id(tmp_path):
     from unrender.eval.run_baselines import run
     from unrender.eval.score import score
-    data = tmp_path / "test.jsonl"; _make_dataset(data, 2)
+    data = tmp_path / "test.jsonl"
+    _make_dataset(data, 2)
     out = tmp_path / "o"
     run("perfect", "mock", str(data), str(out), 0, 0)
     with pytest.raises(SystemExit, match="coverage"):
@@ -154,15 +163,16 @@ def _make_manifest(d, order):
 def test_split_membership_independent_of_manifest_order(tmp_path):
     from unrender.data_gen.split_dataset import split
     order = list(range(1, 21))
-    shuffled = order[:]; random.Random(99).shuffle(shuffled)
+    shuffled = order[:]
+    random.Random(99).shuffle(shuffled)
     _make_manifest(tmp_path / "a", order)       # ascending manifest
     _make_manifest(tmp_path / "b", shuffled)    # same ids, different write-order
     split(str(tmp_path / "a"), val_size=4, test_size=6, seed=7)
     split(str(tmp_path / "b"), val_size=4, test_size=6, seed=7)
 
     def ids(p):
-        return {Path(json.loads(l)["images"][0]).stem
-                for l in Path(p).read_text().splitlines() if l.strip()}
+        return {Path(json.loads(line)["images"][0]).stem
+                for line in Path(p).read_text().splitlines() if line.strip()}
     for name in ("train", "val", "test"):
         assert ids(tmp_path / "a" / f"{name}.jsonl") == ids(tmp_path / "b" / f"{name}.jsonl")
 
@@ -184,8 +194,10 @@ def test_data_table_signature_ignores_cosmetics_keeps_values():
     from unrender.schema.chart_schema import Axis, ChartData, Point, Series, data_table_signature
     base = ChartData(chart_type="bar", title="A", x_axis=Axis(label="X"),
                      series=[Series(name="S", points=[Point(x="a", y=1.0), Point(x="b", y=2.0)])])
-    cosmetic = base.model_copy(deep=True); cosmetic.title = "totally different title"
-    valued = base.model_copy(deep=True); valued.series[0].points[1].y = 2.5
+    cosmetic = base.model_copy(deep=True)
+    cosmetic.title = "totally different title"
+    valued = base.model_copy(deep=True)
+    valued.series[0].points[1].y = 2.5
     assert data_table_signature(base) == data_table_signature(cosmetic)  # cosmetics ignored
     assert data_table_signature(base) != data_table_signature(valued)    # value change detected
 
@@ -206,7 +218,9 @@ def test_common300_no_data_table_leak_into_train():
     common_sigs = {test_sigs[i] for i in common if i in test_sigs}
     train_sigs = set(_table_sigs_by_id(train_p).values())
     leaked = common_sigs & train_sigs
-    assert not leaked, f"{len(leaked)} common300 data tables also appear in TRAIN (memorization leak)"
+    assert not leaked, (
+        f"{len(leaked)} common300 data tables also appear in TRAIN (memorization leak)"
+    )
 
 
 # --- geometry-supervision plumbing ------------------------------------------
@@ -217,12 +231,13 @@ def test_geometry_data_builder_and_decode_scoring(tmp_path):
     Both must round-trip to high cell@5_exact (the train target == what the eval
     decodes)."""
     import random as _random
+
     from unrender.data_gen.chart_specs import random_spec
     from unrender.data_gen.geometry import capture_geometry
     from unrender.data_gen.geometry_target import to_target
-    from unrender.train.geometry_data import build_geometry_split
-    from unrender.prompts import GEOMETRY_PROMPT
     from unrender.eval.score import score
+    from unrender.prompts import GEOMETRY_PROMPT
+    from unrender.train.geometry_data import build_geometry_split
 
     # 1. a small seeded source split (chat format, table-JSON targets)
     src = tmp_path / "train.jsonl"
@@ -234,7 +249,8 @@ def test_geometry_data_builder_and_decode_scoring(tmp_path):
             f.write(json.dumps({
                 "images": [f"data/x/{i:07d}.png"],
                 "messages": [{"role": "user", "content": "P"},
-                             {"role": "assistant", "content": canonical_json(spec.to_chart_data())}],
+                             {"role": "assistant",
+                              "content": canonical_json(spec.to_chart_data())}],
                 "meta": {"labels_shown": spec.value_labels_shown, "chart_type": spec.chart_type},
             }) + "\n")
 
@@ -242,7 +258,7 @@ def test_geometry_data_builder_and_decode_scoring(tmp_path):
     out = tmp_path / "train.geom.jsonl"
     res = build_geometry_split(str(src), str(out), base_seed=5678, hard=True)
     assert res["n_ok"] == 4 and res["n_mismatch"] == 0
-    grows = [json.loads(l) for l in out.read_text().splitlines()]
+    grows = [json.loads(line) for line in out.read_text().splitlines()]
     assert all(r["messages"][0]["content"] == GEOMETRY_PROMPT for r in grows)
 
     # 3. a 'perfect' geometry prediction file (raw = the captured target) scored
@@ -265,7 +281,7 @@ def test_numeric_token_ids_and_copies():
     """The precision-lever helpers (pure-Python, testable off the GPU box):
     digit-bearing tokens are detected for loss up-weighting, and the fractional
     oversample multiplier produces the right integer copy counts."""
-    from unrender.train.sft_lora import _numeric_token_ids, _copies
+    from unrender.train.sft_lora import _copies, _numeric_token_ids
 
     toks = ["the", "0.", "314", "abc", "Ġ5", "!", "100", "x"]  # ids 0..7
 

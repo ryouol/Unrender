@@ -62,8 +62,10 @@ mkdir -p outputs/local-verification/launch-eval
   --out outputs/local-verification/launch-eval/offline-scores.json
 ```
 
-The three jobs remain unapproved in the production account, identified by their
-filenames. No human correction timing has been recorded.
+The three jobs were left unapproved at the time of that run. Live accounts and
+charts were subsequently reset at the owner’s request; use the checked-in
+receipts for review rather than expecting those jobs in production. No human
+correction timing has been recorded.
 
 ## Provider latency investigation
 

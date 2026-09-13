@@ -1,18 +1,21 @@
 # Launch readiness
 
-September 11, 17:19 UTC deployment update: the refined platform is live on
-Render at merge commit `015624a0af219107eb33ff4dc501f07dedc7051e`, schema 14.
-The controlled beta retains public password signup, zero welcome credits and
-operator-granted extraction access. The existing post-trained model and resources
-remain unchanged. Thirty hosted HTTP checks passed; all existing accounts,
-sessions, charts, versions and credits were preserved. Google is configured and
-available, but real consent/sign-in and password-confirmed linking of the existing
-owner account remain **unverified**.
-[RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md) records the current configuration
-and hosted evidence, with the machine-readable
+September 12 handoff: the controlled beta runs on Render at
+`a14b961db721004a4ad77d4e2ab5cdac343d1ef9`, schema 14. Google and password
+signup are available with **three testing credits per new account**. Existing
+balances are preserved; returning sign-in and linking do not grant credits.
+Email delivery and customer billing remain off. The pinned model and hosting
+resources are unchanged. This release passed 320 local tests / 1 skipped and
+branch, PR, and main CI. A fresh hosted password signup received exactly three
+credits and retained them after sign-out/sign-in; its synthetic account was removed.
+See [PR #8](https://github.com/ryouol/Unrender/pull/8) and
+[RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md) for deployment evidence.
+
+The September 11 refined-platform receipt remains historical evidence for
+UI, deletion and account preservation checks:
 [refined-platform receipt](../release/launch-eval-results/refined-platform-v1.json).
-Earlier rollout receipts remain historical evidence. Email, customer billing and
-a broader public paid launch remain deferred or blocked as specified below.
+Its account counts and zero-credit configuration are not current inventory.
+The engineering review entry point is [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md).
 
 Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** needs owner/external action, and **DEFERRED** is intentionally outside the controlled beta.
 
@@ -30,7 +33,7 @@ Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** need
 | Source deletion and publication | PASS | Job deletion transactionally queues its source and, only for the last reference, the original upload, then removes both rows. The outbox survives storage failure and denies previews immediately. Staging/upload/job publication fsyncs bytes and every containing namespace before SQLite references. Opaque owner-token leases fence reservation renewal and exact final consumption; deletion holds the cross-process operational lock from its final reference check through file removal, so expiry cleanup cannot produce a row without its file. |
 | Private projects and account deletion | PASS | Local tests cover chart names, project assignment and both project-deletion modes. Hosted checks passed project creation/rename/list/deletion with charts kept, password-confirmed account deletion and subsequent session rejection; synthetic accounts were removed. Recent authentication, CSRF, explicit confirmation and durable file cleanup protect account removal. Backups retain their separate expiry policy. See CHART_LIBRARY.md and refined-platform-v1.json. |
 | Google authentication implementation | PASS (engineering) | Signed-token validation, PKCE/state/nonce, one-use browser completion, one-time configured Google signup credits and explicit account linking pass local tests. Dedicated credentials are configured in production; public configuration reports Google available. No real Google consent or identity exchange is established by these checks. See GOOGLE_SIGNIN.md. |
-| Live Google sign-in and owner linking | BLOCKED — verification pending | The dedicated personal Google project's client is configured for the production audience. The existing owner password account must sign in with its password, then use Account settings → Connect Google and confirm that password. Matching email never links accounts. Consent, cancellation, returning Google sign-in and preservation after linking still require live verification. |
+| Complete live Google acceptance matrix | BLOCKED — verification pending | Google is configured and a Google-connected owner account has been observed after the account reset. A complete recorded live matrix covering consent cancellation, returning sign-in, and explicit linking is still pending. Matching email never links existing password accounts automatically. |
 | Export safety | PASS | CSV/XLSX neutralize non-numeric formula prefixes; JSON preserves exact reviewed values; workbook regression is tested |
 | Upload/body safety limits | PASS | Streaming body counting avoids a second accepted-body copy; route-specific upload/render and password-KDF concurrency ceilings, magic decoding, image dimensions, PDF page/password handling, finite crop/chart numbers, and storage-root deletion guard are tested. |
 | Truthful sample | PASS | Exact source hash plus deterministic synthetic ground truth; `verified-fixture/synthetic-v1-0002906`; no provider call |
@@ -69,6 +72,6 @@ Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** need
 5. Complete the remaining monitoring/cancellation coverage and recovery objectives; existing alerts, daily backups and restore receipts are linked above.
 6. Complete external accessibility/security and native-advisory assessment; the requested source code reviews are complete.
 7. Conduct design-partner validation before enabling any paid mode.
-8. Complete password-confirmed Google linking of the existing owner account, then verify live consent, cancellation, returning sign-in and preserved ownership/credits; configuration alone does not complete this gate.
+8. Complete the recorded live Google acceptance matrix: cancellation, returning sign-in, and explicit linking using a separate controlled password account. The current owner account is already Google-connected; no automatic email-based account merge is permitted.
 
-Until those actions are complete, the honest release label is **controlled beta with operator-granted extraction**, not generally available or enterprise-ready.
+Until those actions are complete, the honest release label is **controlled beta with three welcome testing credits**, not generally available or enterprise-ready.

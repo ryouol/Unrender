@@ -829,6 +829,9 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
 
         _providers.HF_GEN_CONFIG.clear()  # greedy — identical to the eval default
         _providers.HF_MODEL_CONFIG.clear()
+        # Bound vision prefill to 512 image tokens (32 x 32 pixels each).
+        # This is a production preprocessing policy, not an eval-default change.
+        _providers.HF_MODEL_CONFIG["max_pixels"] = 512 * 32 * 32
 
         with tempfile.NamedTemporaryFile(suffix=".png") as f:
             f.write(image_bytes)

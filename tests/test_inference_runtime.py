@@ -20,6 +20,8 @@ def test_hf_preserves_all_image_tokens_past_training_tokenizer_limit(tmp_path, m
             return self
 
     class Processor:
+        image_processor = SimpleNamespace(size={"shortest_edge": 65536, "longest_edge": 16777216})
+
         def apply_chat_template(self, *args, **kwargs):
             return "expanded image prompt"
 
@@ -27,6 +29,11 @@ def test_hf_preserves_all_image_tokens_past_training_tokenizer_limit(tmp_path, m
             # Reproduce the saved training tokenizer's implicit truncation.
             if kwargs.get("truncation", True):
                 raise ValueError("Mismatch in image token count: 2044 versus 2100")
+            assert kwargs["images_kwargs"]["size"] == {
+                "shortest_edge": 65536,
+                "longest_edge": 524288,
+            }
+            assert self.image_processor.size["longest_edge"] == 16777216
             return Inputs(input_ids=np.zeros((1, 2500), dtype=int))
 
         def decode(self, tokens, **kwargs):
@@ -52,7 +59,7 @@ def test_hf_preserves_all_image_tokens_past_training_tokenizer_limit(tmp_path, m
         ),
     )
     monkeypatch.setattr(providers, "_HF_CACHE", {("model", None): (Processor(), Model())})
-    monkeypatch.setattr(providers, "HF_MODEL_CONFIG", {})
+    monkeypatch.setattr(providers, "HF_MODEL_CONFIG", {"max_pixels": 524288})
     monkeypatch.setattr(providers, "HF_GEN_CONFIG", {})
     assert providers.hf_vlm_provider(str(image), "extract", "model") == "complete output"
 

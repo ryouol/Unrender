@@ -1,0 +1,250 @@
+[
+  {
+    "phase": "cold",
+    "elapsed_seconds": 125.17520093000002,
+    "diagnostics": {
+      "generated_tokens": 188,
+      "tail_tokens": [
+        "0",
+        "},{\"",
+        "x",
+        "\":\"",
+        "Jun",
+        "\",\"",
+        "y",
+        "\":",
+        "6",
+        "1",
+        ".",
+        "0",
+        "}",
+        "]}",
+        "]}",
+        "<|im_end|>"
+      ],
+      "stages": {
+        "snapshot_cache_hit": false,
+        "snapshot_verification_seconds": 30.799279074,
+        "imports_seconds": 0.01662867099999943,
+        "model_load_seconds": 5.010724191000001,
+        "preprocess_seconds": 0.1443854540000018,
+        "generate_decode_seconds": 88.844655405,
+        "input_tokens": 2329,
+        "output_tokens": 188
+      },
+      "original_cpu_threads": 4,
+      "cpu_threads": 4,
+      "device_map": {
+        "": "0"
+      },
+      "dtype": "torch.bfloat16",
+      "image_size": {
+        "longest_edge": 16777216,
+        "shortest_edge": 65536
+      },
+      "attention": "sdpa",
+      "use_cache": true,
+      "output_tokens": 187
+    },
+    "raw": "{\"chart_type\":\"grouped_bar\",\"title\":\"Cloud infrastructure spend\",\"x_axis\":{\"label\":\"Month\",\"unit\":null},\"y_axis\":{\"label\":\"Spend\",\"unit\":\"USD thousands\"},\"series\":[{\"name\":\"Budget\",\"points\":[{\"x\":\"Jan\",\"y\":40.0},{\"x\":\"Feb\",\"y\":44.0},{\"x\":\"Mar\",\"y\":48.0},{\"x\":\"Apr\",\"y\":48.0},{\"x\":\"May\",\"y\":52.0},{\"x\":\"Jun\",\"y\":56.0}]},{\"name\":\"Actual\",\"points\":[{\"x\":\"Jan\",\"y\":38.0},{\"x\":\"Feb\",\"y\":47.0},{\"x\":\"Mar\",\"y\":46.0},{\"x\":\"Apr\",\"y\":55.0},{\"x\":\"May\",\"y\":51.0},{\"x\":\"Jun\",\"y\":61.0}]}]}",
+    "json": {
+      "chart_type": "grouped_bar",
+      "title": "Cloud infrastructure spend",
+      "x_axis": {
+        "label": "Month",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Spend",
+        "unit": "USD thousands"
+      },
+      "series": [
+        {
+          "name": "Budget",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 40.0
+            },
+            {
+              "x": "Feb",
+              "y": 44.0
+            },
+            {
+              "x": "Mar",
+              "y": 48.0
+            },
+            {
+              "x": "Apr",
+              "y": 48.0
+            },
+            {
+              "x": "May",
+              "y": 52.0
+            },
+            {
+              "x": "Jun",
+              "y": 56.0
+            }
+          ]
+        },
+        {
+          "name": "Actual",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 38.0
+            },
+            {
+              "x": "Feb",
+              "y": 47.0
+            },
+            {
+              "x": "Mar",
+              "y": 46.0
+            },
+            {
+              "x": "Apr",
+              "y": 55.0
+            },
+            {
+              "x": "May",
+              "y": 51.0
+            },
+            {
+              "x": "Jun",
+              "y": 61.0
+            }
+          ]
+        }
+      ]
+    },
+    "csv": "Month,Budget,Actual\r\nJan,40.0,38.0\r\nFeb,44.0,47.0\r\nMar,48.0,46.0\r\nApr,48.0,55.0\r\nMay,52.0,51.0\r\nJun,56.0,61.0\r\n",
+    "parse_errors": [],
+    "provider_release": "200bbda6b4eee0854ca3b00e1e7cff75de16b8de52aee3ff41398519f034dc85"
+  },
+  {
+    "phase": "warm",
+    "elapsed_seconds": 86.071870402,
+    "diagnostics": {
+      "generated_tokens": 188,
+      "tail_tokens": [
+        "0",
+        "},{\"",
+        "x",
+        "\":\"",
+        "Jun",
+        "\",\"",
+        "y",
+        "\":",
+        "6",
+        "1",
+        ".",
+        "0",
+        "}",
+        "]}",
+        "]}",
+        "<|im_end|>"
+      ],
+      "stages": {
+        "snapshot_cache_hit": true,
+        "snapshot_verification_seconds": 5.043000015803045e-06,
+        "imports_seconds": 2.4736000000302738e-05,
+        "model_load_seconds": 3.5379999872020562e-06,
+        "preprocess_seconds": 0.10273680899999249,
+        "generate_decode_seconds": 85.95069599500002,
+        "input_tokens": 2329,
+        "output_tokens": 188
+      },
+      "original_cpu_threads": 4,
+      "cpu_threads": 4,
+      "device_map": {
+        "": "0"
+      },
+      "dtype": "torch.bfloat16",
+      "image_size": {
+        "longest_edge": 16777216,
+        "shortest_edge": 65536
+      },
+      "attention": "sdpa",
+      "use_cache": true,
+      "output_tokens": 187
+    },
+    "raw": "{\"chart_type\":\"grouped_bar\",\"title\":\"Cloud infrastructure spend\",\"x_axis\":{\"label\":\"Month\",\"unit\":null},\"y_axis\":{\"label\":\"Spend\",\"unit\":\"USD thousands\"},\"series\":[{\"name\":\"Budget\",\"points\":[{\"x\":\"Jan\",\"y\":40.0},{\"x\":\"Feb\",\"y\":44.0},{\"x\":\"Mar\",\"y\":48.0},{\"x\":\"Apr\",\"y\":48.0},{\"x\":\"May\",\"y\":52.0},{\"x\":\"Jun\",\"y\":56.0}]},{\"name\":\"Actual\",\"points\":[{\"x\":\"Jan\",\"y\":38.0},{\"x\":\"Feb\",\"y\":47.0},{\"x\":\"Mar\",\"y\":46.0},{\"x\":\"Apr\",\"y\":55.0},{\"x\":\"May\",\"y\":51.0},{\"x\":\"Jun\",\"y\":61.0}]}]}",
+    "json": {
+      "chart_type": "grouped_bar",
+      "title": "Cloud infrastructure spend",
+      "x_axis": {
+        "label": "Month",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Spend",
+        "unit": "USD thousands"
+      },
+      "series": [
+        {
+          "name": "Budget",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 40.0
+            },
+            {
+              "x": "Feb",
+              "y": 44.0
+            },
+            {
+              "x": "Mar",
+              "y": 48.0
+            },
+            {
+              "x": "Apr",
+              "y": 48.0
+            },
+            {
+              "x": "May",
+              "y": 52.0
+            },
+            {
+              "x": "Jun",
+              "y": 56.0
+            }
+          ]
+        },
+        {
+          "name": "Actual",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 38.0
+            },
+            {
+              "x": "Feb",
+              "y": 47.0
+            },
+            {
+              "x": "Mar",
+              "y": 46.0
+            },
+            {
+              "x": "Apr",
+              "y": 55.0
+            },
+            {
+              "x": "May",
+              "y": 51.0
+            },
+            {
+              "x": "Jun",
+              "y": 61.0
+            }
+          ]
+        }
+      ]
+    },
+    "csv": "Month,Budget,Actual\r\nJan,40.0,38.0\r\nFeb,44.0,47.0\r\nMar,48.0,46.0\r\nApr,48.0,55.0\r\nMay,52.0,51.0\r\nJun,56.0,61.0\r\n",
+    "parse_errors": [],
+    "provider_release": "200bbda6b4eee0854ca3b00e1e7cff75de16b8de52aee3ff41398519f034dc85"
+  }
+]

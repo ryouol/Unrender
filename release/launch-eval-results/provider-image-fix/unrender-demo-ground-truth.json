@@ -1,0 +1,72 @@
+{
+  "chart_type": "grouped_bar",
+  "title": "Cloud infrastructure spend",
+  "x_axis": {
+    "label": "Month",
+    "unit": null
+  },
+  "y_axis": {
+    "label": "Spend",
+    "unit": "USD thousands"
+  },
+  "series": [
+    {
+      "name": "Budget",
+      "points": [
+        {
+          "x": "Jan",
+          "y": 40
+        },
+        {
+          "x": "Feb",
+          "y": 44
+        },
+        {
+          "x": "Mar",
+          "y": 48
+        },
+        {
+          "x": "Apr",
+          "y": 48
+        },
+        {
+          "x": "May",
+          "y": 52
+        },
+        {
+          "x": "Jun",
+          "y": 56
+        }
+      ]
+    },
+    {
+      "name": "Actual",
+      "points": [
+        {
+          "x": "Jan",
+          "y": 38
+        },
+        {
+          "x": "Feb",
+          "y": 47
+        },
+        {
+          "x": "Mar",
+          "y": 46
+        },
+        {
+          "x": "Apr",
+          "y": 55
+        },
+        {
+          "x": "May",
+          "y": 51
+        },
+        {
+          "x": "Jun",
+          "y": 61
+        }
+      ]
+    }
+  ]
+}

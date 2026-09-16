@@ -1,0 +1,37 @@
+{
+  "deployed_commit": "5c01b523aef14fa94de2eb9cb27eb28d6458e9c1",
+  "render_deployment": "dep-dalh0f142hec73cf6nog",
+  "live_at": "2026-09-16T21:55:55.536968Z",
+  "provider_release": "21e1622ed2e8dc4ba5151a966e65cf5b6e004f9f3ce1c1be13cbce29561c1b61",
+  "backup": "/data/release-backups/pre-image-fix-20260916T2148Z",
+  "preserved_counts": {
+    "users": 2,
+    "sessions": 1,
+    "jobs": 4,
+    "credit_ledger": 9,
+    "result_versions": 7
+  },
+  "source_hashes_preserved": 4,
+  "sqlite_integrity": "ok",
+  "foreign_key_errors": 0,
+  "public_readiness": "ready",
+  "maintenance_disabled": true,
+  "recovery": {
+    "status": "review",
+    "attempt": 2,
+    "queued_at": "2026-09-16T21:57:45.797863Z",
+    "provider_dispatched_at": "2026-09-16T21:57:46.283508Z",
+    "completed_at": "2026-09-16T21:58:15.799728Z",
+    "queue_to_review_seconds": 30.001865,
+    "provider_dispatches_on_recovery_attempt": 1,
+    "correct_numeric_values": 12,
+    "reference_numeric_values": 12,
+    "original_failure_credit_restored": true
+  },
+  "ci": {
+    "branch": "35154307562",
+    "pr": "35154309246",
+    "merged_main": "35154955479",
+    "conclusion": "success"
+  }
+}

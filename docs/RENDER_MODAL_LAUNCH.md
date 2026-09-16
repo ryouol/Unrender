@@ -1,6 +1,33 @@
 # Render + Modal launch
 
-## Current deployment — September 12, 2026
+## Current deployment — September 16, 2026
+
+The live beta runs `5c01b523aef14fa94de2eb9cb27eb28d6458e9c1`, schema 14,
+from [PR #10](https://github.com/ryouol/Unrender/pull/10). Large-image extraction
+no longer truncates Qwen image tokens. A production-only vision pixel budget
+and exact-object verification reuse reduced the demo's warm provider time from
+90.58 to 30.14 seconds, with all 12 values unchanged. This changes preprocessing;
+the model, BF16 precision, greedy decoding and L4 GPU remain the same. It is not
+a vLLM rollout or a general accuracy benchmark. See [incident evidence](PROVIDER_IMAGE_FIX.md).
+
+Render deployment `dep-dalh0f142hec73cf6nog` became live at 21:55:55 UTC. Ingress
+was closed and work drained before the coordinated recovery set
+`/data/release-backups/pre-image-fix-20260916T2148Z` was created. The matching Modal
+provider and Render pin were deployed together. Pre/post checks preserved two
+accounts, one session, four charts, seven result versions, nine ledger rows and
+all four source hashes. Database integrity, foreign keys, internal/public health
+and provider resolution passed. Maintenance was then disabled.
+
+A real call to the deployed Modal function took 83.86 seconds including cold
+startup and returned the expected provider release and all 12 values. The
+previously failed chart was explicitly requeued once through the normal product
+service, completed in 30.00 seconds and entered review with all 12 values correct.
+Its new attempt has exactly one recorded provider dispatch. The credit consumed
+by the original processor failure was restored with an idempotent operator grant.
+No automatic inference retry was enabled. Branch, PR and merged-main CI passed.
+Later documentation-only commits do not require a runtime redeploy.
+
+## Historical account rollout — September 12, 2026
 
 The live beta at https://unrender.onrender.com runs merge commit
 `a14b961db721004a4ad77d4e2ab5cdac343d1ef9`, schema 14.
@@ -218,7 +245,7 @@ Grant credits deliberately with `unrender-admin grant-credits email --credits N
 recovery links are supported; self-service email recovery remains deferred.
 
 Modal's dedicated `unrender-production` app allows one L4 container, zero automatic
-retries, a 240-second function timeout, and a two-second idle scale-down window.
+retries, a 240-second function timeout, and a 120-second idle scale-down window.
 Account credits constrain authorized inference attempts. These controls reduce
 runaway usage but do not cap all shared-workspace billing. Leave shared caps
 untouched because other projects use the same accounts.
@@ -232,14 +259,16 @@ The actual post-trained source is
 
 The private release is stored in `unrender-inference-cache/releases/<digest>`.
 `UNRENDER_MODAL_MODEL=modal-volume/unrender-inference-cache`; revision and model
-digest both equal the full SHA-256. Each invocation verifies the read-only
-snapshot contents. No Hugging Face credential or public model upload is needed.
+digest both equal the full SHA-256. Cold loads verify the read-only snapshot
+contents. Only the exact already-loaded model objects may reuse verification;
+replacement, eviction or a different release forces verification again.
+No Hugging Face credential or public model upload is needed.
 
 Production app: https://modal.com/apps/royluo05/main/deployed/unrender-production
 
 Deploy explicitly with `modal deploy modal_train.py::production_app`; the bare
 module selects the separate research app. Approved provider release:
-`e8b732574b07c243e27549220115419d52e3ce850c36022ac19ed33350707787`.
+`21e1622ed2e8dc4ba5151a966e65cf5b6e004f9f3ce1c1be13cbce29561c1b61`.
 All release pins are in `render.yaml`. The dedicated Modal API token is stored
 in Render's private environment. Never copy credentials into git, reports, or
 Roy-OS. Render supplies the HTTPS origin through `RENDER_EXTERNAL_URL`.

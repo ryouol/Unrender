@@ -1,0 +1,79 @@
+{
+  "raw": "{\"chart_type\":\"grouped_bar\",\"title\":\"Cloud infrastructure spend\",\"x_axis\":{\"label\":\"Month\",\"unit\":null},\"y_axis\":{\"label\":\"Spend\",\"unit\":\"USD thousands\"},\"series\":[{\"name\":\"Budget\",\"points\":[{\"x\":\"Jan\",\"y\":40.0},{\"x\":\"Feb\",\"y\":44.0},{\"x\":\"Mar\",\"y\":48.0},{\"x\":\"Apr\",\"y\":48.0},{\"x\":\"May\",\"y\":52.0},{\"x\":\"Jun\",\"y\":56.0}]},{\"name\":\"Actual\",\"points\":[{\"x\":\"Jan\",\"y\":38.0},{\"x\":\"Feb\",\"y\":47.0},{\"x\":\"Mar\",\"y\":46.0},{\"x\":\"Apr\",\"y\":55.0},{\"x\":\"May\",\"y\":51.0},{\"x\":\"Jun\",\"y\":61.0}]}]}",
+  "json": {
+    "chart_type": "grouped_bar",
+    "title": "Cloud infrastructure spend",
+    "x_axis": {
+      "label": "Month",
+      "unit": null
+    },
+    "y_axis": {
+      "label": "Spend",
+      "unit": "USD thousands"
+    },
+    "series": [
+      {
+        "name": "Budget",
+        "points": [
+          {
+            "x": "Jan",
+            "y": 40.0
+          },
+          {
+            "x": "Feb",
+            "y": 44.0
+          },
+          {
+            "x": "Mar",
+            "y": 48.0
+          },
+          {
+            "x": "Apr",
+            "y": 48.0
+          },
+          {
+            "x": "May",
+            "y": 52.0
+          },
+          {
+            "x": "Jun",
+            "y": 56.0
+          }
+        ]
+      },
+      {
+        "name": "Actual",
+        "points": [
+          {
+            "x": "Jan",
+            "y": 38.0
+          },
+          {
+            "x": "Feb",
+            "y": 47.0
+          },
+          {
+            "x": "Mar",
+            "y": 46.0
+          },
+          {
+            "x": "Apr",
+            "y": 55.0
+          },
+          {
+            "x": "May",
+            "y": 51.0
+          },
+          {
+            "x": "Jun",
+            "y": 61.0
+          }
+        ]
+      }
+    ]
+  },
+  "csv": "Month,Budget,Actual\r\nJan,40.0,38.0\r\nFeb,44.0,47.0\r\nMar,48.0,46.0\r\nApr,48.0,55.0\r\nMay,52.0,51.0\r\nJun,56.0,61.0\r\n",
+  "parse_errors": [],
+  "provider_release": "21e1622ed2e8dc4ba5151a966e65cf5b6e004f9f3ce1c1be13cbce29561c1b61",
+  "client_elapsed_seconds": 83.86478579198592
+}

@@ -48,8 +48,9 @@ Close ingress and drain work before changing both sides of that contract.
 
 Raw output and stage measurements are in
 `release/launch-eval-results/provider-image-fix/`. A full-resolution CPU/CUDA
-profiler attempt exceeded its isolated 300-second diagnostic deadline and was
-stopped; it is not a successful trace or a serving failure measurement. Short
+profiler attempt and a subsequent reduced-image attempt each exceeded their
+isolated 300-second diagnostic deadlines and were stopped. Neither is a
+successful trace or a product serving failure measurement. Short
 output diagnostics are not quality evaluations. The focused regressions cover
 token integrity, per-request processor settings, exact-object warm reuse,
 re-verification and privacy-safe token counts. The full suite and image build

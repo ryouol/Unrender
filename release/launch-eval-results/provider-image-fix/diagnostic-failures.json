@@ -5,5 +5,13 @@
     "app_id": "ap-7cl4Up5xzFim1utnq8lgw6",
     "automatic_retries": 0,
     "successful_trace": false
+  },
+  {
+    "experiment": "reduced-image CPU/CUDA profiler, 16 output tokens",
+    "outcome": "isolated 300-second timeout; app explicitly stopped",
+    "app_id": "ap-kXqFMo6iLFlLk12ATvvccY",
+    "automatic_retries": 0,
+    "successful_trace": false,
+    "all_diagnostic_containers_confirmed_stopped": true
   }
 ]

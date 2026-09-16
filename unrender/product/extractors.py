@@ -10,9 +10,10 @@ import hashlib
 import hmac
 import io
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from PIL import Image, ImageOps
 
@@ -36,6 +37,13 @@ class ExtractionOutput:
 
 class Extractor(Protocol):
     def extract(self, image_bytes: bytes) -> ExtractionOutput: ...
+
+
+@runtime_checkable
+class ContextualExtractor(Protocol):
+    def extract_with_context(
+        self, image_bytes: bytes, *, request_id: str, cancelled: Callable[[], bool]
+    ) -> ExtractionOutput: ...
 
 
 class ReplayExtractor:
@@ -154,6 +162,10 @@ class ModalExtractor:
 
 
 def build_extractor(settings: Settings, static_dir: Path) -> Extractor:
+    if settings.extractor_backend == "vllm":
+        from unrender.product.vllm import VllmExtractor
+
+        return VllmExtractor(settings)
     if settings.extractor_backend == "modal":
         return ModalExtractor(settings)
     return ReplayExtractor(static_dir)

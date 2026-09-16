@@ -101,6 +101,15 @@ docker build -t unrender:local .
 
 The product suite covers the complete saved-sample workflow, review/edit/approve/export behavior, visible/restorable result versions, tenant isolation, streamed-body and upload safety, tenant quotas, submission/refund idempotency, bounded restart recovery, API keys, and Stripe test events. The research/evaluation suite remains part of the default test run.
 
+## Experimental model serving
+
+An opt-in vLLM provider, streaming load client, and serial Transformers reference
+server are available for a controlled GPU compatibility experiment. CPU contract
+tests pass; GPU compatibility, quality comparisons, tuning and public deployment
+are **not verified**. See [the serving experiment runbook](docs/SERVING_EXPERIMENT.md)
+for exact setup, evidence requirements and remaining gates. The default provider
+and common300 scorer are unchanged.
+
 ## Model evidence, stated narrowly
 
 On the frozen 300-chart `common300` synthetic set, the current table LoRA scores 38.9% `cell@5_exact`, versus 13.5% for the pinned base model. It is at parity with the saved GPT-5.5 comparison on a small overlap and behind the saved Claude and Gemini comparisons. On eight public OWID charts it scores 67% versus 31% for the base, but that set has a contamination caveat and is too small for a launch claim.

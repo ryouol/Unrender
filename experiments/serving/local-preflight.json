@@ -1,0 +1,7 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "architecture": "arm64",
+  "candidate_vllm": "0.11.0",
+  "gpu_available": false,
+  "status": "blocked_no_nvidia_host"
+}

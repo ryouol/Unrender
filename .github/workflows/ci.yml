@@ -30,8 +30,8 @@ jobs:
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Product lint
         run: |
-          ruff format --check unrender/product modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
-          ruff check unrender/product unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
+          ruff format --check unrender/product unrender/serving tests/test_serving.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
+          ruff check unrender/product unrender/serving tests/test_serving.py unrender/schema/chart_schema.py modal_train.py scripts tests/test_product.py tests/test_release_policy.py tests/test_train_config.py
           ruff check --select S unrender/product
       - name: Product types
         run: mypy unrender/product

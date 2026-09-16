@@ -25,7 +25,7 @@ from openpyxl import Workbook
 
 from unrender.product.config import Settings
 from unrender.product.database import Database
-from unrender.product.extractors import ExtractionError, Extractor
+from unrender.product.extractors import ContextualExtractor, ExtractionError, Extractor
 from unrender.product.security import (
     api_key,
     hash_password,
@@ -3062,7 +3062,22 @@ class ProductService:
             if not self._begin_provider_dispatch(claim):
                 return True
             provider_started = time.monotonic()
-            output = self.extractor.extract(image)
+            if isinstance(self.extractor, ContextualExtractor):
+
+                def cancelled() -> bool:
+                    if lease_lost.is_set():
+                        return True
+                    with self.database.connect() as conn:
+                        current = self._claim_row(conn, claim)
+                        return current is None or bool(current["cancel_requested"])
+
+                output = self.extractor.extract_with_context(
+                    image,
+                    request_id=f"{job_id}:{claim.attempt}:{claim.generation}",
+                    cancelled=cancelled,
+                )
+            else:
+                output = self.extractor.extract(image)
             provider_duration_ms = round((time.monotonic() - provider_started) * 1000)
             try:
                 validated_chart = ChartData.model_validate(output.chart)

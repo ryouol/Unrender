@@ -87,6 +87,11 @@ class Settings:
     modal_model_revision: str = ""
     modal_model_digest: str = ""
     modal_provider_release: str = ""
+    vllm_url: str = "http://127.0.0.1:8001"
+    vllm_model: str = ""
+    vllm_api_key: str = ""
+    vllm_timeout_seconds: int = 120
+    vllm_constrained: bool = False
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_price_id: str = ""
@@ -124,8 +129,34 @@ class Settings:
     def validate(self) -> None:
         if self.environment not in {"development", "test", "production"}:
             raise ValueError("UNRENDER_ENV must be development, test, or production")
-        if self.extractor_backend not in {"replay", "modal"}:
-            raise ValueError("UNRENDER_EXTRACTOR must be replay or modal")
+        if self.extractor_backend not in {"replay", "modal", "vllm"}:
+            raise ValueError("UNRENDER_EXTRACTOR must be replay, modal, or vllm")
+        if self.extractor_backend == "vllm":
+            endpoint = urlsplit(self.vllm_url)
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.hostname
+                or endpoint.username
+                or endpoint.password
+                or endpoint.query
+                or endpoint.fragment
+                or endpoint.path not in {"", "/"}
+            ):
+                raise ValueError("UNRENDER_VLLM_URL must be an HTTP(S) origin")
+            if endpoint.scheme == "http" and endpoint.hostname not in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }:
+                raise ValueError("Remote vLLM requires HTTPS or a loopback tunnel")
+            if not self.vllm_api_key or not re.fullmatch(r"unrender-[0-9a-f]{64}", self.vllm_model):
+                raise ValueError("vLLM requires an API key and manifest-derived served model name")
+            if not 1 <= self.vllm_timeout_seconds <= 1800:
+                raise ValueError("vLLM deadline must be between 1 and 1800 seconds")
+            if self.environment == "production":
+                raise ValueError(
+                    "vLLM production promotion is blocked pending GPU compatibility evidence"
+                )
         parsed_base_url = urlsplit(self.base_url)
         if (
             parsed_base_url.scheme not in {"http", "https"}
@@ -344,6 +375,11 @@ class Settings:
             modal_model_revision=os.getenv("UNRENDER_MODAL_REVISION", "").casefold(),
             modal_model_digest=os.getenv("UNRENDER_MODAL_MODEL_DIGEST", "").casefold(),
             modal_provider_release=os.getenv("UNRENDER_MODAL_PROVIDER_RELEASE", "").casefold(),
+            vllm_url=os.getenv("UNRENDER_VLLM_URL", "http://127.0.0.1:8001").rstrip("/"),
+            vllm_model=os.getenv("UNRENDER_VLLM_MODEL", ""),
+            vllm_api_key=os.getenv("UNRENDER_VLLM_API_KEY", ""),
+            vllm_timeout_seconds=_int("UNRENDER_VLLM_TIMEOUT_SECONDS", 120),
+            vllm_constrained=_bool("UNRENDER_VLLM_CONSTRAINED", False),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
             stripe_price_id=os.getenv("STRIPE_PRICE_ID", ""),

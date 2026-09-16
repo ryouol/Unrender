@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-16",
+  "scope": "Local CPU harness and existing product container; no GPU inference",
+  "lint": "passed",
+  "product_types": "passed",
+  "container_build": "passed",
+  "container_image_id": "sha256:51d75d7c25f0e79e218d6b634794c0f256f6a10954ba7aa427ac1f7f686f5711",
+  "container_live": {"status": "ok"},
+  "container_ready": {"status": "ready", "extractor": "replay", "worker": "running"},
+  "container_cleanup": "Temporary smoke container and anonymous volume removed",
+  "gpu_compatibility": "blocked: no accessible NVIDIA host or checkpoint established",
+  "public_deployment": "blocked: target unconfirmed",
+  "paid_compute_started": false,
+  "performance_and_quality_claims": "none"
+}

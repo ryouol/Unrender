@@ -3656,3 +3656,50 @@ def test_browser_privacy_editor_and_two_tab_regressions(script: str) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_contextual_provider_failure_keeps_dispatch_fenced(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "contextual@example.com")
+    job = _paid_job(service, user_id, color="blue")
+    calls = []
+
+    class ContextualFailure:
+        def extract(self, image_bytes):
+            raise AssertionError("Worker must supply attempt context")
+
+        def extract_with_context(self, image_bytes, *, request_id, cancelled):
+            assert not cancelled()
+            calls.append(request_id)
+            raise ExtractionError("provider_timeout", "Ambiguous dispatch; do not retry")
+
+    service.extractor = ContextualFailure()
+    assert service.process_one("contextual-worker")
+    assert len(calls) == 1 and calls[0].startswith(str(job["id"]) + ":1:")
+    assert service.get_job(user_id=user_id, job_id=str(job["id"]))["status"] == "failed"
+    assert service.account(user_id)["credits"] == 0
+    assert service.recover_interrupted_jobs() == 0
+    assert not service.process_one("another-worker")
+    assert len(calls) == 1
+
+
+def test_contextual_provider_observes_cancellation_without_publishing(tmp_path: Path) -> None:
+    service = service_for(tmp_path, seed_demo_account=False, initial_credits=1)
+    user_id = customer_id(service, "context-cancel@example.com")
+    job = _paid_job(service, user_id, color="blue")
+
+    class ContextualCancel:
+        def extract(self, image_bytes):
+            raise AssertionError("Worker must supply attempt context")
+
+        def extract_with_context(self, image_bytes, *, request_id, cancelled):
+            assert not cancelled()
+            service.cancel(user_id=user_id, job_id=str(job["id"]))
+            assert cancelled()
+            raise ExtractionError("provider_cancelled", "Stream closed")
+
+    service.extractor = ContextualCancel()
+    assert service.process_one("cancel-worker")
+    assert service.get_job(user_id=user_id, job_id=str(job["id"]))["status"] == "cancelled"
+    assert service.account(user_id)["credits"] == 0
+    assert not service.process_one("another-worker")

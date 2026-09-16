@@ -193,8 +193,21 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
         }
     ]
     text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    image_kwargs = {}
+    if max_pixels := HF_MODEL_CONFIG.get("max_pixels"):
+        # Qwen's fast processor reads `size`, not an AutoProcessor max_pixels
+        # override. Pass it per request so the cached processor stays immutable.
+        image_kwargs["images_kwargs"] = {
+            "size": {**proc.image_processor.size, "longest_edge": max_pixels}
+        }
     inputs = proc(
-        text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt"
+        text=[text],
+        images=[Image.open(image_path).convert("RGB")],
+        return_tensors="pt",
+        # Saved training tokenizers may default to max_length=2048. Cutting an
+        # expanded image token sequence makes Qwen3-VL reject the whole request.
+        truncation=False,
+        **image_kwargs,
     ).to(net.device)
     # 4096 matches the max_tokens the frontier providers get — a dense hard
     # chart's JSON can exceed 1024 tokens, and a tighter cap here would truncate
@@ -216,6 +229,8 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
     decoded = proc.decode(trimmed, skip_special_tokens=True)
     if timings is not None:
         timings["generate_decode_seconds"] = time.perf_counter() - preprocessed
+        timings["input_tokens"] = inputs["input_ids"].shape[1]
+        timings["output_tokens"] = len(trimmed)
     return decoded
 
 

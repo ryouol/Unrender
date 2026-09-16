@@ -1,0 +1,9 @@
+[
+  {
+    "experiment": "full-resolution CPU/CUDA profiler, 16 output tokens",
+    "outcome": "isolated 300-second timeout",
+    "app_id": "ap-7cl4Up5xzFim1utnq8lgw6",
+    "automatic_retries": 0,
+    "successful_trace": false
+  }
+]

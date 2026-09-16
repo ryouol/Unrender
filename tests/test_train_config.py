@@ -545,7 +545,11 @@ def test_hf_timing_does_not_change_generation_or_cached_output(monkeypatch, tmp_
                 "model_load_seconds",
                 "preprocess_seconds",
                 "generate_decode_seconds",
+                "input_tokens",
+                "output_tokens",
             }
+            assert collector["input_tokens"] == 2
+            assert collector["output_tokens"] == 2
             assert all(value >= 0 for value in collector.values())
     assert loads == ["processor", "model"]
     assert all(call["max_new_tokens"] == 4096 and call["do_sample"] is False for call in calls)

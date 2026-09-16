@@ -1,0 +1,15 @@
+{
+  "final-after": {
+    "samples": 103,
+    "scrape_errors": 0,
+    "num_requests_running_max": 16.0,
+    "num_requests_waiting_max": 0.0,
+    "kv_cache_usage_perc_max": 0.07864357864357863,
+    "num_preemptions_total_observed_delta": 0.0,
+    "request_queue_time_seconds_sum_observed_delta": 0.0019492009996042725,
+    "request_queue_time_seconds_count_observed_delta": 299.0,
+    "gpu_used_mib_max": 54809.0,
+    "gpu_free_mib_min": 26271.0,
+    "gpu_utilization_pct_mean": 68.81553398058253
+  }
+}

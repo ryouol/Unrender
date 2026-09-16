@@ -317,3 +317,22 @@ def test_failure_inclusive_accuracy_and_unknown_token_throughput():
     assert summary["json_parse_success"] == summary["strict_schema_success"] == 1
     valid["usage"] = {"completion_tokens": 10}
     assert summarize([valid, failed], 2)["output_tokens_per_s"] == 5
+
+
+def test_model_invalid_is_not_salvaged_in_failure_inclusive_score():
+    from unrender.serving.report import summarize
+
+    row = {
+        "status": "model_invalid",
+        "error": "model_output_invalid",
+        "gt": json.dumps(CHART),
+        "raw": json.dumps(CHART),
+        "meta": {},
+        "usage": {},
+        "ttft_s": None,
+        "response_s": 1.0,
+        "server_timings": {},
+    }
+    result = summarize([row], 1.0)
+    assert result["failures"] == 1
+    assert result["numeric_accuracy_failures_as_misses"]["cell_accuracy_exact"] == 0

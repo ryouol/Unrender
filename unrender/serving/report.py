@@ -37,9 +37,9 @@ def summarize(rows: list[dict], elapsed: float) -> dict:
             parsed += 1
         except (ValueError, TypeError):
             pass
-        # Operational failures are misses here, even if a partial response looks valid.
+        # Every failed request is a miss here, even if a partial response can be repaired.
         # The historical standalone scorer remains unchanged (and excludes infra errors).
-        chart, _ = parse_chart_json(row["raw"]) if row["status"] != "infra_error" else (None, [])
+        chart, _ = parse_chart_json(row["raw"]) if row["status"] == "ok" else (None, [])
         scored.append(
             score_sample(
                 chart,

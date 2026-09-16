@@ -147,12 +147,34 @@ It is not an 11× improvement over default vLLM or the deployed product.
 
 ## Reserved final quality decision
 
-Final common300 comparison is being collected. The preregistered scheduler gate
-requires all 300 charts in both configurations, no infrastructure failures,
-no strict-validity regression, and at most **1 absolute percentage point** loss
-in cell@5_exact. No promotion decision may be inferred from the tuning speedup.
-The unchanged common300 scorer is retained; an additional failure-inclusive
-summary counts operational failures as misses instead of hiding them.
+**Decision: retain the existing production provider; do not promote this candidate.**
+
+The 16-sequence configuration completed **300/300** reserved inputs: **292 valid
+responses and 8 invalid responses**, all eight reaching the 4,096-token cap with
+repetitive content. Strict validity was **97.33%**. The unchanged historical scorer
+reports **37.62% cell@5_exact** using its normal repair/parsing behavior; the
+additional operational summary counts failed requests as misses and reports
+**37.01%**. The historical scorer's repaired-schema rate is not raw strict validity.
+Successful-request p95 completion was 8.41 seconds; including all 300 attempts,
+p95 was 9.81 seconds. These denser reserved charts differ from the tuning workload.
+
+The single-sequence final control hit its wall-time cap at **232/300 recorded
+responses** (225 valid, 7 invalid); **68 inputs were uncompleted**. Its partial
+score is not a valid full common300 baseline and no final accuracy delta is
+claimed. The older running harness did not preserve every in-flight cancellation
+row, so exact interrupted attempt counts are unavailable; missing inputs are
+explicitly listed. Subsequent harness changes preserve cancellation rows and an
+unfinished-input ledger, with dedicated tests. Raw original evidence is unchanged.
+
+The preregistered gate requires all 300 charts in both configurations, failure and
+strict-validity checks, and at most **1 absolute percentage point** loss in
+cell@5_exact. That gate is **not established**. The complete candidate run and
+incomplete control are saved in the
+[final comparison](../experiments/serving/h100-20260916/final-comparison.json),
+[unchanged scorer output](../experiments/serving/h100-20260916/common300-after-historical-score.json),
+and [raw final evidence](../experiments/serving/h100-20260916/final-raw.tar.gz).
+The remaining requirement is a sufficiently budgeted complete control comparison;
+the present evidence cannot support a quality-preserving deployment claim.
 
 ## 5. Failure and cancellation evidence
 
@@ -176,7 +198,11 @@ summary counts operational failures as misses instead of hiding them.
 Run `python -m pip install -e '.[serving]'` locally and install the Modal CLI.
 With authenticated access to the private model/data volumes and paid-compute
 approval, `modal run scripts/modal_serving_case.py` runs the bounded case and
-`modal run scripts/modal_serving_final.py` runs the reserved comparison.
+`modal run scripts/modal_serving_final.py --budget-seconds 1800` permits a
+30-minute reserved comparison on one physical GPU. The measured control used
+the earlier 20-minute cap and did not finish; current code exposes the budget
+explicitly (maximum 35 minutes). `--after-only` runs only the candidate with an
+eight-minute cap. Neither command has been rerun with the larger budget.
 These commands incur GPU charges. They never deploy or replace the product.
 The runners pin the production provider source commit and record checkpoint hashes,
 launch settings, workload hashes, every response and every failure.
@@ -187,10 +213,16 @@ Committed evidence: [performance summary](../experiments/serving/h100-20260916/c
 and [per-file SHA-256 index](../experiments/serving/h100-20260916/performance-files-sha256.json).
 
 Primary raw evidence: Modal volume `unrender-serving-results`, directory
-`case-20260916-171735`; final directory `final-20260916-173625`.
+`case-20260916-171735`; final control `final-20260916-173625`; complete candidate
+`final-after-20260916-174552`.
 Run dashboards: [performance experiment](https://modal.com/apps/royluo05/main/ap-ZgGlSLAIcAytipZSLzNM2y)
 and [final quality experiment](https://modal.com/apps/royluo05/main/ap-I4X2GI7eGQI7mWTuBSn2bx).
-The performance app completed and stopped at 17:40:33 UTC.
+The performance app stopped at 17:40:33 UTC, the candidate at 17:51:15, and
+the final control at 17:54:45. **All experimental GPU apps are stopped.**
+The sum of all seven experiment app lifetimes, including failed bootstrap
+attempts and non-GPU setup time, was 55.6 minutes; this is a conservative
+resource-duration record, not a dollar invoice. See the
+[compute ledger](../experiments/serving/h100-20260916/compute-ledger.json).
 
 The vLLM image is `vllm/vllm-openai:v0.11.0`, resolved linux/amd64 digest
 `sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a`.
@@ -200,7 +232,7 @@ files; these were fixed before the successful runs, not counted as model success
 Strict schema rates in the offline report are recomputed with strict validation;
 original raw measurements and original summaries remain unchanged.
 
-Local verification: **186 passed, 1 skipped** in the full suite, plus **19 passing
+Local verification: **189 passed, 1 skipped** in the full suite, plus **20 passing
 serving tests** after the reporting and interruption-accounting changes; targeted lint passed. Production
 source has advanced beyond the experimental branch. No old product code was
 deployed over the current application, and no production provider was switched.

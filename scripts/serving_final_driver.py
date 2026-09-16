@@ -12,7 +12,7 @@ import serving_case_driver as case
 from unrender.serving.release import command
 
 AFTER_ONLY = os.getenv("UNRENDER_FINAL_AFTER_ONLY") == "1"
-case.LIMIT = 450 if AFTER_ONLY else 1120
+case.LIMIT = int(os.getenv("UNRENDER_FINAL_BUDGET_SECONDS", "450" if AFTER_ONLY else "1120"))
 case.PROGRESS["after_only"] = AFTER_ONLY
 case.PROGRESS["scope"] = "common300 scheduler quality comparison; separate H100 from load tests"
 case.PROGRESS["case_start_epoch"] = time.time()

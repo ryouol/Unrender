@@ -1,0 +1,70 @@
+{
+  "apps": [
+    {
+      "app_id": "ap-I4X2GI7eGQI7mWTuBSn2bx",
+      "description": "unrender-serving-final-quality",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:35:22-04:00",
+      "stopped_at": "2026-09-16 13:54:45-04:00",
+      "app_lifetime_seconds": 1163.0
+    },
+    {
+      "app_id": "ap-hwrR8a2d69Ex8O5Alj8Vtt",
+      "description": "unrender-serving-final-quality",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:45:45-04:00",
+      "stopped_at": "2026-09-16 13:51:15-04:00",
+      "app_lifetime_seconds": 330.0
+    },
+    {
+      "app_id": "ap-ZgGlSLAIcAytipZSLzNM2y",
+      "description": "unrender-serving-case-study",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:17:25-04:00",
+      "stopped_at": "2026-09-16 13:40:33-04:00",
+      "app_lifetime_seconds": 1388.0
+    },
+    {
+      "app_id": "ap-YPnNc1AfxblaunKrQnnbxh",
+      "description": "unrender-serving-final-quality",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:34:13-04:00",
+      "stopped_at": "2026-09-16 13:35:21-04:00",
+      "app_lifetime_seconds": 68.0
+    },
+    {
+      "app_id": "ap-RdG7JzOzofie5fdkTSBqNh",
+      "description": "unrender-serving-case-study",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:15:57-04:00",
+      "stopped_at": "2026-09-16 13:16:56-04:00",
+      "app_lifetime_seconds": 59.0
+    },
+    {
+      "app_id": "ap-vSEE2k00e2wNurejAyX4VA",
+      "description": "unrender-serving-case-study",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:11:21-04:00",
+      "stopped_at": "2026-09-16 13:15:12-04:00",
+      "app_lifetime_seconds": 231.0
+    },
+    {
+      "app_id": "ap-IM1SMEzUxoOIvEIYkdfRUP",
+      "description": "unrender-serving-case-study",
+      "state": "stopped",
+      "tasks": "0",
+      "created_at": "2026-09-16 13:07:35-04:00",
+      "stopped_at": "2026-09-16 13:09:11-04:00",
+      "app_lifetime_seconds": 96.0
+    }
+  ],
+  "all_experiments_stopped": true,
+  "summed_app_lifetime_seconds": 3335.0,
+  "note": "App lifetimes include setup and CPU image build. Each experiment had max one GPU container. This is not actual invoiced GPU duration or a dollar charge."
+}

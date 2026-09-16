@@ -23,8 +23,9 @@ existing engine, not custom runtime or CUDA authorship.
   `606408af6c0f59959867458cf026ebe0e4f9ef65`; its source hash is recorded in
   `experiments/serving/compatibility/discovery.json`.
 - Same physical H100 for the Transformers/vLLM pilot and scheduler performance
-  comparison, one engine at a time. The reserved final quality job has its own
-  H100, separate from load-test timing. No production requests were used.
+  comparison, one engine at a time. Reserved final quality configurations run on
+  separate physical H100s of the same model to fit the deadline; this is disclosed
+  separately and their timing is not used for the primary performance claim. No production requests were used.
 - Same saved image processor, image bytes, extraction prompt, greedy decoding,
   seed 0, 4,096 output-token cap, 8,192 context and scheduler token limits.
   All 23 pilot prompt-token counts matched. This is evidence of compatibility,
@@ -70,7 +71,11 @@ for the first vLLM launch. A later vLLM restart took 54.18 seconds with compilat
 artifacts available. Startup is excluded from warm latency. The original provider's
 first request, including load, took 21.94 seconds; its subsequent 22 requests had
 p50 6.04 and p95 7.98 seconds. The reference server records preprocessing and
-inference separately; vLLM client TTFT combines preprocessing, prefill and queue
+inference separately: warm p50 preparation plus transfer was **5.25 ms**,
+inference **5.575 seconds**, and client validation **0.092 ms**. These are wall-clock
+stages, not a GPU profiler trace; see the
+[stage timings](../experiments/serving/h100-20260916/stage-timings.json).
+vLLM client TTFT combines preprocessing, prefill and queue
 wait, so it is not a standalone preprocessing measurement.
 
 This 23-chart pilot establishes runtime comparability on that workload. It does
@@ -195,8 +200,8 @@ files; these were fixed before the successful runs, not counted as model success
 Strict schema rates in the offline report are recomputed with strict validation;
 original raw measurements and original summaries remain unchanged.
 
-Local verification: **186 passed, 1 skipped** in the full suite, plus **17 passing
-serving tests** after the reporting changes; targeted lint passed. Production
+Local verification: **186 passed, 1 skipped** in the full suite, plus **19 passing
+serving tests** after the reporting and interruption-accounting changes; targeted lint passed. Production
 source has advanced beyond the experimental branch. No old product code was
 deployed over the current application, and no production provider was switched.
 Quantization, speculative decoding, prefix-cache ablations, a sustained post-change

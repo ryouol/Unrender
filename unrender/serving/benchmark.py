@@ -132,6 +132,7 @@ async def run(args: argparse.Namespace) -> dict:
                 "error": None,
                 "strict_valid": False,
             }
+            interrupted = False
             if unsafe.is_set():
                 row.update(status="infra_error", error="gpu_safety_stopped")
             elif active >= args.concurrency:
@@ -160,6 +161,9 @@ async def run(args: argparse.Namespace) -> dict:
                     except ValueError:
                         row["status"] = "model_invalid"
                     result.validation_s = time.perf_counter() - before
+                except asyncio.CancelledError:
+                    interrupted = True
+                    row.update(status="infra_error", error="benchmark_cancelled")
                 except ExtractionError as exc:
                     row.update(
                         status="model_invalid"
@@ -176,12 +180,15 @@ async def run(args: argparse.Namespace) -> dict:
             with (args.out / "predictions.jsonl").open("a") as handle:
                 handle.write(json.dumps(row) + "\n")
                 handle.flush()
+            if interrupted:
+                raise asyncio.CancelledError
 
         poller = asyncio.create_task(metrics())
+        tasks = set()
+        completed = False
         try:
             if args.rate:
                 # Open loop: do not hide saturation behind an unbounded semaphore queue.
-                tasks = set()
                 for i in range(len(samples)):
                     scheduled = i / args.rate
                     await asyncio.sleep(max(0, start + scheduled - time.perf_counter()))
@@ -199,10 +206,32 @@ async def run(args: argparse.Namespace) -> dict:
                     while not queue.empty():
                         await one(queue.get_nowait(), time.perf_counter() - start)
 
-                await asyncio.gather(*(worker() for _ in range(args.concurrency)))
+                tasks = {asyncio.create_task(worker()) for _ in range(args.concurrency)}
+                await asyncio.gather(*tasks)
+            completed = True
         finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             stop.set()
             await poller
+            if not completed:
+                recorded = {row["id"] for row in rows}
+                (args.out / "interrupted.json").write_text(
+                    json.dumps(
+                        {
+                            "status": "interrupted",
+                            "expected": len(samples),
+                            "recorded": len(rows),
+                            "unrecorded_ids": [
+                                sample.id for sample in samples if sample.id not in recorded
+                            ],
+                            "note": "Unrecorded inputs are not successes or completed attempts.",
+                        },
+                        indent=2,
+                    )
+                )
     elapsed = max(row["finished_s"] for row in rows)
     summary = summarize(rows, elapsed)
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))

@@ -186,7 +186,8 @@ def test_product_configuration_is_opt_in_and_fails_closed(tmp_path):
 
 
 @pytest.mark.parametrize("rate", [0, 1000])
-def test_load_client_saves_attempts_and_bounds_open_loop(tmp_path, monkeypatch, rate):
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_load_client_saves_attempts_and_bounds_open_loop(tmp_path, monkeypatch, rate, interrupt):
     from argparse import Namespace
 
     from unrender.serving.benchmark import run
@@ -217,7 +218,7 @@ def test_load_client_saves_attempts_and_bounds_open_loop(tmp_path, monkeypatch, 
             return httpx.Response(200, text="vllm:num_requests_running 0\n")
         calls.append(request)
         wire = event(json.dumps(CHART), "stop", model_name(manifest)) + b"data: [DONE]\n\n"
-        return httpx.Response(200, stream=Stream([wire], delay=0.03))
+        return httpx.Response(200, stream=Stream([wire], delay=10 if interrupt else 0.03))
 
     def client(**kwargs):
         return original_client(transport=httpx.MockTransport(handler), **kwargs)
@@ -237,6 +238,22 @@ def test_load_client_saves_attempts_and_bounds_open_loop(tmp_path, monkeypatch, 
         engine="vllm",
         url="http://test",
     )
+    if interrupt:
+
+        async def bounded():
+            await asyncio.wait_for(run(args), timeout=0.05)
+
+        with pytest.raises(TimeoutError):
+            asyncio.run(bounded())
+        evidence = json.loads((args.out / "interrupted.json").read_text())
+        rows = [
+            json.loads(line) for line in (args.out / "predictions.jsonl").read_text().splitlines()
+        ]
+        assert evidence["expected"] == evidence["recorded"] + len(evidence["unrecorded_ids"]) == 3
+        assert len(calls) == 1
+        assert sum(row["error"] == "benchmark_cancelled" for row in rows) == 1
+        assert all(row["status"] == "infra_error" for row in rows)
+        return
     summary = asyncio.run(run(args))
     rows = [json.loads(line) for line in (args.out / "predictions.jsonl").read_text().splitlines()]
     assert summary["requests"] == len(rows) == 3

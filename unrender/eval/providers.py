@@ -194,7 +194,12 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
     ]
     text = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = proc(
-        text=[text], images=[Image.open(image_path).convert("RGB")], return_tensors="pt"
+        text=[text],
+        images=[Image.open(image_path).convert("RGB")],
+        return_tensors="pt",
+        # Saved training tokenizers may default to max_length=2048. Cutting an
+        # expanded image token sequence makes Qwen3-VL reject the whole request.
+        truncation=False,
     ).to(net.device)
     # 4096 matches the max_tokens the frontier providers get — a dense hard
     # chart's JSON can exceed 1024 tokens, and a tighter cap here would truncate

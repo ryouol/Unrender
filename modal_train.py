@@ -95,6 +95,11 @@ def _inference_source_digest() -> str:
 
 INFER_SOURCE_SHA256 = _inference_source_digest()
 
+# An exact release may reuse the SAME already-loaded processor/model objects.
+# A new container, different release, or evicted/replaced model re-verifies bytes.
+# Loaded inference does not reread weights or processor files from the volume.
+_INFER_VERIFIED_MODELS: dict[tuple[str, str, str], tuple[str, object]] = {}
+
 VOL = modal.Volume.from_name("unrender-vol", create_if_missing=True)
 V = "/vol"  # mount point; paths under it persist across runs
 INFER_VOL = modal.Volume.from_name("unrender-inference-cache", create_if_missing=True)
@@ -778,7 +783,7 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     memory=32768,
     timeout=240,
     max_containers=1,
-    scaledown_window=2,
+    scaledown_window=120,
     retries=0,
 )
 def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: str):
@@ -805,7 +810,14 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
             if runtime_versions[package] != expected:
                 raise RuntimeError(f"Inference dependency drift: {package}")
         verification_started = time.perf_counter()
-        snapshot = _production_model_snapshot(model_path, revision, model_digest)
+        release_key = (model_path, revision, model_digest)
+        cached = _INFER_VERIFIED_MODELS.get(release_key)
+        cache_hit = cached is not None and _providers._HF_CACHE.get((cached[0], None)) is cached[1]
+        if cache_hit:
+            snapshot = cached[0]
+        else:
+            snapshot = _production_model_snapshot(model_path, revision, model_digest)
+        timings["snapshot_cache_hit"] = cache_hit
         timings["snapshot_verification_seconds"] = time.perf_counter() - verification_started
         provider_release = _provider_release_digest(
             runtime_versions=runtime_versions,
@@ -822,6 +834,9 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
             f.write(image_bytes)
             f.flush()
             raw = hf_vlm_provider(f.name, EXTRACTION_PROMPT, snapshot, timings=timings)
+        loaded_model = _providers._HF_CACHE.get((snapshot, None))
+        if loaded_model is not None:
+            _INFER_VERIFIED_MODELS[release_key] = (snapshot, loaded_model)
         pred, errs = parse_chart_json(raw)
         result = {
             "raw": raw,

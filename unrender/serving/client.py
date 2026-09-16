@@ -23,6 +23,7 @@ from unrender.schema.chart_schema import ChartData
 class Measurement:
     raw: str = ""
     ttft_s: float | None = None
+    ttft_event: str | None = None
     elapsed_s: float = 0
     prepare_s: float = 0
     validation_s: float = 0
@@ -122,6 +123,17 @@ async def generate(
                         raise ExtractionError(
                             "provider_release_mismatch", "Unexpected served model"
                         )
+                    ids = event.get("token_ids", [])
+                    if ids:
+                        if not isinstance(ids, list) or any(
+                            type(i) is not int or i < 0 for i in ids
+                        ):
+                            raise ValueError("Invalid token event")
+                        elapsed = time.perf_counter() - start
+                        if result.ttft_s is None:
+                            result.ttft_s = elapsed
+                            result.ttft_event = "token_ids"
+                        result.chunks.append({"elapsed_s": elapsed, "token_ids": ids, "bytes": 0})
                     if event.get("unrender_timings"):
                         result.server_timings = event["unrender_timings"]
                     if event.get("usage"):
@@ -140,6 +152,7 @@ async def generate(
                             elapsed = time.perf_counter() - start
                             if result.ttft_s is None:
                                 result.ttft_s = elapsed
+                                result.ttft_event = "content_delta"
                             result.raw += token
                             result.chunks.append(
                                 {"elapsed_s": elapsed, "bytes": len(token.encode())}

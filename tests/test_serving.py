@@ -247,3 +247,56 @@ def test_load_client_saves_attempts_and_bounds_open_loop(tmp_path, monkeypatch, 
     else:
         assert len(calls) == 3 and summary["valid"] == 3
     assert (args.out / "run.json").is_file() and (args.out / "metrics.jsonl").is_file()
+
+
+def test_ttft_ignores_role_events_and_accepts_real_token_events():
+    role = {"model": MODEL, "choices": [{"delta": {"role": "assistant"}}]}
+    token = {"model": MODEL, "token_ids": [42], "choices": []}
+    wire = [
+        ("data: " + json.dumps(role) + "\n\n").encode(),
+        ("data: " + json.dumps(token) + "\n\n").encode(),
+        event(json.dumps(CHART), "stop"),
+        b"data: [DONE]\n\n",
+    ]
+    run, _ = run_stream(Stream(wire, delay=0.01))
+    result = asyncio.run(run())
+    assert result.ttft_event == "token_ids"
+    assert result.chunks[0]["token_ids"] == [42]
+    assert result.ttft_s < result.chunks[1]["elapsed_s"]
+
+
+def test_failure_inclusive_accuracy_and_unknown_token_throughput():
+    from unrender.serving.report import summarize
+
+    valid = {
+        "status": "ok",
+        "error": None,
+        "gt": json.dumps(CHART),
+        "raw": json.dumps(CHART),
+        "meta": {},
+        "usage": {},
+        "ttft_s": 0.5,
+        "response_s": 1.0,
+        "strict_valid": True,
+        "server_timings": {"queue_s": 0.2},
+    }
+    failed = dict(
+        valid,
+        status="infra_error",
+        error="provider_timeout",
+        strict_valid=False,
+        raw="",
+        response_s=2.0,
+        ttft_s=None,
+        server_timings={},
+    )
+    summary = summarize([valid, failed], 2)
+    assert summary["failures"] == 1
+    assert summary["valid_requests_per_s"] == 0.5
+    assert summary["output_tokens_per_s"] is None
+    assert summary["numeric_accuracy_failures_as_misses"]["cell_accuracy_exact"] == 0.5
+    assert summary["p95_response_s"] == 1
+    assert summary["p95_all_attempt_response_s"] == 2
+    assert summary["json_parse_success"] == summary["strict_schema_success"] == 1
+    valid["usage"] = {"completion_tokens": 10}
+    assert summarize([valid, failed], 2)["output_tokens_per_s"] == 5

@@ -1,0 +1,13 @@
+{
+  "scope": "Real worker SIGKILL, isolated DB, fake blocked provider; no GPU",
+  "source_commit": "606408af6c0f59959867458cf026ebe0e4f9ef65",
+  "worker_exit": -9,
+  "recovery_s": 10.134875415998977,
+  "recovered": 1,
+  "provider_attempts": 1,
+  "queued_cancel_provider_attempts": 0,
+  "stale_terminal_write_accepted": false,
+  "redispatched": false,
+  "status": "failed",
+  "credits": 1
+}

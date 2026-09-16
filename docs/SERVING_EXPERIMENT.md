@@ -1,11 +1,10 @@
-# Serving experiment: local harness, GPU gate pending
+# Serving experiment runbook
 
-This is **not a deployed vLLM Unrender service or a performance result**. The Mac
-preflight in `experiments/serving/local-preflight.json` reports arm64 and no
-NVIDIA host. GPU access, spending approval, checkpoint access, and a public
-application deployment target are not established. No paid inference was started.
-The existing Modal path remains the production provider. vLLM is opt-in for
-non-production experiments and production configuration rejects it.
+The authorized H100 experiment ran on 2026-09-16. See the measured
+[serving case study](SERVING_CASE_STUDY.md) for results, raw evidence, quality
+gates and limitations. The earlier Mac-only preflight remains historical evidence.
+The existing Modal path remains the production provider; the vLLM path is an
+isolated experimental integration and production configuration rejects it.
 
 ## Compatibility finding
 
@@ -19,8 +18,9 @@ configuration enables **vision and language** adaptation (`sft_lora.py`). Inspec
 the actual adapter configuration and tensor names on the GPU host; do not drop
 vision targets to make loading succeed.
 
-The current product points to `runs/qwen3vl4b-table-fair/merged` on private Modal
-storage. The repository does not contain that weight snapshot. The research
+The measured production release is frozen at
+`unrender-inference-cache:/releases/3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e`.
+The research checkpoint originated at `runs/qwen3vl4b-table-fair/merged`. The repository does not contain that weight snapshot. The research
 base control is the Unsloth mirror at
 `252d592b59b0233b226875a44ac135cfa1d3f755`; it is not a substitute for the LoRA.
 Use the existing merged 16-bit checkpoint and its saved processor first. Export
@@ -65,7 +65,7 @@ frames, common300 exclusion, and worker cancellation/no-redispatch accounting.
 These are CPU transport/worker tests; they do not prove that vLLM accepts every
 feature or that a disconnected CUDA request has stopped.
 
-## GPU setup after access is established
+## Reproduce the GPU setup
 
 Use a dedicated NVIDIA environment with `vllm==0.11.0`; do not install CUDA
 packages on the Mac or change the product's dependency locks. Resolve and save a

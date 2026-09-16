@@ -34,7 +34,7 @@ Repository = "https://github.com/ryouol/Unrender"
 Issues = "https://github.com/ryouol/Unrender/issues"
 
 [project.optional-dependencies]
-serving = ["httpx==0.28.1"]
+serving = ["httpx==0.28.1", "rapidfuzz>=3.6,<4"]
 # Frontier-model benchmarking + fuzzy label matching for the scorer.
 eval = [
     "rapidfuzz>=3.6",

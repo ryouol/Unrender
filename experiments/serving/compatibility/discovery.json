@@ -1,0 +1,14 @@
+{
+  "model_release": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+  "source_volume": "unrender-inference-cache",
+  "production_source_commit": "606408af6c0f59959867458cf026ebe0e4f9ef65",
+  "metadata_sha256": {
+    "release_config.json": "18db76edf91043647455bc41896fd5820ab1674b10fe49bc48020374ebc28462",
+    "adapter_config.json": "5d388199346af7ea3cf1c0183774a230b380e749bde65b2976521fe082f8a07e",
+    "merged_config.json": "18db76edf91043647455bc41896fd5820ab1674b10fe49bc48020374ebc28462",
+    "preprocessor_config.json": "93585062a80db5e8ca038efc7726a3e6411d9db948472d81d63c6303993be8c5"
+  },
+  "existing_path_source_sha256": "5b907c217af4d4d6eb1d59ae0088a5dc8a3814c6e235f34fa6207ae7e5a8e08c",
+  "read_only_discovery": "Modal app and model-volume access verified; no production changes",
+  "compute_authorization": "User approved paid experiments on 2026-09-16, requested results within one hour; isolated one-H100 execution"
+}

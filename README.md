@@ -104,11 +104,12 @@ The product suite covers the complete saved-sample workflow, review/edit/approve
 ## Experimental model serving
 
 An opt-in vLLM provider, streaming load client, and serial Transformers reference
-server are available for a controlled GPU compatibility experiment. CPU contract
-tests pass; GPU compatibility, quality comparisons, tuning and public deployment
-are **not verified**. See [the serving experiment runbook](docs/SERVING_EXPERIMENT.md)
-for exact setup, evidence requirements and remaining gates. The default provider
-and common300 scorer are unchanged.
+server support an isolated H100 serving experiment. The
+[measured case study](docs/SERVING_CASE_STUDY.md) records runtime compatibility,
+load curves, a batching intervention, structured generation, and failure evidence.
+See the [runbook](docs/SERVING_EXPERIMENT.md) to reproduce it. The production
+provider and common300 scorer are unchanged; experimental results are not a
+production deployment claim.
 
 ## Model evidence, stated narrowly
 

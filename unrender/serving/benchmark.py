@@ -10,6 +10,7 @@ import json
 import math
 import os
 import time
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -20,10 +21,7 @@ from unrender.product.extractors import ExtractionError
 from unrender.schema.chart_schema import ChartData
 from unrender.serving.client import Measurement, generate, request_body
 from unrender.serving.release import model_name
-
-
-def percentile(values: list[float], p: float) -> float | None:
-    return sorted(values)[max(0, math.ceil(len(values) * p) - 1)] if values else None
+from unrender.serving.report import summarize
 
 
 def check_split(ids: list[str], final: bool) -> None:
@@ -44,6 +42,11 @@ async def run(args: argparse.Namespace) -> dict:
         common = json.loads((Path(__file__).parents[1] / "eval/subsets/common300.json").read_text())
         samples = [s for s in samples if s.id in set(common["ids"])]
     check_split([s.id for s in samples], args.final)
+    limit = getattr(args, "limit", 0)
+    if args.final and limit:
+        raise ValueError("Final evaluation cannot be limited")
+    if limit:
+        samples = samples[:limit]
     if not samples:
         raise ValueError("Empty workload")
     # Validate/read before sending anything; include image bytes and GT in workload identity.
@@ -63,9 +66,11 @@ async def run(args: argparse.Namespace) -> dict:
         cold_start_note="No automatic warmup; warm the same workload separately and record it.",
     )
     (args.out / "run.json").write_text(json.dumps(metadata, indent=2))
+    run_id = uuid.uuid4().hex
     rows = []
     active = 0
     stop = asyncio.Event()
+    unsafe = asyncio.Event()
     start = time.perf_counter()
     async with httpx.AsyncClient(
         headers={"Authorization": "Bearer " + os.environ["UNRENDER_VLLM_API_KEY"]},
@@ -90,6 +95,24 @@ async def run(args: argparse.Namespace) -> dict:
                             "elapsed_s": time.perf_counter() - start,
                             "error": type(exc).__name__,
                         }
+                    if getattr(args, "gpu_safety", False):
+                        process = await asyncio.create_subprocess_exec(
+                            "nvidia-smi",
+                            "--query-gpu=memory.used,memory.free,utilization.gpu",
+                            "--format=csv,noheader,nounits",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+                        record["gpu_csv"] = stdout.decode().strip()
+                        try:
+                            free = [
+                                float(line.split(",")[1]) for line in stdout.decode().splitlines()
+                            ]
+                            if process.returncode or not free or min(free) < 2048:
+                                unsafe.set()
+                        except (ValueError, IndexError):
+                            unsafe.set()
                     handle.write(json.dumps(record) + "\n")
                     handle.flush()
                     with contextlib.suppress(TimeoutError):
@@ -109,7 +132,9 @@ async def run(args: argparse.Namespace) -> dict:
                 "error": None,
                 "strict_valid": False,
             }
-            if active >= args.concurrency:
+            if unsafe.is_set():
+                row.update(status="infra_error", error="gpu_safety_stopped")
+            elif active >= args.concurrency:
                 row.update(status="infra_error", error="client_admission_rejected")
             else:
                 active += 1
@@ -123,9 +148,10 @@ async def run(args: argparse.Namespace) -> dict:
                         client,
                         url=args.url,
                         body=body,
-                        request_id=f"bench-{index}",
+                        request_id=f"{run_id}:{index}",
                         timeout=args.timeout,
                         measurement=result,
+                        cancelled=unsafe.is_set,
                     )
                     before = time.perf_counter()
                     try:
@@ -144,7 +170,8 @@ async def run(args: argparse.Namespace) -> dict:
                 finally:
                     active -= 1
             row.update(asdict(result))
-            row["response_s"] = time.perf_counter() - start - scheduled
+            row["finished_s"] = time.perf_counter() - start
+            row["response_s"] = row["finished_s"] - scheduled
             rows.append(row)
             with (args.out / "predictions.jsonl").open("a") as handle:
                 handle.write(json.dumps(row) + "\n")
@@ -176,25 +203,15 @@ async def run(args: argparse.Namespace) -> dict:
         finally:
             stop.set()
             await poller
-    elapsed = max(
-        row["started_s"] + row["elapsed_s"] + row["prepare_s"] + row["validation_s"] for row in rows
-    )
-    completed = [r for r in rows if r["status"] == "ok"]
-    summary = {
-        "requests": len(rows),
-        "valid": len(completed),
-        "elapsed_s": elapsed,
-        "valid_requests_per_s": len(completed) / elapsed if elapsed else 0,
-        "failures": len(rows) - len(completed),
-        "p95_response_s": percentile([r["response_s"] for r in rows], 0.95),
-        "p95_ttft_s": percentile([r["ttft_s"] for r in rows if r["ttft_s"] is not None], 0.95),
-    }
+    elapsed = max(row["finished_s"] for row in rows)
+    summary = summarize(rows, elapsed)
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--gpu-safety", action="store_true")
     parser.add_argument("--engine", choices=["vllm", "transformers"], required=True)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -206,12 +223,17 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--constrained", action="store_true")
     parser.add_argument("--final", action="store_true")
+    parser.add_argument("--limit", type=int, default=0, help="Pilot size; tuning only")
+    parser.add_argument("--phase", choices=["pilot", "warm", "cold-schema"], default="pilot")
+    parser.add_argument("--repeat-id", type=int, default=1)
     args = parser.parse_args()
     if (
         not math.isfinite(args.rate)
         or args.rate < 0
         or not 0 < args.timeout <= 1800
         or args.max_tokens <= 0
+        or args.limit < 0
+        or args.repeat_id < 1
     ):
         parser.error("Invalid rate, deadline, or token limit")
     print(json.dumps(asyncio.run(run(args)), indent=2))

@@ -50,6 +50,25 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
     if profile_dir is not None:
         profile_dir.mkdir(parents=True, exist_ok=True)
 
+    class TokenEventStreamer(TextIteratorStreamer):
+        """Report token arrivals before the standard decoder buffers complete words."""
+
+        def __init__(self):
+            super().__init__(processor.tokenizer, skip_prompt=True, skip_special_tokens=True)
+            self.events = queue.Queue()
+
+        def put(self, value):
+            is_prompt = self.next_tokens_are_prompt
+            if not is_prompt:
+                self.events.put({"token_ids": value.reshape(-1).tolist(), "content": ""})
+            super().put(value)
+
+        def on_finalized_text(self, text, stream_end=False):
+            if text:
+                self.events.put({"content": text, "token_ids": []})
+            if stream_end:
+                self.events.put(None)
+
     @app.post("/v1/chat/completions")
     async def completions(request: Request):
         import hmac
@@ -84,9 +103,8 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
         errors = []
         timings = {}
         finish_reason = ["length"]
-        streamer = TextIteratorStreamer(
-            processor.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=0.1
-        )
+        streamer = TokenEventStreamer()
+        usage = {}
 
         class Cancel(StoppingCriteria):
             def __call__(self, input_ids, scores, **kwargs):
@@ -135,6 +153,10 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
                         streamer=streamer,
                         stopping_criteria=StoppingCriteriaList([Cancel()]),
                     )
+                usage.update(
+                    prompt_tokens=int(inputs["input_ids"].shape[1]),
+                    completion_tokens=int(output.shape[1] - inputs["input_ids"].shape[1]),
+                )
                 eos = model.generation_config.eos_token_id
                 eos_ids = eos if isinstance(eos, list) else [eos]
                 if int(output[0, -1]) in eos_ids:
@@ -152,7 +174,7 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
         thread.start()
 
         async def stream():
-            def frame(content="", finish=None):
+            def frame(content="", finish=None, token_ids=None):
                 return (
                     "data: "
                     + json.dumps(
@@ -162,6 +184,8 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
                                 {"index": 0, "delta": {"content": content}, "finish_reason": finish}
                             ],
                             "unrender_timings": timings if finish else {},
+                            "token_ids": token_ids or [],
+                            "usage": usage if finish else None,
                         }
                     )
                     + "\n\n"
@@ -173,14 +197,14 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
                     if await request.is_disconnected():
                         return
                     try:
-                        chunk = await asyncio.to_thread(streamer.text_queue.get, True, 0.1)
+                        chunk = await asyncio.to_thread(streamer.events.get, True, 0.1)
                     except queue.Empty:
                         if done.is_set():
                             break
                         continue
-                    if chunk == streamer.stop_signal:
+                    if chunk is None:
                         break
-                    yield frame(chunk)
+                    yield frame(**chunk)
                 while not done.is_set():
                     await asyncio.sleep(0.01)
                 if errors:

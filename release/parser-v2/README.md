@@ -98,8 +98,7 @@ quotes, punctuation inside labels, multiple JSON objects, privacy-safe diagnosti
 EOS/cap distinctions, mismatched provider claims, and persisted token-cap failure
 without a partial result, double charge or automatic retry.
 
-Successful extraction diagnostics still need a durable per-result receipt, inherited
-correctly through corrections/restores and visible in review and every export.
-This change does **not** claim that successful syntax repairs are already surfaced
-throughout the product. That requirement remains open in the readiness plan.
+At this parser milestone, successful diagnostics were not yet durable per result.
+The follow-up [extraction receipt verification](../extraction-receipts/README.md)
+implements that requirement across correction/restore, review and every export.
 A bounded real-GPU check is also still required before provider promotion.

@@ -11,13 +11,15 @@ import hashlib
 import hmac
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from PIL import Image, ImageOps
 
 from unrender.product.config import Settings
+from unrender.product.provenance import ExtractionDiagnostics, ExtractionOrigin, sha256
+from unrender.prompts import EXTRACTION_PROMPT
 from unrender.schema.chart_schema import ChartData
 from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
@@ -34,6 +36,8 @@ class ExtractionOutput:
     raw: str
     extractor: str
     model_version: str
+    diagnostics: ExtractionDiagnostics = field(default_factory=ExtractionDiagnostics)
+    origin: ExtractionOrigin = "unavailable"
 
 
 class Extractor(Protocol):
@@ -41,7 +45,7 @@ class Extractor(Protocol):
 
 
 class ReplayExtractor:
-    """Serve one saved model result only when the bundled source matches exactly."""
+    """Serve reference data only when the bundled synthetic source matches exactly."""
 
     def __init__(self, static_dir: Path):
         self.source_path = static_dir / "demo" / "budget-quarter.webp"
@@ -72,6 +76,7 @@ class ReplayExtractor:
             raw=payload["raw"],
             extractor="saved-replay",
             model_version=payload["model_version"],
+            origin="reference_fixture",
         )
 
 
@@ -184,11 +189,31 @@ class ModalExtractor:
         )
         if actual_release:
             model_version += f"+provider:{actual_release[:12]}"
+        try:
+            diagnostics = ExtractionDiagnostics(
+                parser_version=PARSER_VERSION,
+                parse_status="syntax_repaired" if errors else "raw_valid",
+                finish_reason="eos",
+                output_tokens=count,
+                max_output_tokens=limit,
+                provider_release=actual_release or None,
+                model_repository=self.settings.modal_model_path,
+                model_revision=self.settings.modal_model_revision or None,
+                model_digest=self.settings.modal_model_digest or None,
+                prompt_sha256=sha256(EXTRACTION_PROMPT),
+                schema_sha256=sha256(json.dumps(ChartData.model_json_schema(), sort_keys=True)),
+            )
+        except ValueError as exc:
+            raise ExtractionError(
+                "provider_contract_mismatch", "The provider returned invalid extraction metadata."
+            ) from exc
         return ExtractionOutput(
             chart=chart,
             raw=raw,
             extractor="modal",
             model_version=model_version,
+            diagnostics=diagnostics,
+            origin="model",
         )
 
 

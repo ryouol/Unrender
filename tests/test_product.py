@@ -42,6 +42,7 @@ from unrender.product.extractors import (
     ModalExtractor,
     ReplayExtractor,
 )
+from unrender.product.provenance import MAX_RECEIPT_BYTES, ExtractionReceipt
 from unrender.product.security import hash_password, password_needs_rehash, verify_password
 from unrender.product.service import (
     ProductError,
@@ -904,7 +905,7 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     )
     assert csv_mime.startswith("text/csv")
     assert b"Q3 2016" in csv_payload
-    assert json.loads(json_payload)["title"].endswith("reviewed")
+    assert json.loads(json_payload)["chart"]["title"].endswith("reviewed")
     assert xlsx_payload.startswith(b"PK")
     events = [item["event"] for item in service.job_audit(user_id=user_id, job_id=job["id"])]
     assert "extraction_completed" in events
@@ -1194,8 +1195,8 @@ def test_spreadsheet_exports_neutralize_formula_cells(tmp_path: Path) -> None:
         expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
     )
     rows = list(csv.reader(io.StringIO(csv_payload.decode("utf-8"))))
-    assert rows[0] == ["'=SUM(A1:A2)", "'@external"]
-    assert rows[1] == ["'+cmd|' /C calc'!A0", "-9.2"]
+    assert rows[0] == ["'=SUM(A1:A2)", "'@external", "export_metadata_json"]
+    assert rows[1][:2] == ["'+cmd|' /C calc'!A0", "-9.2"]
 
     xlsx_payload, _ = service.export(
         user_id=user_id,
@@ -1226,8 +1227,8 @@ def test_multi_series_exports_preserve_duplicate_points_and_numeric_cells(tmp_pa
             ],
         }
     )
-    csv_rows = list(csv.reader(io.StringIO(service._safe_csv(chart))))
-    assert csv_rows == [
+    csv_rows = list(csv.reader(io.StringIO(service._safe_csv(chart, {"contract": "test"}))))
+    assert [row[:-1] for row in csv_rows] == [
         ["series", "Period", "Value"],
         ["series_1", "001", "1.25"],
         ["series_1", "001", "2.5"],
@@ -1239,12 +1240,23 @@ def test_multi_series_exports_preserve_duplicate_points_and_numeric_cells(tmp_pa
                 chart,
                 {
                     "source_name": "multi.png",
+                    "source_sha256": "f" * 64,
+                    "page_index": 0,
+                    "crop_json": None,
                     "id": "job-1",
                     "model_version": "test-model",
                     "status": "review",
                     "approved_at": None,
                 },  # type: ignore[arg-type]
-                {"result_version": 1, "result_sha256": "test", "review_revision": "test"},
+                {
+                    "result_version": 1,
+                    "result_sha256": "test",
+                    "review_revision": "test",
+                    "model_version": None,
+                    "extraction_receipt": ExtractionReceipt().model_dump(),
+                    "extraction_receipt_sha256": "e" * 64,
+                    "extraction_warnings": ["Not recorded"],
+                },
             )
         )
     )
@@ -3092,7 +3104,7 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         tmp_path / "queued",
         seed_demo_account=False,
         initial_credits=3,
-        max_history_bytes_per_user=2_000_000,
+        max_history_bytes_per_user=2_000_000 + 2 * MAX_RECEIPT_BYTES,
     )
     user_id = customer_id(service, "result-reserve@example.com")
     upload = service.prepare_upload(
@@ -3110,7 +3122,9 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         ).fetchall()
     assert len(reservations) == 2
     assert all(row["result_reservation_attempt"] == row["attempt"] == 1 for row in reservations)
-    assert all(row["result_reservation_bytes"] == 1_000_000 for row in reservations)
+    assert all(
+        row["result_reservation_bytes"] == 1_000_000 + MAX_RECEIPT_BYTES for row in reservations
+    )
     service.cancel(user_id=user_id, job_id=str(first["id"]))
     replacement = service.create_job(
         user_id=user_id, upload_id=upload["id"], page_index=0, crop=None
@@ -3123,7 +3137,7 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         tmp_path / "reprocess",
         seed_demo_account=False,
         initial_credits=3,
-        max_history_bytes_per_user=1_000_000,
+        max_history_bytes_per_user=1_000_000 + MAX_RECEIPT_BYTES,
     )
     reprocess_user = customer_id(reprocess_service, "reprocess-reserve@example.com")
     completed = _paid_job(reprocess_service, reprocess_user, color="orange")

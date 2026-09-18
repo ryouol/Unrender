@@ -98,7 +98,7 @@ callback query is cleared from the ASGI scope before Uvicorn access logging.
 Authentication requests share bounded concurrency/global admission controls.
 
 Before deployment take a coordinated backup. Rollback requires restoring the prior
-schema backup into a fresh data directory rather than reverting code over the upgraded schema (currently 14).
+schema backup into a fresh data directory rather than reverting code over the upgraded schema (15 on the readiness branch; check the deployment receipt for the hosted version).
 Tests exercise real RSA-signed JWT validation, wrong audience/issuer/signature,
 nonce/expiry/denial, browser mismatch/replay, explicit linking, one-time welcome grants (including zero-credit configuration), native
 session continuation and recent-auth invalidation. No real Google consent or cloud

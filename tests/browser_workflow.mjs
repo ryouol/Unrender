@@ -125,7 +125,7 @@ function harness({ authenticated = true } = {}) {
   }
 
   const node = (id) => {
-    if (!nodes.has(id)) nodes.set(id, new Node());
+    if (!nodes.has(id)) { const created = new Node(); created.id = id; nodes.set(id, created); }
     return nodes.get(id);
   };
   node("chart-type-input").tag = "select";
@@ -138,9 +138,9 @@ function harness({ authenticated = true } = {}) {
     return button;
   });
   node("result-table").tag = "table";
-  for (const id of ["chart-title-input", "x-label-input", "y-label-input", "y-unit-input"]) node(id).tag = "input";
+  for (const id of ["chart-title-input", "x-label-input", "y-label-input", "x-unit-input", "y-unit-input"]) node(id).tag = "input";
   node("result-form").append(...[
-    "chart-type-input", "chart-title-input", "x-label-input", "y-label-input", "y-unit-input",
+    "chart-type-input", "chart-title-input", "x-label-input", "y-label-input", "x-unit-input", "y-unit-input",
     "result-table", "series-editor-list",
   ].map(node));
   for (const id of ["login-form", "register-form"]) node(id).append(new Node("input"));
@@ -202,7 +202,7 @@ function harness({ authenticated = true } = {}) {
       showWorkspace,
       downloadExport, jobMutation, restoreVersion, saveCorrections, reloadLatestResult, openJob, beginViewSelection,
       resetPrivateState, syncAuthRecordFromStorage, showPublic, deleteCurrentJob,
-      updateUploadPreview,
+      updateUploadPreview, buildEditedResult,
     };
     bindEvents();
   `, context, { filename: appPath.pathname });
@@ -1595,5 +1595,43 @@ for (const failure of ["connection timeout", "body timeout", "network failure"])
     assert.equal([...h.timerDelays.values()].includes(30000), false);
   });
 }
+
+await check("extraction warnings persist after approval and cannot inject markup", async () => {
+  const h = harness();
+  const job = makeJob("chart-a", "approved");
+  job.extraction_receipt = {
+    model_version: "<img src=x onerror=alert(1)>",
+    diagnostics: { parse_status: "syntax_repaired", finish_reason: "eos", output_tokens: 100, max_output_tokens: 4096 },
+  };
+  job.extraction_warnings = ["Model output needed formatting repair."];
+  h.select(job);
+  assert.equal(h.node("extraction-notice").hidden, false);
+  assert.match(h.node("extraction-notice").textContent, /formatting repair/);
+  assert.equal(h.node("review-notice").hidden, true);
+  const details = h.node("extraction-evidence").children;
+  assert(details.some((node) => node.textContent === "<img src=x onerror=alert(1)>"));
+  assert(details.every((node) => ["dt", "dd"].includes(node.tag)));
+  h.test.showLibrary();
+  assert.equal(h.node("extraction-notice").hidden, true);
+  assert.equal(h.node("extraction-details").hidden, true);
+  assert.equal(h.node("extraction-evidence").children.length, 0);
+  assert.equal(h.node("extraction-notice").textContent, "");
+});
+
+await check("both axis units remain editable and visible without changing values", async () => {
+  const h = harness();
+  const job = makeJob();
+  job.result.x_axis.unit = "years";
+  h.select(job);
+  assert.equal(h.node("x-unit-input").value, "years");
+  assert(h.node("result-table").querySelectorAll("th").some((node) => node.textContent === "Value (USD)"));
+  h.node("y-unit-input").value = "USD millions";
+  await h.node("result-form").dispatch("input", { target: h.node("y-unit-input") });
+  assert(h.node("result-table").querySelectorAll("th").some((node) => node.textContent === "Value (USD millions)"));
+  const result = h.test.buildEditedResult();
+  assert.equal(result.x_axis.unit, "years");
+  assert.equal(result.y_axis.unit, "USD millions");
+  assert.equal(result.series[0].points[0].y, 12);
+});
 
 console.log(`Browser workflow regressions passed (${passed} scenarios)`);

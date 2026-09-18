@@ -1470,12 +1470,44 @@ function renderJob() {
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
   renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
+  renderExtractionEvidence(job, Boolean(resultReady));
   if (resultReady) renderEditor(job.result);
   renderJobActions();
   setHidden("audit-list", true);
   setHidden("version-list", true);
   byId("toggle-audit-button").textContent = "Show activity";
   byId("toggle-versions-button").textContent = "Show versions";
+}
+
+function renderExtractionEvidence(job, visible) {
+  setHidden("extraction-details", !visible);
+  const warnings = job.extraction_warnings || [];
+  const notice = byId("extraction-notice");
+  notice.textContent = warnings.join(" ");
+  notice.hidden = !visible || warnings.length === 0;
+  const receipt = job.extraction_receipt;
+  const diagnostics = receipt?.diagnostics;
+  const rows = [
+    ["Result", `Version ${job.result_version || "unknown"}`],
+    ["Origin", receipt?.origin === "reference_fixture" ? "Saved reference example" : receipt?.origin === "model" ? "Model extraction" : "Not recorded"],
+    ["Model or reference", receipt?.model_version || "Not recorded"],
+    ["Output formatting", diagnostics?.parse_status === "raw_valid" ? "Accepted without repair" : diagnostics?.parse_status === "syntax_repaired" ? "Formatting repaired" : "Not recorded"],
+    ["Completion", diagnostics?.finish_reason === "eos" ? "End of response observed below the token limit" : "Not verified"],
+    ["Response tokens", diagnostics?.output_tokens == null ? "Not recorded" : `${diagnostics.output_tokens} of ${diagnostics.max_output_tokens} maximum`],
+    ["Parser", diagnostics?.parser_version || "Not recorded"],
+    ["Provider release", diagnostics?.provider_release || "Not recorded"],
+    ["Source SHA-256", receipt?.source_sha256 || "Not recorded"],
+    ["Provider input SHA-256", receipt?.provider_input_sha256 || "Not recorded"],
+    ["Result SHA-256", job.result_sha256 || "Not recorded"],
+    ["Extraction receipt SHA-256", job.extraction_receipt_sha256 || "Not recorded"],
+  ];
+  byId("extraction-evidence").replaceChildren(...rows.flatMap(([label, value]) => {
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = value;
+    return [term, detail];
+  }));
 }
 
 function renderWorkflowSteps(currentStep) {
@@ -1716,9 +1748,9 @@ function clearSelectedChart() {
   byId("job-source-image").style.width = "";
   byId("job-source-image").className = "";
   byId("source-zoom").value = "1";
-  for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
-  for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
-  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "review-conflict", "audit-list", "version-list"]) setHidden(id, true);
+  for (const id of ["result-table", "series-editor-list", "chart-type-input", "extraction-evidence", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
+  for (const id of ["extraction-notice", "editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
+  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "review-conflict", "extraction-notice", "extraction-details", "audit-list", "version-list"]) setHidden(id, true);
 }
 
 async function deleteCurrentJob() {
@@ -1771,6 +1803,7 @@ function renderEditor(result) {
   byId("chart-title-input").value = result.title || "";
   byId("x-label-input").value = result.x_axis?.label || "";
   byId("y-label-input").value = result.y_axis?.label || "";
+  byId("x-unit-input").value = result.x_axis?.unit || "";
   byId("y-unit-input").value = result.y_axis?.unit || "";
   state.editorRows = editorRows(result);
   state.editorSeries = (result.series?.length ? result.series : [{ name: null }]).map(
@@ -1787,7 +1820,9 @@ function renderResultTable() {
   table.replaceChildren();
   const head = document.createElement("thead");
   const heading = document.createElement("tr");
-  for (const title of ["Series", "Category / x", "Value", "Row"]) {
+  const xUnit = byId("x-unit-input").value.trim();
+  const yUnit = byId("y-unit-input").value.trim();
+  for (const title of ["Series", `Category / x${xUnit ? ` (${xUnit})` : ""}`, `Value${yUnit ? ` (${yUnit})` : ""}`, "Row"]) {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = title;
@@ -1908,7 +1943,6 @@ function coerceX(value, xType) {
 
 function buildEditedResult() {
   collectEditorRows();
-  const original = state.currentJob.result;
   const series = state.editorSeries.map((item, seriesIndex) => ({
     name: item.name,
     points: state.editorRows
@@ -1920,7 +1954,7 @@ function buildEditedResult() {
     title: byId("chart-title-input").value.trim() || null,
     x_axis: {
       label: byId("x-label-input").value.trim() || null,
-      unit: original.x_axis?.unit || null,
+      unit: byId("x-unit-input").value.trim() || null,
     },
     y_axis: {
       label: byId("y-label-input").value.trim() || null,
@@ -2346,7 +2380,13 @@ function bindEvents() {
     else if (!discardEditorChanges()) event.preventDefault();
   });
   byId("export-another-button").addEventListener("click", startUpload);
-  byId("result-form").addEventListener("input", markEditorDirty);
+  byId("result-form").addEventListener("input", (event) => {
+    markEditorDirty(event);
+    if (["x-unit-input", "y-unit-input"].includes(event.target.id)) {
+      collectEditorRows();
+      renderResultTable();
+    }
+  });
   byId("result-form").addEventListener("change", markEditorDirty);
   window.addEventListener("beforeunload", (event) => {
     if (!state.editorDirty) return;

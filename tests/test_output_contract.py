@@ -61,6 +61,8 @@ def test_generation_stop_is_observed_not_guessed(tokens, eos, cap, expected):
         ({"output_tokens": True}, "model_completion_unverified"),
         ({"output_tokens": 0}, "model_completion_unverified"),
         ({"parser_version": "old"}, "provider_contract_mismatch"),
+        ({"max_output_tokens": 10_000_001}, "provider_contract_mismatch"),
+        ({"provider_release": "invalid"}, "provider_contract_mismatch"),
         (
             {"raw": '{"chart_type":"bar","series":[{"points":[{"x":"A","y":1e'},
             "model_output_invalid",

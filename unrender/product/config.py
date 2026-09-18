@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from unrender.product.provenance import MAX_RECEIPT_BYTES
+
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _PROVIDER_RELEASE = re.compile(r"^[0-9a-f]{64}$")
@@ -132,10 +134,14 @@ class Settings:
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_id)
 
     @property
+    def result_version_reservation_bytes(self) -> int:
+        return self.max_result_json_bytes + MAX_RECEIPT_BYTES
+
+    @property
     def result_publication_reservation_bytes(self) -> int:
         """Worst-case version/current/original/raw publication for one provider attempt."""
 
-        return self.max_result_json_bytes * 4
+        return self.max_result_json_bytes * 4 + MAX_RECEIPT_BYTES
 
     @property
     def result_request_bytes(self) -> int:
@@ -251,7 +257,7 @@ class Settings:
             raise ValueError("Tenant record limits must be positive")
         if (
             self.max_result_versions_per_job <= 0
-            or self.max_history_bytes_per_user < self.max_result_json_bytes
+            or self.max_history_bytes_per_user < self.result_version_reservation_bytes
             or self.max_result_json_bytes <= 0
         ):
             raise ValueError("Result-history limits must be positive")

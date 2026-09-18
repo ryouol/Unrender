@@ -201,9 +201,9 @@ def test_approval_and_export_receipts_bind_exact_snapshot(tmp_path, monkeypatch)
 
     original_csv = service._safe_csv
 
-    def edit_during_export(chart):
+    def edit_during_export(chart, provenance):
         save(service, uid, approved, 123456)
-        return original_csv(chart)
+        return original_csv(chart, provenance)
 
     monkeypatch.setattr(service, "_safe_csv", edit_during_export)
     payload, _ = service.export(
@@ -282,7 +282,7 @@ def test_browser_api_requires_revision_and_rejects_stale_clients(tmp_path):
         )
         assert exported.status_code == 200
         assert exported.headers["X-Unrender-Review-Revision"] == approved["review_revision"]
-        assert json.loads(exported.content) == approved["result"]
+        assert json.loads(exported.content)["chart"] == approved["result"]
 
 
 def test_inconsistent_persisted_history_fails_closed(tmp_path):

@@ -35,15 +35,19 @@ verified provider or merge the older branch's product implementation over main.
   coercion. The provider reports observed EOS/cap/unknown and the API independently
   parses raw output; token-cap failures publish no partial table and do not retry.
   See [parser contract and saved-output audit](../release/parser-v2/README.md).
-- [ ] Durable extraction diagnostics: persist successful raw/repaired status,
-  parser version, finish reason and generation/provenance receipt per result
-  version; carry through correction/restore, API, UI and every export. Existing
-  failure codes already reach the job's API/UI. Do not claim this full item done.
+- [x] Durable extraction diagnostics: bounded per-result receipts carry parsing,
+  completion and source/model evidence through correction/restore, API, UI and all
+  exports. Schema 15 preserves historical tables with explicitly missing evidence;
+  the demo is labeled reference data. See [verification](../release/extraction-receipts/README.md).
 - [ ] Provider rollout: coordinate v3 provider and API release pins, validate
   completion metadata with a bounded real GPU canary, then run broad quality gates.
-- [ ] Export correctness: preserve units/scales; source hash/page/crop; approved
-  version/content hash; model/provider/prompt/schema identities; verify actual
-  CSV/JSON/XLSX output and retain formula-injection defenses.
+- [x] Export provenance and recorded units: CSV/JSON/XLSX preserve source hash,
+  page/crop, review version/hash, model/provider/prompt/schema identities and
+  warnings; units appear in table headings, numeric values are not rescaled, and
+  formula defenses remain. [Export contract](API.md#export-and-extraction-evidence-contract).
+- [ ] Scale interpretation: validate percentages, multipliers, logarithmic axes,
+  rounding and declared precision against independently checked real chart truth.
+  Preserving a model's unit string does not prove it interpreted that unit correctly.
 - [ ] Unify the serving experiment with current main: selectively port code and
   raw evidence; retain failed/missing-input ledgers; identify all experiment versus
   deployment boundaries and update stale review/claim documentation.

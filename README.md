@@ -58,7 +58,7 @@ python -m pip install --no-deps --no-build-isolation -e .
 sh scripts/run_local.sh
 ```
 
-Open [localhost:8000](http://127.0.0.1:8000/), choose **Sign in → Run saved model replay**, and wait for the review table. Change a value, save and approve, then download the workbook and inspect its **Audit** sheet. This is an isolated ephemeral sample workspace; sign-out removes it.
+Open [localhost:8000](http://127.0.0.1:8000/), choose **Sign in → Open reference example**, and wait for the review table. Change a value, save and approve, then download the workbook and inspect its **Audit** sheet. This is an isolated ephemeral sample workspace; sign-out removes it.
 
 The launcher explicitly disables Google, email, billing, and external inference, and stores local data under ignored `outputs/local-runtime/`. Its replay extractor accepts the bundled fixture only. Local limits differ from production; the UI reads them from `/api/public-config`. Copying `.env.example` is unnecessary for this launcher.
 
@@ -92,7 +92,7 @@ flowchart TD
 
 **Model:** production uses the project's post-trained Qwen3-VL-4B table LoRA, served through `modal_train.py::infer_one`. The app checks pinned model and provider release identities. Local replay returns deterministic fixture data and never calls that model. [Architecture and trust boundaries](docs/ARCHITECTURE.md) · [Google sign-in](docs/GOOGLE_SIGNIN.md).
 
-**Workflow:** upload → queued → running → review → approved → export. Corrections create immutable result versions; reprocessing preserves the previous result if the new attempt fails. Source files are removed through a durable deletion outbox. XLSX contains the audit metadata; CSV and JSON are data-only exports.
+**Workflow:** upload → queued → running → review → approved → export. Corrections create immutable result versions; reprocessing preserves the previous result if the new attempt fails. Source files are removed through a durable deletion outbox. Every export carries the source, extraction receipt and reviewed version. JSON uses a chart/provenance envelope; CSV includes a file-level metadata column; XLSX has an Audit sheet. See the [export contract](docs/API.md#export-and-extraction-evidence-contract).
 
 ## Engineering evaluation
 

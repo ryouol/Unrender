@@ -1,0 +1,63 @@
+{
+  "date": "2026-09-18",
+  "scope": "local only; no hosted CI, GPU, external reviewer or deployment attestation",
+  "core_tests": {
+    "passed": 651,
+    "skipped": 3,
+    "warnings": 4
+  },
+  "actual_trainer_and_processor_tests": {
+    "passed": 13,
+    "processor_repository": "unsloth/Qwen3-VL-4B-Instruct",
+    "processor_revision": "252d592b59b0233b226875a44ac135cfa1d3f755",
+    "torch": "2.14.0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "peft": "0.21.0"
+  },
+  "checks_passed": [
+    "configured lint/format checks",
+    "mypy product (25 files)",
+    "Node frontend syntax and harnesses",
+    "SBOM and license-policy structure",
+    "package build",
+    "git diff whitespace",
+    "training runtime dependency audit: no known advisories"
+  ],
+  "checkpoint_fault_experiment": {
+    "verified_guard": {
+      "complete_resume_equal": {
+        "model_sha256": true,
+        "optimizer_sha256": true,
+        "scheduler_sha256": true,
+        "rng_sha256": true,
+        "losses": true,
+        "global_step": true
+      },
+      "changed_lr_rejected": true,
+      "partial_resume_rejected": true,
+      "receipt_before_complete_kill": true,
+      "retained_checkpoint_has_receipt": true,
+      "older_checkpoint_rotated": true,
+      "verifier_sha256": "6350493536891ceb26e32d465bdee41a0b460b3c5c34e9bc1e0ae73508377e68"
+    },
+    "project_selector": {
+      "source_sha256": "6350493536891ceb26e32d465bdee41a0b460b3c5c34e9bc1e0ae73508377e68",
+      "rejects_incomplete_newest": true
+    }
+  },
+  "browser_check": {
+    "origin": "isolated localhost replay",
+    "result": "reference chart -> saved correction version 2 -> source-matching version 3 -> approved -> workbook download started",
+    "limits": "browser initiation observed; export contents verified separately by product tests; no live model call"
+  },
+  "open_gates": [
+    "independent development annotations and separate final holdout",
+    "Qwen CUDA and Modal loss/recovery canary",
+    "final quality/performance/billed-cost study",
+    "remote GPU cancellation, durable global dollar cap, production load",
+    "timed hosted restore and external auth/container review",
+    "hosted CI and coordinated production rollout"
+  ],
+  "independent_review_packet": "independent-source-review-v2.zip (72 development charts, all decisions pending)"
+}

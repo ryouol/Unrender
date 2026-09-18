@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-09-18T15:52:17.849947+00:00",
+  "lock_sha256": "6e631fc465284d7e1b5f9c26d764548a3e4d7aa601ef623cd8756ed82fee2ce5",
+  "command": "pip-audit --disable-pip --no-deps -r requirements-train.lock -f json",
+  "status": "no_known_advisories",
+  "dependency_count": 90,
+  "findings": [],
+  "limits": "Dependency scan only. Not a CUDA integration, model quality, or production canary."
+}

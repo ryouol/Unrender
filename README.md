@@ -96,6 +96,8 @@ flowchart TD
 
 ## Engineering evaluation
 
+For the September 18 local changes, start with the [audit remediation and benchmark plan](docs/AUDIT_REMEDIATION.md) and [training/recovery contract](docs/TRAINING_REPRODUCIBILITY.md). These changes are not a hosted deployment or a new model benchmark.
+
 Start with the [review guide](docs/ENGINEERING_REVIEW.md) for a reading order, test map, failure cases, and evidence boundaries.
 
 ```bash

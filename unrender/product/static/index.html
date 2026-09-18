@@ -69,7 +69,7 @@
           <p class="form-error" id="auth-error" role="alert" hidden></p>
           <p class="auth-help"><a href="/#how-it-works">How Unrender works</a></p>
           <p class="invitation-note" id="invitation-note">Have an invitation? Use the setup link from your inviter to choose your password.</p>
-          <button class="button button-secondary auth-sample" id="open-sample-button" type="button" hidden>Run saved model replay</button>
+          <button class="button button-secondary auth-sample" id="open-sample-button" type="button" hidden>Open reference example</button>
         </section>
       </section>
 
@@ -171,13 +171,20 @@
               <li data-step="export"><span class="step-number" aria-hidden="true">4</span>Export</li>
             </ol>
             <section class="export-completion" id="export-completion" hidden aria-labelledby="export-completion-title">
-              <div><h3 id="export-completion-title">Download started</h3><p>Your export records the review state. XLSX includes model and approval metadata in its audit sheet.</p></div>
+              <div><h3 id="export-completion-title">Download started</h3><p>Your export records the review state. Every format includes source, extraction, and approval details.</p></div>
               <button class="button button-secondary" id="export-another-button" type="button">Extract another chart</button>
             </section>
             <div class="job-error" id="job-error" role="alert" hidden></div>
+            <div class="review-notice" id="review-conflict" role="alert" hidden></div>
             <div class="review-notice" id="review-notice" hidden>
               Check every value against the source before you approve this result.
             </div>
+            <div class="review-notice" id="extraction-notice" hidden></div>
+            <details class="metadata-details extraction-details" id="extraction-details" hidden>
+              <summary>Extraction details</summary>
+              <p>These checks describe the model response. They do not verify the accuracy of the table.</p>
+              <dl id="extraction-evidence"></dl>
+            </details>
             <div class="review-layout" id="review-layout">
               <section class="source-pane" aria-labelledby="source-heading">
                 <div class="pane-heading"><div><h3 id="source-heading">Source</h3><span id="source-page-label"></span></div><label class="source-zoom-control"><span class="visually-hidden">Source magnification</span><select id="source-zoom"><option value="1">Fit</option><option value="actual">100%</option><option value="2">200%</option><option value="4">400%</option></select></label></div>
@@ -194,7 +201,8 @@
                     <label>Title<input id="chart-title-input" type="text"></label>
                     <label>Category axis<input id="x-label-input" type="text"></label>
                     <label>Value axis<input id="y-label-input" type="text"></label>
-                    <label>Unit<input id="y-unit-input" type="text"></label>
+                    <label>Category unit<input id="x-unit-input" type="text"></label>
+                    <label>Value unit<input id="y-unit-input" type="text"></label>
                   </div>
                   <fieldset class="series-editor">
                     <legend>Series names</legend>

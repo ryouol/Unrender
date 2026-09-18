@@ -58,7 +58,7 @@ python -m pip install --no-deps --no-build-isolation -e .
 sh scripts/run_local.sh
 ```
 
-Open [localhost:8000](http://127.0.0.1:8000/), choose **Sign in → Run saved model replay**, and wait for the review table. Change a value, save and approve, then download the workbook and inspect its **Audit** sheet. This is an isolated ephemeral sample workspace; sign-out removes it.
+Open [localhost:8000](http://127.0.0.1:8000/), choose **Sign in → Open reference example**, and wait for the review table. Change a value, save and approve, then download the workbook and inspect its **Audit** sheet. This is an isolated ephemeral sample workspace; sign-out removes it.
 
 The launcher explicitly disables Google, email, billing, and external inference, and stores local data under ignored `outputs/local-runtime/`. Its replay extractor accepts the bundled fixture only. Local limits differ from production; the UI reads them from `/api/public-config`. Copying `.env.example` is unnecessary for this launcher.
 
@@ -92,9 +92,11 @@ flowchart TD
 
 **Model:** production uses the project's post-trained Qwen3-VL-4B table LoRA, served through `modal_train.py::infer_one`. The app checks pinned model and provider release identities. Local replay returns deterministic fixture data and never calls that model. [Architecture and trust boundaries](docs/ARCHITECTURE.md) · [Google sign-in](docs/GOOGLE_SIGNIN.md).
 
-**Workflow:** upload → queued → running → review → approved → export. Corrections create immutable result versions; reprocessing preserves the previous result if the new attempt fails. Source files are removed through a durable deletion outbox. XLSX contains the audit metadata; CSV and JSON are data-only exports.
+**Workflow:** upload → queued → running → review → approved → export. Corrections create immutable result versions; reprocessing preserves the previous result if the new attempt fails. Source files are removed through a durable deletion outbox. Every export carries the source, extraction receipt and reviewed version. JSON uses a chart/provenance envelope; CSV includes a file-level metadata column; XLSX has an Audit sheet. See the [export contract](docs/API.md#export-and-extraction-evidence-contract).
 
 ## Engineering evaluation
+
+For the September 18 local changes, start with the [audit remediation and benchmark plan](docs/AUDIT_REMEDIATION.md) and [training/recovery contract](docs/TRAINING_REPRODUCIBILITY.md). These changes are not a hosted deployment or a new model benchmark.
 
 Start with the [review guide](docs/ENGINEERING_REVIEW.md) for a reading order, test map, failure cases, and evidence boundaries.
 
@@ -129,7 +131,9 @@ For programmatic use, see [API contracts](docs/API.md). Submissions require a te
 
 **Status: deployed controlled beta.** A running service and passing tests do not establish a broadly validated or enterprise-ready product.
 
-- **Accuracy:** saved `common300` research results report 38.9% `cell@5_exact` for the table LoRA versus 13.5% for its pinned base. A separate three-chart production pilot recovered 15/15 values on crisp synthetic inputs. Neither is a representative customer benchmark. Human correction time remains unmeasured. [Research results](RESULTS.md) · [Claim boundaries](RESULT_TO_CLAIM.md) · [Pilot evidence](docs/LAUNCH_EVALUATION.md).
+- **Accuracy is not yet established on a valid representative benchmark.** The [synthetic visibility audit](release/model-error-audit/README.md) found known defects in 109/300 Common300 charts; the [real-chart audit](release/real-v0-audit/README.md) rejected all eight historical real-chart annotations. Against the frozen synthetic targets, strict cell F1 remains 28.90% for the fair LoRA, 6.59% for the base and 26.67% for numeric loss, with 13/280 exactly correct charts for the fair arm. These are reproducible historical diagnostics, not clean model-quality or generalization claims. [Corrective plan](docs/REVIEW_READINESS_PLAN.md) · [Evaluation contract](docs/EVALUATION_CONTRACT.md).
+- **New synthetic data has a separate contract.** The [current workflow](docs/SYNTHETIC_DATA.md) fixes invisible metadata and stacked bounds, records image/target provenance, and refuses frozen-dataset overwrites. This is not a claim that dense or degraded images are fully recoverable; that audit remains open.
+- **Offline benchmark reproduction:** `python -m analysis.reproduce_common300` verifies and rescores the committed 900 raw Common300 responses, with training-table overlap checks. [Evidence, setup and limitations](release/common300-evidence/README.md).
 - **Latency and cost:** the three pilot uploads took approximately 68–193 seconds end to end. Actual dollar cost was not measured. Signup credits are per account, not an abuse-proof per-person allowance or a provider spending cap.
 - **Scale:** one application replica per SQLite volume. Multi-node operation requires database, file storage, queue, and rate-limiting changes. There are no shared-team roles or enterprise SSO.
 - **Recovery:** email delivery and self-service email recovery are off. Google-only users recover through Google; password-account recovery needs operator verification. Backups have a separate retention policy from live deletion.

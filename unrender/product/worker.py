@@ -1,4 +1,4 @@
-"""Single durable-job worker for the default SQLite deployment."""
+"""Bounded durable-job worker pool for the default SQLite deployment."""
 
 from __future__ import annotations
 
@@ -19,29 +19,34 @@ class JobWorker:
         self.service = service
         self.poll_seconds = poll_seconds
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._threads: list[threading.Thread] = []
         self.owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
         self._draining = False
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if self.is_running:
             return
         self._stop.clear()
         self._draining = False
-        self._thread = threading.Thread(target=self._run, name="unrender-job-worker", daemon=True)
-        self._thread.start()
+        self._threads = [
+            threading.Thread(
+                target=self._run, args=(slot,), name=f"unrender-job-worker-{slot}", daemon=True
+            )
+            for slot in range(self.service.settings.worker_concurrency)
+        ]
+        for thread in self._threads:
+            thread.start()
 
     def stop(self, timeout: float | None = None) -> bool:
         self._draining = True
         self._stop.set()
-        if self._thread:
-            self._thread.join(
-                timeout=(
-                    timeout
-                    if timeout is not None
-                    else self.service.settings.worker_shutdown_timeout_seconds
-                )
-            )
+        deadline = time.monotonic() + (
+            timeout
+            if timeout is not None
+            else self.service.settings.worker_shutdown_timeout_seconds
+        )
+        for thread in self._threads:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
         stopped = not self.is_running
         if not stopped:
             logger.warning(
@@ -52,24 +57,28 @@ class JobWorker:
 
     @property
     def is_running(self) -> bool:
-        return bool(self._thread and self._thread.is_alive())
+        return any(thread.is_alive() for thread in self._threads)
 
     @property
     def is_accepting(self) -> bool:
-        return self.is_running and not self._draining
+        return (
+            len(self._threads) == self.service.settings.worker_concurrency
+            and all(thread.is_alive() for thread in self._threads)
+            and not self._draining
+        )
 
-    def _run(self) -> None:
+    def _run(self, slot: int) -> None:
         next_cleanup = 0.0
         next_recovery = 0.0
         while not self._stop.is_set():
             try:
                 now = time.monotonic()
-                if now >= next_recovery:
+                if slot == 0 and now >= next_recovery:
                     self.service.recover_interrupted_jobs()
                     next_recovery = now + self.service.settings.worker_heartbeat_seconds
-                did_work = self.service.process_one(self.owner, self._stop)
+                did_work = self.service.process_one(f"{self.owner}:{slot}", self._stop)
                 now = time.monotonic()
-                if now >= next_cleanup:
+                if slot == 0 and now >= next_cleanup:
                     self.service.cleanup_expired()
                     next_cleanup = now + 3600
                 if not did_work:

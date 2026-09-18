@@ -51,10 +51,10 @@ def _set_usage(input_tokens, output_tokens):
     LAST_USAGE.update({"input_tokens": input_tokens, "output_tokens": output_tokens})
 
 
-def openai_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
+def openai_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     from openai import OpenAI
 
-    client = OpenAI()
+    client = OpenAI(max_retries=0, timeout=240)
     messages = [
         {
             "role": "user",
@@ -67,24 +67,20 @@ def openai_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
             ],
         }
     ]
-    try:
-        resp = client.chat.completions.create(model=model, messages=messages, max_tokens=4096)
-    except Exception as e:
-        # Only retry the specific "this model rejects max_tokens" case. Real
-        # failures (auth, rate limit, network) must propagate, not silently
-        # trigger a second identical (paid) call that masks the true error.
-        if "max_tokens" not in str(e).lower():
-            raise
-        resp = client.chat.completions.create(model=model, messages=messages)
+    resp = client.chat.completions.create(
+        model=model, messages=messages, max_completion_tokens=4096
+    )
+    if timings is not None:
+        timings["finish_reason"] = resp.choices[0].finish_reason
     u = getattr(resp, "usage", None)
     _set_usage(getattr(u, "prompt_tokens", None), getattr(u, "completion_tokens", None))
     return resp.choices[0].message.content or ""
 
 
-def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
+def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     import anthropic
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(max_retries=0, timeout=240)
     msg = client.messages.create(
         model=model,
         max_tokens=4096,
@@ -105,6 +101,8 @@ def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None) -> str
             }
         ],
     )
+    if timings is not None:
+        timings["finish_reason"] = msg.stop_reason
     u = getattr(msg, "usage", None)
     _set_usage(getattr(u, "input_tokens", None), getattr(u, "output_tokens", None))
     if msg.stop_reason == "refusal":
@@ -112,17 +110,25 @@ def anthropic_provider(image_path, prompt, model, gt_json=None, rng=None) -> str
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
-def gemini_provider(image_path, prompt, model, gt_json=None, rng=None) -> str:
+def gemini_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     from google import genai
     from google.genai import types
 
-    client = genai.Client()  # reads GOOGLE_API_KEY / GEMINI_API_KEY
+    client = genai.Client(
+        http_options=types.HttpOptions(
+            timeout=240_000, retry_options=types.HttpRetryOptions(attempts=1)
+        )
+    )
     with open(image_path, "rb") as f:
         data = f.read()
     resp = client.models.generate_content(
         model=model,
         contents=[types.Part.from_bytes(data=data, mime_type="image/png"), prompt],
     )
+    if timings is not None:
+        candidates = getattr(resp, "candidates", None) or []
+        reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        timings["finish_reason"] = getattr(reason, "value", reason) or "unrecorded"
     um = getattr(resp, "usage_metadata", None)
     _set_usage(getattr(um, "prompt_token_count", None), getattr(um, "candidates_token_count", None))
     # resp.text raises (not returns falsy) when a candidate has no text part —
@@ -153,6 +159,20 @@ HF_MODEL_CONFIG: dict = {}
 HF_GEN_CONFIG: dict = {}
 
 
+def generation_finish_reason(tokens, eos_token_id, max_output_tokens: int) -> str:
+    """Conservatively classify a single generated sequence, before decoding.
+
+    Reaching the cap wins over EOS: generation configs may force EOS at the limit.
+    Without an observed EOS below the cap, completion is not established.
+    """
+    if len(tokens) >= max_output_tokens:
+        return "length"
+    eos_ids = eos_token_id if isinstance(eos_token_id, (list, tuple)) else [eos_token_id]
+    if len(tokens) and int(tokens[-1]) in eos_ids:
+        return "eos"
+    return "unknown"
+
+
 def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     """Local open-model baseline (base Qwen-VL, your fine-tune, etc.).
 
@@ -176,9 +196,14 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
         # code path that, in current transformers, hits a 'dict has no model_type'
         # crash — the probe (which omits revision) loads the same merged model fine.
         rev_kw = {"revision": rev} if rev else {}
-        proc = AutoProcessor.from_pretrained(model, trust_remote_code=True, **rev_kw)
+        proc = AutoProcessor.from_pretrained(model, trust_remote_code=False, **rev_kw)
         net = AutoModelForImageTextToText.from_pretrained(
-            model, torch_dtype="auto", device_map="auto", trust_remote_code=True, **rev_kw
+            model,
+            dtype="auto",
+            device_map="auto",
+            trust_remote_code=False,
+            use_safetensors=True,
+            **rev_kw,
         )
         _HF_CACHE[key] = (proc, net)
     proc, net = _HF_CACHE[key]
@@ -198,7 +223,10 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
         # Qwen's fast processor reads `size`, not an AutoProcessor max_pixels
         # override. Pass it per request so the cached processor stays immutable.
         image_kwargs["images_kwargs"] = {
-            "size": {**proc.image_processor.size, "longest_edge": max_pixels}
+            "size": {
+                "shortest_edge": proc.image_processor.size.shortest_edge,
+                "longest_edge": max_pixels,
+            }
         }
     inputs = proc(
         text=[text],
@@ -231,6 +259,10 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
         timings["generate_decode_seconds"] = time.perf_counter() - preprocessed
         timings["input_tokens"] = inputs["input_ids"].shape[1]
         timings["output_tokens"] = len(trimmed)
+        timings["max_output_tokens"] = gen_kwargs["max_new_tokens"]
+        timings["finish_reason"] = generation_finish_reason(
+            trimmed, net.generation_config.eos_token_id, gen_kwargs["max_new_tokens"]
+        )
     return decoded
 
 

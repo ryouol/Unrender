@@ -1,0 +1,12 @@
+{
+  "provider": "hf",
+  "model": "/vol/runs/qwen3vl4b-table-fair/merged",
+  "model_revision": "56ea45a7f484e10c",
+  "data": "/vol/data/synthetic_v1/test.jsonl",
+  "limit": 0,
+  "dataset_fp": "3a2d3edc0b9efeb1",
+  "gen_config": {},
+  "subset_fp": "b02a6d7ad001bd9d",
+  "n_subset": 300,
+  "prompt_fp": "ca24d7b556fcbbe3"
+}

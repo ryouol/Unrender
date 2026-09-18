@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from unrender.product.provenance import MAX_RECEIPT_BYTES
+
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _PROVIDER_RELEASE = re.compile(r"^[0-9a-f]{64}$")
@@ -34,6 +36,7 @@ class Settings:
     base_url: str = "http://127.0.0.1:8000"
     extractor_backend: str = "replay"
     worker_enabled: bool = True
+    worker_concurrency: int = 1
     max_recovery_attempts: int = 1
     worker_lease_seconds: int = 45
     worker_heartbeat_seconds: int = 10
@@ -132,10 +135,14 @@ class Settings:
         return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_id)
 
     @property
+    def result_version_reservation_bytes(self) -> int:
+        return self.max_result_json_bytes + MAX_RECEIPT_BYTES
+
+    @property
     def result_publication_reservation_bytes(self) -> int:
         """Worst-case version/current/original/raw publication for one provider attempt."""
 
-        return self.max_result_json_bytes * 4
+        return self.max_result_json_bytes * 4 + MAX_RECEIPT_BYTES
 
     @property
     def result_request_bytes(self) -> int:
@@ -251,7 +258,7 @@ class Settings:
             raise ValueError("Tenant record limits must be positive")
         if (
             self.max_result_versions_per_job <= 0
-            or self.max_history_bytes_per_user < self.max_result_json_bytes
+            or self.max_history_bytes_per_user < self.result_version_reservation_bytes
             or self.max_result_json_bytes <= 0
         ):
             raise ValueError("Result-history limits must be positive")
@@ -314,6 +321,8 @@ class Settings:
             raise ValueError("Session, upload, and retention periods must be positive")
         if self.credit_pack_size <= 0 or self.initial_credits < 0:
             raise ValueError("Credit values must not be negative")
+        if type(self.worker_concurrency) is not int or not 1 <= self.worker_concurrency <= 4:
+            raise ValueError("UNRENDER_WORKER_CONCURRENCY must be between 1 and 4")
         if not 0 <= self.max_recovery_attempts <= 10:
             raise ValueError("UNRENDER_MAX_RECOVERY_ATTEMPTS must be between 0 and 10")
         if (
@@ -352,6 +361,7 @@ class Settings:
             ).rstrip("/"),
             extractor_backend=os.getenv("UNRENDER_EXTRACTOR", "replay").strip().lower(),
             worker_enabled=_bool("UNRENDER_WORKER_ENABLED", True),
+            worker_concurrency=_int("UNRENDER_WORKER_CONCURRENCY", 1),
             max_recovery_attempts=_int("UNRENDER_MAX_RECOVERY_ATTEMPTS", 1),
             worker_lease_seconds=_int("UNRENDER_WORKER_LEASE_SECONDS", 45),
             worker_heartbeat_seconds=_int("UNRENDER_WORKER_HEARTBEAT_SECONDS", 10),

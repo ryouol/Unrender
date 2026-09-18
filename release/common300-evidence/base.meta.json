@@ -1,0 +1,11 @@
+{
+  "provider": "hf",
+  "model": "unsloth/Qwen3-VL-4B-Instruct",
+  "model_revision": "252d592b59b0233b226875a44ac135cfa1d3f755",
+  "data": "/vol/data/synthetic_v1/test.jsonl",
+  "limit": 0,
+  "dataset_fp": "3a2d3edc0b9efeb1",
+  "gen_config": {},
+  "subset_fp": "b02a6d7ad001bd9d",
+  "n_subset": 300
+}

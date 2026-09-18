@@ -1,0 +1,97 @@
+{
+  "contract": "augmentation-replay-v1",
+  "recipe_sha256": "b5a043dde2420b40d6b3d8f1b6e7e035aa7a9311b1e35c9f5599de9dc5d35ee5",
+  "id": "0000020",
+  "source_image_sha256": "71acef75174a0b8573feff2d45ee894104f674ae8bcb5b66524e929348bd8b4d",
+  "auditor_sha256": "ff21e0239baea06b69cc46e66ec4ac00dac40fbcabead8bc1dd323db094618d2",
+  "stages": [
+    {
+      "name": "native",
+      "image": "00-native.png",
+      "sha256": "6e404265dc61f1d7a3fffdf7afa03a11df9a123c00010483f9cae906c8ddf9ec",
+      "size": [
+        561,
+        295
+      ],
+      "parameter_draws": []
+    },
+    {
+      "name": "lambda",
+      "image": "01-lambda.png",
+      "sha256": "dca26ee7d851c325f827e122322c6ffb2fb3c9a4aabdcae51027d516eb22418e",
+      "size": [
+        561,
+        295
+      ],
+      "parameter_draws": [
+        {
+          "method": "uniform",
+          "range": [
+            0.4,
+            1.4
+          ],
+          "value": 1.3225646451031625
+        }
+      ]
+    },
+    {
+      "name": "rescale",
+      "image": "02-rescale.png",
+      "sha256": "a2e3593ef61e94df93e4d6755b7245856373b5fd67f3195ab896c40ebf649229",
+      "size": [
+        561,
+        295
+      ],
+      "parameter_draws": [
+        {
+          "method": "uniform",
+          "range": [
+            0.4,
+            0.85
+          ],
+          "value": 0.8482424321670048
+        }
+      ]
+    },
+    {
+      "name": "brightness_contrast",
+      "image": "03-brightness_contrast.png",
+      "sha256": "71acef75174a0b8573feff2d45ee894104f674ae8bcb5b66524e929348bd8b4d",
+      "size": [
+        561,
+        295
+      ],
+      "parameter_draws": [
+        {
+          "method": "uniform",
+          "range": [
+            0.8,
+            1.2
+          ],
+          "value": 1.1053458831445298
+        },
+        {
+          "method": "uniform",
+          "range": [
+            0.8,
+            1.2
+          ],
+          "value": 0.8486949525059865
+        }
+      ]
+    },
+    {
+      "name": "final",
+      "image": "04-final.png",
+      "sha256": "71acef75174a0b8573feff2d45ee894104f674ae8bcb5b66524e929348bd8b4d",
+      "size": [
+        561,
+        295
+      ],
+      "parameter_draws": []
+    }
+  ],
+  "limits": "Development diagnostics only; no independent human readability approval.",
+  "augmentation_selected": true,
+  "final_image_matches_recorded_bytes": true
+}

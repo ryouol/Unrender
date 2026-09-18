@@ -1,0 +1,61 @@
+{
+  "contract": "source-review-development-verification-v1",
+  "packets": {
+    "easy": {
+      "rows": 24,
+      "decisions": "all_pending",
+      "packet_sha256": "d4bd2342af1299912e3cf2c9c7c0569f31520eb3f5f1096b9ed44afed3c655cc",
+      "review_sha256": "57a193ccea844b5c7ce5cd27d5e6539f95b00d9ac75a84e775fd6e0d8f0b9fa2",
+      "html_sha256": "c9bb91fd0d11fe7aa04818a59a177547af3e48e2233e9ecdacd4b722bdb55d8e",
+      "rejections": {
+        "train": "training source review failed for train.jsonl: 16 noneligible source rows; no rows filtered: ['0000006', '0000019', '0000013', '0000016', '0000008', '0000000', '0000009', '0000011']",
+        "val": "training source review failed for val.jsonl: 4 noneligible source rows; no rows filtered: ['0000007', '0000014', '0000023', '0000021']"
+      }
+    },
+    "hard": {
+      "rows": 24,
+      "decisions": "all_pending",
+      "packet_sha256": "700955dfe296e7827d943718d5944976e3def38840dcb6f953140e0c6888f8d6",
+      "review_sha256": "cdb83c0ed6e5b72d4e6ebf9adf07d76b4805a5f903d32d7a726879f7a9df07a9",
+      "html_sha256": "8e198267ebe0bf1df9acd8ce1af1c41b3446d26b34cb0c3a13ac965decc34be2",
+      "rejections": {
+        "train": "training source review failed for train.jsonl: 16 noneligible source rows; no rows filtered: ['0000006', '0000019', '0000013', '0000016', '0000008', '0000000', '0000009', '0000011']",
+        "val": "training source review failed for val.jsonl: 4 noneligible source rows; no rows filtered: ['0000007', '0000014', '0000023', '0000021']"
+      }
+    },
+    "varied": {
+      "rows": 24,
+      "decisions": "all_pending",
+      "packet_sha256": "2e4167ed2b91fac67a57d652f9276058835662cfaa7db9f08ab166e9d5af33e6",
+      "review_sha256": "ea75cf03c5091dd67fb1f68107b776cd11392a756286cafaac835f916a392b9a",
+      "html_sha256": "3e5180bf222f7e39620b554fbb26df97467ffca4f20432f2e8fa91c222c4b08b",
+      "rejections": {
+        "train": "training source review failed for train.jsonl: 16 noneligible source rows; no rows filtered: ['0000006', '0000019', '0000013', '0000016', '0000008', '0000000', '0000009', '0000011']",
+        "val": "training source review failed for val.jsonl: 4 noneligible source rows; no rows filtered: ['0000007', '0000014', '0000023', '0000021']"
+      }
+    }
+  },
+  "approval_count": 0,
+  "gpu_calls": 0,
+  "source_hashes": {
+    "unrender/data_gen/review.py": "ee78aba2203042963c487a97e12046792305811307ee0bf2caa791ce4fd197e7",
+    "unrender/train/sft_lora.py": "eb572d0188f820d21e325d7d519ee8064e30412e53aa290deaf8e83d356790ff",
+    "modal_train.py": "241981aeca61c0370745e0308e31b731b8d0dc496bd8227c6faf2a596f3b90b4",
+    "tests/test_source_review.py": "7b5b648261728210b0c97564e6572815dc7bb5770bf6bbad36292eac6cf6fcef"
+  },
+  "validation": {
+    "full_suite": {
+      "passed": 573,
+      "skipped": 0,
+      "warnings": 4,
+      "seconds": 163.68
+    },
+    "lint": "passed",
+    "product_types": "passed",
+    "browser": "Varied review packet opened; exact target table and retained blurred 0000020 confirmed; decisions unchanged.",
+    "focused_source_suite_after_final_presentation_and_step_cap_changes": {
+      "passed": 31
+    },
+    "clean_git_archive": "Source hashes, 72 pending decisions, exact processor-report hash, protocols and packet bindings verified."
+  }
+}

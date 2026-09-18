@@ -42,6 +42,7 @@ from unrender.product.extractors import (
     ModalExtractor,
     ReplayExtractor,
 )
+from unrender.product.provenance import MAX_RECEIPT_BYTES, ExtractionReceipt
 from unrender.product.security import hash_password, password_needs_rehash, verify_password
 from unrender.product.service import (
     ProductError,
@@ -59,6 +60,7 @@ from unrender.product.web import (
 )
 from unrender.product.worker import JobWorker
 from unrender.schema.chart_schema import ChartData
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
 STATIC_DIR = Path(__file__).parents[1] / "unrender" / "product" / "static"
 
@@ -279,6 +281,11 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
     response = {
         "json": fixture["result"],
         "raw": fixture["raw"],
+        "parser_version": PARSER_VERSION,
+        "parse_errors": parse_chart_json(fixture["raw"])[1],
+        "finish_reason": "eos",
+        "output_tokens": 100,
+        "max_output_tokens": 4096,
         "provider_release": "b" * 64,
     }
     remote_calls: list[tuple[object, ...]] = []
@@ -484,7 +491,11 @@ def test_reprocess_failure_and_cancel_preserve_approved_result(tmp_path: Path) -
         )
     )
     assert service.process_one()
-    approved = service.approve(user_id=user_id, job_id=job["id"])
+    approved = service.approve(
+        user_id=user_id,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     approved_result = approved["result"]
     approved_at = approved["approved_at"]
     assert service.account(user_id)["credits"] == 2
@@ -850,10 +861,15 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
 
     job = service.get_job(user_id=user_id, job_id=job["id"])
     assert job["status"] == "review"
-    assert job["model_version"] == "verified-fixture/synthetic-v1-0002906"
+    assert job["model_version"] == "reference-fixture/budget-quarter-v2"
     corrected = job["result"]
     corrected["title"] = "Budget by quarter — reviewed"
-    job = service.save_correction(user_id=user_id, job_id=job["id"], result=corrected)
+    job = service.save_correction(
+        user_id=user_id,
+        job_id=job["id"],
+        result=corrected,
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert job["result"]["title"].endswith("reviewed")
     versions = service.job_versions(user_id=user_id, job_id=job["id"])
     assert [item["version"] for item in versions["items"]] == [2, 1]
@@ -862,15 +878,34 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     assert "result" not in versions["items"][0]
     restored = service.job_version(user_id=user_id, job_id=job["id"], version=1)
     assert restored["result"]["title"] == "Budget (Quarter)"
-    job = service.approve(user_id=user_id, job_id=job["id"])
+    job = service.approve(
+        user_id=user_id,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert job["status"] == "approved"
 
-    csv_payload, csv_mime = service.export(user_id=user_id, job_id=job["id"], output_format="csv")
-    json_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="json")
-    xlsx_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="xlsx")
+    csv_payload, csv_mime = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="csv",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
+    json_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="json",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
+    xlsx_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="xlsx",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert csv_mime.startswith("text/csv")
     assert b"Q3 2016" in csv_payload
-    assert json.loads(json_payload)["title"].endswith("reviewed")
+    assert json.loads(json_payload)["chart"]["title"].endswith("reviewed")
     assert xlsx_payload.startswith(b"PK")
     events = [item["event"] for item in service.job_audit(user_id=user_id, job_id=job["id"])]
     assert "extraction_completed" in events
@@ -893,7 +928,12 @@ def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
     for correction in range(21):
         result = service.get_job(user_id=user_id, job_id=job["id"])["result"]
         result["title"] = f"Correction {correction + 1}"
-        service.save_correction(user_id=user_id, job_id=job["id"], result=result)
+        service.save_correction(
+            user_id=user_id,
+            job_id=job["id"],
+            result=result,
+            expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+        )
 
     first_page = service.job_versions(user_id=user_id, job_id=job["id"])
     assert len(first_page["items"]) == 20
@@ -912,6 +952,7 @@ def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
             user_id=user_id,
             job_id=job["id"],
             result=service.get_job(user_id=user_id, job_id=job["id"])["result"],
+            expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
         )
     with pytest.raises(ProductError, match="version limit"):
         service.reprocess(user_id=user_id, job_id=job["id"])
@@ -1140,14 +1181,29 @@ def test_spreadsheet_exports_neutralize_formula_cells(tmp_path: Path) -> None:
         "x": "+cmd|' /C calc'!A0",
         "y": -9.2,
     }
-    service.save_correction(user_id=user_id, job_id=job["id"], result=result)
+    service.save_correction(
+        user_id=user_id,
+        job_id=job["id"],
+        result=result,
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
 
-    csv_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="csv")
+    csv_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="csv",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     rows = list(csv.reader(io.StringIO(csv_payload.decode("utf-8"))))
-    assert rows[0] == ["'=SUM(A1:A2)", "'@external"]
-    assert rows[1] == ["'+cmd|' /C calc'!A0", "-9.2"]
+    assert rows[0] == ["'=SUM(A1:A2)", "'@external [USD millions]", "export_metadata_json"]
+    assert rows[1][:2] == ["'+cmd|' /C calc'!A0", "-9.2"]
 
-    xlsx_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="xlsx")
+    xlsx_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="xlsx",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     workbook = load_workbook(io.BytesIO(xlsx_payload), data_only=False)
     sheet = workbook["Extracted data"]
     assert sheet["A1"].value == "'=SUM(A1:A2)"
@@ -1171,8 +1227,8 @@ def test_multi_series_exports_preserve_duplicate_points_and_numeric_cells(tmp_pa
             ],
         }
     )
-    csv_rows = list(csv.reader(io.StringIO(service._safe_csv(chart))))
-    assert csv_rows == [
+    csv_rows = list(csv.reader(io.StringIO(service._safe_csv(chart, {"contract": "test"}))))
+    assert [row[:-1] for row in csv_rows] == [
         ["series", "Period", "Value"],
         ["series_1", "001", "1.25"],
         ["series_1", "001", "2.5"],
@@ -1184,11 +1240,23 @@ def test_multi_series_exports_preserve_duplicate_points_and_numeric_cells(tmp_pa
                 chart,
                 {
                     "source_name": "multi.png",
+                    "source_sha256": "f" * 64,
+                    "page_index": 0,
+                    "crop_json": None,
                     "id": "job-1",
                     "model_version": "test-model",
                     "status": "review",
                     "approved_at": None,
                 },  # type: ignore[arg-type]
+                {
+                    "result_version": 1,
+                    "result_sha256": "test",
+                    "review_revision": "test",
+                    "model_version": None,
+                    "extraction_receipt": ExtractionReceipt().model_dump(),
+                    "extraction_receipt_sha256": "e" * 64,
+                    "extraction_warnings": ["Not recorded"],
+                },
             )
         )
     )
@@ -2802,7 +2870,16 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
         "json": json.loads(
             (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
         )["result"],
-        "raw": "case-normalized",
+        "raw": json.dumps(
+            json.loads(
+                (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+            )["result"]
+        ),
+        "parser_version": PARSER_VERSION,
+        "parse_errors": [],
+        "finish_reason": "eos",
+        "output_tokens": 100,
+        "max_output_tokens": 4096,
         "provider_release": "a" * 64,
     }
 
@@ -2875,7 +2952,10 @@ def test_correction_transport_accepts_max_contract_and_rejects_exact_overflow(
                 }
             ],
         }
-        body = json.dumps({"result": result}, separators=(",", ":")).encode()
+        revision = client.get(f"/api/jobs/{job_id}").json()["review_revision"]
+        body = json.dumps(
+            {"result": result, "expected_revision": revision}, separators=(",", ":")
+        ).encode()
         assert 970_000 < len(body) <= settings.result_request_bytes
         accepted = client.patch(
             f"/api/jobs/{job_id}/result",
@@ -3024,7 +3104,7 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         tmp_path / "queued",
         seed_demo_account=False,
         initial_credits=3,
-        max_history_bytes_per_user=2_000_000,
+        max_history_bytes_per_user=2_000_000 + 2 * MAX_RECEIPT_BYTES,
     )
     user_id = customer_id(service, "result-reserve@example.com")
     upload = service.prepare_upload(
@@ -3042,7 +3122,9 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         ).fetchall()
     assert len(reservations) == 2
     assert all(row["result_reservation_attempt"] == row["attempt"] == 1 for row in reservations)
-    assert all(row["result_reservation_bytes"] == 1_000_000 for row in reservations)
+    assert all(
+        row["result_reservation_bytes"] == 1_000_000 + MAX_RECEIPT_BYTES for row in reservations
+    )
     service.cancel(user_id=user_id, job_id=str(first["id"]))
     replacement = service.create_job(
         user_id=user_id, upload_id=upload["id"], page_index=0, crop=None
@@ -3055,7 +3137,7 @@ def test_result_capacity_is_attempt_reserved_settled_and_released_predispatch(
         tmp_path / "reprocess",
         seed_demo_account=False,
         initial_credits=3,
-        max_history_bytes_per_user=1_000_000,
+        max_history_bytes_per_user=1_000_000 + MAX_RECEIPT_BYTES,
     )
     reprocess_user = customer_id(reprocess_service, "reprocess-reserve@example.com")
     completed = _paid_job(reprocess_service, reprocess_user, color="orange")
@@ -4466,9 +4548,9 @@ def test_operation_check_retries_then_exits_for_platform_notification(
         with pytest.raises(SystemExit) as error:
             operations_check.main()
         assert error.value.code == 1
-        assert len(calls) == 3 and sleeps == [30, 30]
+        assert len(calls) == 3 and sleeps == [10, 10]
         assert "failed" in capsys.readouterr().err
     else:
         operations_check.main()
-        assert len(calls) == failures + 1 and sleeps == [30] * failures
+        assert len(calls) == failures + 1 and sleeps == [10] * failures
         assert "passed" in capsys.readouterr().out

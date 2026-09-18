@@ -20,7 +20,7 @@ def main() -> None:
         except (OSError, ValueError):
             pass
         if attempt < 2:
-            time.sleep(30)
+            time.sleep(10)
     print(
         "UNRENDER operational checks failed; inspect /health/operations and service logs",
         file=sys.stderr,

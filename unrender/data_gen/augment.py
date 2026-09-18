@@ -34,7 +34,7 @@ def _rescale(img: Image.Image, rng: random.Random) -> Image.Image:
 
 def _rotate(img: Image.Image, rng: random.Random) -> Image.Image:
     angle = rng.uniform(-2.5, 2.5)
-    return img.rotate(angle, resample=Image.BILINEAR, expand=False, fillcolor=(255, 255, 255))
+    return img.rotate(angle, resample=Image.BILINEAR, expand=True, fillcolor=img.getpixel((0, 0)))
 
 
 def _brightness_contrast(img: Image.Image, rng: random.Random) -> Image.Image:

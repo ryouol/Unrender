@@ -5,14 +5,15 @@ container, executes, and stops billing when it returns. Data, the HF model
 cache, and training outputs live on one persistent Volume (`unrender-vol`) so
 nothing is regenerated or re-downloaded between runs.
 
-The pipeline, in order (from the repo root, .venv active):
+New training requires explicit current visible_* bundles with complete source
+review packets. The local ::train and ::smoke entrypoints run the CPU source gate
+before GPU dispatch and bind its receipts to the worker. Historical v0/v1/v2 are
+frozen diagnostic evidence, not automatic training defaults. See
+`docs/SYNTHETIC_DATA.md` for the generation, processor audit and review workflow.
 
-    modal run modal_train.py::gen                 # once: v0+v1 data -> Volume (CPU, ~$0.3)
-    modal run modal_train.py::smoke               # 30-step train + 5-image eval (~$0.5)
-    modal run --detach modal_train.py::train      # the real run (L4, ~$2-4)
-    modal run --detach modal_train.py::evaluate   # merged model over the 1000-chart test
-    modal volume get unrender-vol outputs ./outputs/modal   # pull predictions/report
-    modal volume get unrender-vol runs/qwen3vl4b-lora ./runs/qwen3vl4b-lora  # pull weights
+The research runtime, actual collator token budget, resume identity and
+checkpoint selection still need separate verification. A source-gate pass is
+not a complete training-readiness or compute-cost estimate.
 
 Diagnostics from MODEL_STATUS_REVIEW.md (no retraining; ~$1-3 each on L4):
 
@@ -58,15 +59,15 @@ production_app = modal.App("unrender-production")
 # Production inference is deliberately separate from the mutable research image.
 # This contract changes automatically when any reviewed provider/schema source
 # changes, rather than relying on an operator to remember a manual version bump.
-INFER_PROVIDER_CONTRACT = "unrender-infer-one-v2"
+INFER_PROVIDER_CONTRACT = "unrender-infer-one-v3"
 INFER_DIRECT_DEPENDENCIES = {
-    "accelerate": "1.12.0",
-    "huggingface-hub": "0.36.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.32.0",
     "pillow": "12.3.0",
     "pydantic": "2.13.5",
-    "torch": "2.9.1",
-    "torchvision": "0.24.1",
-    "transformers": "4.57.6",
+    "torch": "2.14.0",
+    "torchvision": "0.29.0",
+    "transformers": "5.17.0",
 }
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -109,9 +110,8 @@ INFER_V = "/model-cache"
 # evaluated locally, so this is the one knob that can't be a function arg).
 GPU = os.environ.get("UNRENDER_GPU", "L4")
 
-# Data-gen image pins the EXACT rendering stack from data/synthetic_*/README.md,
-# so charts generated on the Volume are byte-identical to the frozen eval recipe
-# (the committed test.jsonl ground truth describes these exact pixels).
+# Generation records its actual environment; these pins do not establish byte
+# identity with historical charts or with local macOS rendering.
 gen_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -124,35 +124,11 @@ gen_image = (
     .add_local_python_source("unrender")
 )
 
-# Train/eval image: the pyproject [train] extra + the eval scorer's deps.
-# If the unsloth install ever fails to import on a fresh build, swap the base for
-# modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11").
+# Exact standard Transformers/PEFT candidate; a CUDA integration canary is required.
 train_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "unsloth",
-        "trl>=0.9",
-        "peft>=0.11",
-        "bitsandbytes>=0.43",
-        "transformers>=4.46",
-        "accelerate>=0.34",
-        "datasets>=2.20",
-        "pillow>=10.0",
-        "pydantic>=2.5",
-        "tqdm>=4.66",
-        "rapidfuzz>=3.6",
-        "python-dotenv>=1.0",
-    )
-    .env(
-        {
-            "HF_HOME": f"{V}/.hf_cache",  # cache the ~9GB base model on the Volume once
-            # Unsloth's auto-compiler code-gens a patched qwen3_vl module that (with
-            # current transformers) contains a syntax error and crashes from_pretrained.
-            # Disabling it falls back to stock transformers modeling: slightly slower,
-            # fully correct. Revisit when unsloth/transformers re-sync.
-            "UNSLOTH_COMPILE_DISABLE": "1",
-        }
-    )
+    .pip_install_from_requirements("requirements-train.lock", extra_options="--require-hashes")
+    .env({"HF_HOME": f"{V}/.hf_cache"})
     .add_local_python_source("unrender")
 )
 
@@ -496,238 +472,146 @@ def _eval_tag(mp: str, data: str, subset: str, gen_config: dict) -> str:
     return "__".join(parts)
 
 
+def _generation_dir(name: str) -> str:
+    """New visible-contract datasets cannot target frozen historical names."""
+    import re
+
+    if not re.fullmatch(r"synthetic_visible_[a-z0-9_-]+", name):
+        raise ValueError("choose a new dataset name beginning synthetic_visible_")
+    return f"{V}/data/{name}"
+
+
+def _training_source_paths(train_files: str, val_files: str, *, geometry: bool = False):
+    if geometry:
+        raise ValueError("geometry conversion is not approved for current training bundles")
+
+    def paths(value, split):
+        tags = [tag.strip() for tag in value.split(",") if tag.strip()]
+        if len(set(tags)) != len(tags) or any(
+            not re.fullmatch(r"visible_[a-z0-9_-]+", tag) for tag in tags
+        ):
+            raise ValueError(
+                "choose distinct reviewed visible_* datasets; historical data is frozen"
+            )
+        return [f"{_generation_dir('synthetic_' + tag)}/{split}.jsonl" for tag in tags]
+
+    training = paths(train_files, "train")
+    if not training:
+        raise ValueError("explicit reviewed visible_* training datasets are required")
+    return training, paths(val_files, "val")
+
+
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
-def generate_data(n: int = 5000):
-    """Regenerate v0 (easy) + v1 (hard) and split them, exactly per the frozen
-    recipes. workers=8 matches the cpu reservation (os.cpu_count() in a container
-    reports the host's cores, which would oversubscribe the pool)."""
+def generate_data(n: int = 5000, prefix: str = "synthetic_visible_v1"):
+    """Create new easy/hard datasets with the current visible-target contract.
+
+    Existing directories are rejected. Historical recipes belong to their frozen
+    source revisions; these commands do not regenerate historical v0/v1 targets.
+    """
+    from pathlib import Path
+
     from unrender.data_gen.generate import generate
     from unrender.data_gen.split_dataset import split
 
-    for name, seed, hard in (
-        ("synthetic_v0", 1234, False),
-        ("synthetic_v1", 5678, True),
-    ):
-        out = f"{V}/data/{name}"
+    outputs = [_generation_dir(f"{prefix}_{profile}") for profile in ("easy", "hard")]
+    if any(Path(out).exists() and any(Path(out).iterdir()) for out in outputs):
+        raise ValueError("dataset already exists; choose a fresh prefix")
+    for out, seed, hard in zip(outputs, (1234, 5678), (False, True), strict=True):
         generate(n=n, out=out, base_seed=seed, hard=hard, workers=8)
         split(out=out, val_size=500, test_size=1000)
     VOL.commit()
 
 
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=4 * 3600)
-def generate_data_v2(n: int = 20000, seed: int = 9012):
-    """synthetic_v2 (FRONTIER_PLAN P1): magnitudes to 1e9, real-world axis formats,
-    continuous year x-axes, themes; 20k charts by default (data scale is the moat
-    and CPU is cheap). Rows bake EXTRACTION_PROMPT (v1) for now — switch to the V2
-    prompt only when ALL compared arms are re-run on it (comparability rule)."""
-    from pathlib import Path
+def generate_data_v2(
+    n: int = 20000, seed: int = 9012, dataset: str = "synthetic_visible_v1_varied"
+):
+    """Create a fresh varied-profile dataset; never modify frozen synthetic_v2.
 
+    generation.json and split.json bind local completion and artifact bytes.
+    VOL.commit publishes them; neither local fsync nor these receipts alone
+    promises checkpoint survival before that volume commit.
+    """
     from unrender.data_gen.generate import generate
     from unrender.data_gen.split_dataset import split
 
-    out = f"{V}/data/synthetic_v2"
-    # Completion sentinel: removed FIRST so an interrupted regen can't be mistaken
-    # for a finished one, written LAST so its presence proves the whole
-    # gen+split+commit ran. This is how a detached run (immune to the client/
-    # session dying) is verified afterwards — the recurring local-upload failure
-    # mode was session teardown, and server-side --detach + this sentinel sidesteps
-    # it entirely (no 6GB upload).
-    ready = Path(out) / "READY.json"
-    ready.unlink(missing_ok=True)
-    generate(n=n, out=out, base_seed=seed, hard=False, v2=True, workers=8)
+    out = _generation_dir(dataset)
+    generate(n=n, out=out, base_seed=seed, v2=True, workers=8)
     split(out=out, val_size=500, test_size=1000)
-    n_img = len(list((Path(out) / "images").glob("*.png")))
-    import json as _json
-
-    ready.write_text(_json.dumps({"n": n, "seed": seed, "images": n_img, "v2_fixed": True}))
     VOL.commit()
-    print(f"gen_v2 DONE: {n_img} images + splits + READY.json committed to {out}")
+    print(f"Committed generation and split receipts to {out}; visual review remains required")
 
 
-@app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
-def gen_geometry_data(train_files: str = "v1,v0"):
-    """Build the geometry-supervision training targets (train.geom.jsonl) from the
-    existing train splits on the Volume — CPU, ~$0.3. Regenerates each chart's spec
-    from its seed, captures exact renderer geometry, writes the compact geometry
-    target (verified against the stored GT). Run once before the geometry train."""
-    from unrender.train.geometry_data import build_geometry_split
-
-    seeds = {"v0": 1234, "v1": 5678}
-    for t in (s.strip() for s in train_files.split(",")):
-        build_geometry_split(
-            f"{V}/data/synthetic_{t}/train.jsonl",
-            f"{V}/data/synthetic_{t}/train.geom.jsonl",
-            base_seed=seeds[t],
-            hard=(t == "v1"),
-        )
-    VOL.commit()
-
-
-@app.function(image=train_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=3600)
+@app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=3600)
 def preflight(
-    train_files: str = "v2,v1,v0",
-    val_files: str = "v2,v1,v0",
+    train_files: str = "",
+    val_files: str = "",
     batch_size: int = 2,
     grad_accum: int = 4,
     epochs: float = 1.0,
+    max_steps: int = 0,
     labelfree_weight: float = 1.5,
-    verify_all: str = "",
+    hbar_weight: float = 1.0,
+    type_weights: str = "",
 ):
-    """$0.02 insurance before a multi-hour train: verify ON THE VOLUME that
-    (1) every split file exists and parses, (2) every referenced image exists,
-    (3) images decode (ALL of `verify_all`'s sets — they went through
-    tar/upload/untar — plus a sample of the rest), (4) the longest targets fit
-    the 4096-token budget with room for image tokens, and (5) print the step/
-    time/cost estimate for the planned run. Fails loudly on any problem."""
-    import json
-    from pathlib import Path
+    """CPU source-review and decode gate. Not a tokenizer, GPU or cost benchmark."""
+    import math
 
     from PIL import Image
 
-    def rows_of(tag, fname):
-        p = Path(f"{V}/data/synthetic_{tag}/{fname}")
-        assert p.exists(), f"MISSING split: {p}"
-        return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+    from unrender.data_gen.provenance import read_split
+    from unrender.data_gen.review import require_training_sources
+    from unrender.io_utils import resolve_image
+    from unrender.train.sft_lora import _parse_type_weights, load_records
 
-    def img_path(r):
-        p = r["images"][0]
-        return p if Path(p).exists() else f"{V}/{p}"
-
-    tags = [t.strip() for t in train_files.split(",")]
-    n_records = 0
-    longest = []  # (len, target_text)
-    for tag in tags:
-        rows = rows_of(tag, "train.jsonl")
-        missing = [img_path(r) for r in rows if not Path(img_path(r)).exists()]
-        assert not missing, f"{tag}: {len(missing)} missing images, e.g. {missing[:3]}"
-        lf = sum(1 for r in rows if not (r.get("meta") or {}).get("labels_shown", True))
-        n_records += len(rows) + int(lf * (labelfree_weight - 1.0))
-        for r in rows:
-            t = r["messages"][1]["content"]
-            longest.append((len(t), t))
-        longest = sorted(longest, key=lambda x: -x[0])[:30]
-        # decode check, PARALLEL (a serial 20k-image pass over the Volume ran
-        # >30min and died to a client blip): full pass for `verify_all` sets,
-        # a spread sample for the rest. Full-set verification of fresh data
-        # should happen LOCALLY before upload; here it's transfer insurance.
-        import multiprocessing.dummy as mpd  # threads: PIL verify is I/O-bound here
-
-        check = rows if tag in verify_all.split(",") else rows[:: max(1, len(rows) // 200)]
-
-        def _verify(r):
-            try:
-                with Image.open(img_path(r)) as im:
-                    im.verify()
-                return None
-            except Exception as e:  # noqa: BLE001
-                return (img_path(r), str(e))
-
-        with mpd.Pool(16) as pool:
-            bad = [b for b in pool.map(_verify, check) if b]
-        assert not bad, f"{tag}: {len(bad)} corrupt images, e.g. {bad[:3]}"
-        print(f"  {tag}: {len(rows)} rows, images ok ({len(check)} decoded), label-free {lf}")
-    for tag in (t.strip() for t in val_files.split(",") if t.strip()):
-        assert Path(f"{V}/data/synthetic_{tag}/val.jsonl").exists(), f"MISSING val for {tag}"
-
-    # Token budget: prompt + longest target must leave headroom for image tokens
-    # under sft_lora's max_seq_length=4096. Use the merged fair model's processor
-    # from the Volume (no network).
-    from transformers import AutoTokenizer
-
-    tok = AutoTokenizer.from_pretrained(
-        f"{V}/runs/qwen3vl4b-table-fair/merged", trust_remote_code=True
+    paths, val_paths = _training_source_paths(train_files, val_files)
+    reviews = require_training_sources(paths, val_paths, V)
+    if (
+        batch_size <= 0
+        or grad_accum <= 0
+        or not math.isfinite(epochs)
+        or epochs <= 0
+        or max_steps < 0
+    ):
+        raise ValueError("positive finite training schedule values are required")
+    for path in paths + val_paths:
+        for row in read_split(path):
+            with Image.open(resolve_image(row["images"][0], path)) as image:
+                image.verify()
+    records = load_records(
+        paths,
+        V,
+        labelfree_weight,
+        3407,
+        hbar_weight=hbar_weight,
+        type_weights=_parse_type_weights(type_weights),
     )
-    prompt_len = len(tok(rows_of(tags[0], "train.jsonl")[0]["messages"][0]["content"]).input_ids)
-    worst = max(len(tok(t).input_ids) for _, t in longest)
-    budget = 4096 - prompt_len - worst
-    print(
-        f"  token budget: prompt={prompt_len} + worst_target={worst} "
-        f"-> {budget} left for image tokens"
+    steps = max_steps or math.ceil(
+        math.ceil(math.ceil(len(records) / batch_size) / grad_accum) * epochs
     )
-    assert budget >= 900, (
-        f"longest target leaves only {budget} tokens for the image — raise max_seq_length"
-    )
-
-    steps = int(n_records / (batch_size * grad_accum) * epochs)
-    for gpu, sps, rate in (("L4", 11.0, 0.80), ("A100", 3.7, 2.10)):
-        h = steps * sps / 3600
-        print(f"  estimate {gpu}: ~{steps} steps ≈ {h:.1f}h train ≈ ${h * rate:.0f} (+evals)")
-    print(f"PREFLIGHT PASS: ~{n_records} records, ~{steps} steps")
-    return {"records": n_records, "steps": steps}
+    return {
+        "source_reviews": reviews,
+        "records": len(records),
+        "estimated_optimizer_steps": steps,
+        "limits": "Source gate only; actual collator tokens, model recipe, resume identity, "
+        "task-quality checkpoint selection and calibrated compute remain unverified.",
+    }
 
 
 @app.function(image=train_image, volumes={V: VOL}, cpu=2.0, memory=4096, timeout=1800)
-def fetch_real_data(dirname: str = "real_v0"):
-    """Source the REAL-chart transfer eval INSIDE Modal — the dev sandbox has no
-    egress, but a Modal container does. Downloads each curated FRED/OWID chart PNG
-    plus its OFFICIAL data CSV, reads ground truth straight from the CSV (never
-    estimated off the pixels), and writes images + a test.jsonl (with /vol-absolute
-    image paths) to {V}/data/<dirname>/. Then eval with `--data <dirname>`. CPU/~free.
-    See data/real_v0/README.md."""
-    import json
-    import urllib.request
+def fetch_real_data(dirname: str):
+    """Collect unreviewed sources in a NEW directory; never writes an eval split."""
     from pathlib import Path
 
-    from unrender.data_gen.split_dataset import _row
-    from unrender.eval.build_real_set import label_to_chartdata
+    from unrender.eval.fetch_real_set import fetch
 
-    # OWID only: FRED is unreachable from Modal egress (DNS fails / datacenter IPs
-    # time out). The local tool (unrender.eval.fetch_real_set) still does FRED for a
-    # machine that can reach it; here we use OWID, which resolves and serves cleanly.
-    from unrender.eval.fetch_real_set import (
-        _OWID_COUNTRY,
-        _OWID_HI,
-        _OWID_LO,
-        OWID,
-        _is_png,
-        _owid_urls,
-        make_line_label,
-        parse_owid_csv,
-    )
-    from unrender.schema.chart_schema import canonical_json
-
-    root = Path(f"{V}/data/{dirname}")
-    imgs = root / "images"
-    imgs.mkdir(parents=True, exist_ok=True)
-
-    def get(url: str) -> bytes:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (unrender real-set)"})
-        with urllib.request.urlopen(req, timeout=45) as r:
-            return r.read()
-
-    def add(out_id, png_url, csv_url, parse, title, ylab, yunit, sname, source, rows):
-        png = get(png_url)
-        if not _is_png(png):  # bad slug/param => an HTML error page; never write a fake chart
-            print(f"  ! {out_id}: non-PNG ({len(png)}B) from {png_url} — skip")
-            return
-        pts = parse(get(csv_url).decode("utf-8", "replace"))
-        if len(pts) < 3:
-            print(f"  ! {out_id}: only {len(pts)} points — skip ({csv_url})")
-            return
-        label = make_line_label(out_id, title, ylab, yunit, sname, pts, source)
-        gt = label_to_chartdata(label, out_id)  # validate; fail loud on a bad value
-        (imgs / f"{out_id}.png").write_bytes(png)
-        meta = {"labels_shown": False, "chart_type": "line", "augmented": False, "source": source}
-        rows.append(_row(f"{root}/images/{out_id}.png", canonical_json(gt), meta))
-        print(f"  ✓ {out_id}: {len(pts)} pts  ({title})")
-
-    rows = []
-    print(f"OWID ({len(OWID)}):")
-    for out_id, slug, title, ylab, yunit in OWID:
-        png_url, csv_url = _owid_urls(slug)
-        src = (
-            f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
-            f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}"
-        )
-        try:
-            add(out_id, png_url, csv_url, parse_owid_csv, title, ylab, yunit, title, src, rows)
-        except Exception as e:  # noqa: BLE001 — one bad source shouldn't abort the batch
-            print(f"  ! {out_id}: {type(e).__name__}: {e}")
-
-    (root / "test.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    VOL.commit()
-    print(f"\nfetched {len(rows)}/{len(OWID)} real charts -> {root}/test.jsonl")
-    return len(rows)
+    if not dirname or Path(dirname).name != dirname or dirname in {".", ".."}:
+        raise ValueError("dirname must be a new dataset directory name")
+    try:
+        return fetch(f"{V}/data/{dirname}", sources="owid")
+    finally:
+        # Retain pending/failed attempts even if collection was interrupted.
+        VOL.commit()
 
 
 @app.function(
@@ -745,11 +629,10 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     base/LoRA arms, so the number is directly comparable. Results -> Volume."""
     import subprocess
 
-    from unrender.eval.run_baselines import run
     from unrender.prompts import EXTRACTION_PROMPT
 
     out_dir = f"{V}/outputs/eval_{dirname}__gemini"
-    pred = run(
+    pred = _cloud_evaluation(
         provider="gemini",
         model=model,
         data=f"{V}/data/{dirname}/test.jsonl",
@@ -796,7 +679,7 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
     from unrender.eval.providers import hf_vlm_provider
     from unrender.prompts import EXTRACTION_PROMPT
     from unrender.schema.json_to_csv import chart_to_csv
-    from unrender.schema.validate import parse_chart_json
+    from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
     started = time.perf_counter()
     timings = {}
@@ -846,6 +729,10 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
             "json": pred.model_dump() if pred else None,
             "csv": chart_to_csv(pred) if pred else None,
             "parse_errors": errs,
+            "parser_version": PARSER_VERSION,
+            "finish_reason": timings["finish_reason"],
+            "output_tokens": timings["output_tokens"],
+            "max_output_tokens": timings["max_output_tokens"],
             "provider_release": provider_release,
         }
         succeeded = True
@@ -941,9 +828,10 @@ def publish_hf(
     timeout=24 * 3600,  # train (~4k steps on the v2 mix) + the chained evals
 )
 def train_model(
-    train_files: str = "v1,v0",
+    train_files: str = "",
     out_name: str = "qwen3vl4b-lora",
     base: str = "Qwen/Qwen3-VL-4B-Instruct",
+    base_revision: str = "",
     labelfree_weight: float = 1.5,
     epochs: float = 2.0,
     max_steps: int = 0,
@@ -959,26 +847,26 @@ def train_model(
     type_weights: str = "",
     eval_after: str = "",
     common300_ids=None,
+    expected_source_reviews: dict | None = None,
 ):
+    from unrender.data_gen.review import require_training_sources
     from unrender.train.sft_lora import train
 
-    # geometry=True trains on the geometry-program targets (run gen_geom first);
-    # sft_lora is target-agnostic (feeds messages[].content straight through), so
-    # only the filename changes. hbar_weight oversamples horizontal_bar;
-    # numeric_loss_weight up-weights digit-token loss (the precision levers).
-    fname = "train.geom.jsonl" if geometry else "train.jsonl"
-    paths = [f"{V}/data/synthetic_{t.strip()}/{fname}" for t in train_files.split(",")]
-    # val_files (e.g. "v1,v0") enables best-checkpoint selection on eval_loss — the
-    # fairness fix for the table arms. "" disables it (smoke, or a deliberate
-    # final-ckpt run). val mirrors the train fname (val.jsonl / val.geom.jsonl), so
-    # geometry+val would need a val.geom.jsonl (gen_geom only builds train.geom.jsonl)
-    # — table arms use the committed val.jsonl that's already on the Volume.
-    val_fname = fname.replace("train", "val", 1)
-    val_paths = (
-        [f"{V}/data/synthetic_{t.strip()}/{val_fname}" for t in val_files.split(",") if t.strip()]
-        if val_files
-        else None
-    )
+    paths, val_paths = _training_source_paths(train_files, val_files, geometry=geometry)
+    observed = require_training_sources(paths, val_paths, V)
+    if expected_source_reviews is None or observed != expected_source_reviews:
+        raise ValueError("source review changed or CPU preflight is missing")
+    from unrender.train.recipe import require_revision
+
+    require_revision(base_revision)
+    if not out_name or Path(out_name).name != out_name or out_name in {".", ".."}:
+        raise ValueError("training output must be a run directory name")
+    owners = modal.Dict.from_name("unrender-training-owners", create_if_missing=True)
+    claim = {"token": uuid.uuid4().hex, "call_id": modal.current_function_call_id()}
+    if not owners.put(out_name, claim, skip_if_exists=True):
+        raise ValueError("training run is owned; verify the prior call before explicit recovery")
+    # A crash/failure intentionally retains ownership. Never steal a stale-looking
+    # claim: an operator must confirm the recorded call is terminal first.
     train(
         train_paths=paths,
         val_paths=val_paths,
@@ -986,6 +874,8 @@ def train_model(
         n_evals=n_evals,
         out=f"{V}/runs/{out_name}",
         base=base,
+        base_revision=base_revision,
+        checkpoint_commit=VOL.commit,
         data_root=V,
         labelfree_weight=labelfree_weight,
         hbar_weight=hbar_weight,
@@ -998,6 +888,9 @@ def train_model(
         lora_r=lora_r,
     )
     VOL.commit()
+    if owners.get(out_name) != claim:
+        raise ValueError("training ownership changed unexpectedly")
+    owners.pop(out_name)
 
     # One-shot chain (eval_after="real_v0,common300,v2:300"): run the evals in
     # THIS container right after the merge commits — no human needed between
@@ -1026,6 +919,36 @@ def train_model(
     VOL.commit()
 
 
+def _cloud_evaluation(**kwargs):
+    """One distributed writer; persist every dispatch before buying inference.
+
+    Failed calls retain their claim. An operator must prove the former Modal
+    call terminal before clearing that claim and resuming only pending rows.
+    """
+    import uuid
+    from pathlib import Path
+
+    from unrender.eval.run_baselines import run
+
+    directory = Path(kwargs["out"])
+    if not directory.is_absolute() or not directory.is_relative_to(Path(V) / "outputs"):
+        raise ValueError("evaluation output must be below the Volume outputs directory")
+    if ".." in directory.parts:
+        raise ValueError("evaluation output cannot traverse directories")
+    owners = modal.Dict.from_name("unrender-evaluation-owners", create_if_missing=True)
+    key = directory.as_posix()
+    claim = {"token": uuid.uuid4().hex, "call_id": modal.current_function_call_id()}
+    if not owners.put(key, claim, skip_if_exists=True):
+        raise ValueError("evaluation output already owned; inspect its prior call before recovery")
+    VOL.reload()
+    prediction = run(**kwargs, persist=VOL.commit)
+    VOL.commit()
+    if owners.get(key) != claim:
+        raise ValueError("evaluation ownership changed unexpectedly")
+    owners.pop(key)
+    return prediction
+
+
 def _eval_impl(
     model_path: str,
     data: str = "v1",
@@ -1045,7 +968,6 @@ def _eval_impl(
     import subprocess
     from pathlib import Path
 
-    from unrender.eval.run_baselines import run
     from unrender.prompts import EXTRACTION_PROMPT, GEOMETRY_PROMPT
 
     prompt = GEOMETRY_PROMPT if decode == "geometry" else EXTRACTION_PROMPT
@@ -1063,7 +985,7 @@ def _eval_impl(
     # "v0"/"v1" -> the synthetic splits; "real_*" -> a hand-labeled real-chart set
     # (data/real_v0, uploaded to the Volume) for the transfer eval. See data/real_v0/README.md.
     data_sub = data if data.startswith("real") else f"synthetic_{data}"
-    pred = run(
+    pred = _cloud_evaluation(
         provider="hf",
         model=mp,
         data=f"{V}/data/{data_sub}/test.jsonl",
@@ -1174,7 +1096,6 @@ def sweep_model(
     import random
     from pathlib import Path
 
-    from unrender.eval.run_baselines import run
     from unrender.eval.score import row_status, score_rows
     from unrender.io_utils import read_jsonl
 
@@ -1208,7 +1129,7 @@ def sweep_model(
 
     data_path = f"{V}/data/synthetic_{data}/test.jsonl"
     for rp in [float(x) for x in penalties.split(",") if x.strip()]:
-        pred = run(
+        pred = _cloud_evaluation(
             provider="hf",
             model=mp,
             data=data_path,
@@ -1228,7 +1149,11 @@ def sweep_model(
     print(f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict")
     for r in results:
         ok = r["invalid_pct"] < 1.0 and (valid_floor - r["valid_cell"]) <= 1.0
-        verdict = "" if r["arm"] == "greedy" else ("ADOPT" if ok else "reject")
+        verdict = (
+            ""
+            if r["arm"] == "greedy"
+            else ("development candidate; final study required" if ok else "reject")
+        )
         print(
             f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%"
             f"{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}"
@@ -1249,12 +1174,12 @@ def probe_model(model_path: str):
     for name, fn in (
         (
             "AutoProcessor",
-            lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=True),
+            lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=False),
         ),
         (
             "AutoModel",
             lambda: AutoModelForImageTextToText.from_pretrained(
-                mp, torch_dtype="auto", device_map="auto", trust_remote_code=True
+                mp, dtype="auto", device_map="auto", trust_remote_code=False, use_safetensors=True
             ),
         ),
     ):
@@ -1303,73 +1228,59 @@ def probe(model: str = "runs/smoke/merged"):
 
 
 @app.local_entrypoint()
-def gen(n: int = 5000):
-    generate_data.remote(n=n)
+def gen(n: int = 5000, prefix: str = "synthetic_visible_v1"):
+    generate_data.remote(n=n, prefix=prefix)
 
 
 @app.local_entrypoint()
-def check(
-    train_files: str = "v2,v1,v0",
-    val_files: str = "v2,v1,v0",
-    epochs: float = 1.0,
-    verify_all: str = "v2",
-):
-    """Pre-train preflight (CPU, ~$0.02): data integrity + token budget + cost
-    estimate for the one-shot. Run this, read PASS, then launch ::train.
-    `verify_all` sets get EVERY image decoded (default v2 — the freshest set);
-    others are sampled. Pass verify_all="" for the fast sampled-only pass."""
-    print(
-        preflight.remote(
-            train_files=train_files, val_files=val_files, epochs=epochs, verify_all=verify_all
-        )
-    )
+def check(train_files: str = "", val_files: str = "", epochs: float = 1.0):
+    """Check explicit reviewed visible_* source bundles on CPU before training."""
+    _training_source_paths(train_files, val_files)
+    print(preflight.remote(train_files=train_files, val_files=val_files, epochs=epochs))
 
 
 @app.local_entrypoint()
-def gen_v2(n: int = 20000, seed: int = 9012):
-    """Regenerate synthetic_v2 ON the Volume (CPU, ~$1-2, ~5-8 min). Use with
-    `modal run --detach` — .spawn() returns immediately and the work runs
-    server-side, so it CANNOT be killed by the client/session dying (the failure
-    mode that killed the 6GB upload three times). Verify afterward: a committed
-    data/synthetic_v2/READY.json means it finished. Then (GATED, GPU):
-        modal run --detach modal_train.py::train --train-files v2,v1,v0 --out-name qwen3vl4b-v2
+def gen_v2(n: int = 20000, seed: int = 9012, dataset: str = "synthetic_visible_v1_varied"):
+    """Create a new varied-profile dataset on the Volume with --detach.
+
+    Verify generation.json, split.json and their artifact hashes after the call
+    completes. These are generation receipts, not final annotation approval.
     """
-    call = generate_data_v2.spawn(n=n, seed=seed)
+    call = generate_data_v2.spawn(n=n, seed=seed, dataset=dataset)
     print(
-        f"submitted gen_v2 (FunctionCall {call.object_id}); returns now — use --detach. "
-        f"Done when data/synthetic_v2/READY.json exists on the Volume."
+        f"submitted generation (FunctionCall {call.object_id}); use --detach. "
+        f"Inspect data/{dataset}/generation.json and split.json after completion."
     )
 
 
 @app.local_entrypoint()
-def gen_geom(train_files: str = "v1,v0"):
-    """Build geometry-supervision targets on the Volume (CPU, ~$0.3). Run once
-    before `train ... --geometry`."""
-    gen_geometry_data.remote(train_files=train_files)
+def smoke(dataset: str = "", base_revision: str = ""):
+    """Explicit reviewed dataset: CPU gate, then 30 training steps and five evals.
 
+    This is a paid integration run, not a quality or compute-cost benchmark.
+    """
+    _training_source_paths(dataset, dataset)
+    from unrender.train.recipe import require_revision
 
-@app.local_entrypoint()
-def smoke():
-    """End-to-end insurance before spending real hours: 30 train steps WITH the
-    val/best-checkpoint path on (val-size 64 so it's cheap), save + merge, then
-    eval 5 images through the hf provider (proves the merged = best-checkpoint
-    model loads back). Exercising val here means the first time the eval +
-    load_best_model_at_end code runs is NOT the multi-hour paid run. Total ~$0.5,
-    mostly the one-time base-model download."""
+    require_revision(base_revision)
+    checked = preflight.remote(train_files=dataset, val_files=dataset, max_steps=30)
     train_model.remote(
-        train_files="v1", out_name="smoke", max_steps=30, val_files="v1", val_size=64
+        train_files=dataset,
+        out_name="smoke",
+        base_revision=base_revision,
+        max_steps=30,
+        val_files=dataset,
+        val_size=64,
+        expected_source_reviews=checked["source_reviews"],
     )
-    eval_model.remote(model_path="runs/smoke/merged", data="v1", limit=5)
+    eval_model.remote(model_path="runs/smoke/merged", data=dataset, limit=5)
 
 
 @app.local_entrypoint()
-def fetch_real(dirname: str = "real_v0"):
-    """Build the real-chart transfer eval on the Volume (FRED/OWID downloaded inside
-    Modal, GT read from the official CSVs). Blocking — CPU, ~free, ~1-2 min. Then:
-        modal run modal_train.py::evaluate --model runs/qwen3vl4b-lora/merged --data real_v0
-    """
+def fetch_real(dirname: str):
+    """Collect source-backed DRAFTS into a new Volume directory; review before publication."""
     n = fetch_real_data.remote(dirname)
-    print(f"done: {n} real charts on the Volume at data/{dirname}/ (eval with --data {dirname})")
+    print(f"Collected {n} draft charts at data/{dirname}; no evaluation split published.")
 
 
 @app.local_entrypoint()
@@ -1414,9 +1325,10 @@ def publish(repo_id: str, model: str = "runs/qwen3vl4b-table-fair/merged", priva
 
 @app.local_entrypoint()
 def train(
-    train_files: str = "v1,v0",
+    train_files: str = "",
     out_name: str = "qwen3vl4b-lora",
     base: str = "Qwen/Qwen3-VL-4B-Instruct",
+    base_revision: str = "",
     labelfree_weight: float = 1.5,
     epochs: float = 2.0,
     max_steps: int = 0,
@@ -1426,41 +1338,38 @@ def train(
     geometry: bool = False,
     hbar_weight: float = 1.0,
     numeric_loss_weight: float = 1.0,
-    val_files: str = "v1,v0",
+    val_files: str = "",
     n_evals: int = 5,
     type_weights: str = "",
     eval_after: str = "",
 ):
-    """Defaults to the FAIR protocol: `--val-files v1,v0` selects the best
-    checkpoint on val eval_loss (set `--val-files ""` for a final-ckpt run).
+    """Train only explicit reviewed visible_* bundles after the CPU source gate.
 
-    THE ONE-SHOT (P2, refine-logs/FRONTIER_PLAN.md — train on v2 then auto-eval
-    real_v0 + common300 + 300 v2-test rows in the same container, ~$11-13 total):
-        UNRENDER_GPU=A100 modal run --detach modal_train.py::train \\
-            --train-files v2,v1,v0 --val-files v2,v1,v0 --epochs 1.0 \\
-            --out-name qwen3vl4b-v2 --eval-after real_v0,common300,v2:300
-    Crash-safe: a relaunch of the SAME command resumes from the latest
-    checkpoint (sft_lora._latest_checkpoint) and finished evals resume too.
+    Upload the whole bundle, including review/, and use --detach. Passing this
+    gate is not approval of the unpinned research runtime or resume behavior;
+    those and generated task-quality checkpoint selection remain open work.
+    """
+    _training_source_paths(train_files, val_files, geometry=geometry)
+    from unrender.train.recipe import require_revision
 
-    The numeric-loss-on-table pivot (refine-logs/NUMERIC_TABLE_PLAN.md):
-        modal run --detach modal_train.py::train \
-            --out-name qwen3vl4b-table-fair --numeric-loss-weight 1
-        modal run --detach modal_train.py::train \
-            --out-name qwen3vl4b-table-numloss --numeric-loss-weight 3
-
-    `--geometry` trains the geometry-supervision arm on train.geom.jsonl (run
-    `gen_geom` first; geometry+val needs a val.geom.jsonl). Precision levers:
-    `--numeric-loss-weight 3` up-weights digit-token loss; `--hbar-weight 3`
-    oversamples horizontal_bar (the worst Stage-A slice).
-
-    Uses .spawn() (fire-and-forget): the client returns immediately so a dropped
-    laptop/SSH/stream can't tear down a multi-hour run. ALWAYS invoke with
-    `modal run --detach ...` so the app persists after this returns; results land
-    on the Volume regardless of the client. Logs: `modal app logs <id>`."""
+    require_revision(base_revision)
+    checked = preflight.remote(
+        train_files=train_files,
+        val_files=val_files,
+        epochs=epochs,
+        max_steps=max_steps,
+        batch_size=batch_size,
+        grad_accum=grad_accum,
+        labelfree_weight=labelfree_weight,
+        hbar_weight=hbar_weight,
+        type_weights=type_weights,
+    )
     call = train_model.spawn(
+        expected_source_reviews=checked["source_reviews"],
         train_files=train_files,
         out_name=out_name,
         base=base,
+        base_revision=base_revision,
         labelfree_weight=labelfree_weight,
         epochs=epochs,
         max_steps=max_steps,

@@ -1,0 +1,449 @@
+{
+  "contract": "real-v0-visual-audit-v1",
+  "review_date": "2026-09-18",
+  "reviewer": "Codex visual inspection; no second independent reviewer",
+  "status": "rejected_visual_metadata",
+  "original_dataset_sha256": "a12b7b51c9e248cbc7dad806357931a32edf72fe270d09ee8871d6864a0cac20",
+  "recovered_modal_dataset_sha256": "c1847638e0e66acb923f3ae86cadf2d4dab5b92fe2d86484e170885572b74306",
+  "local_modal_annotations_match": true,
+  "historical_image_binding": "Recovered current bytes at original paths; original predictions have no image hashes, so byte identity with historical inference inputs is unproven.",
+  "charts": [
+    {
+      "id": "owid_life_exp",
+      "image": "images/owid_life_exp.png",
+      "image_sha256": "9298585495cf17a55e731a690be0f56950be0816cfa22898afba60eafdf6ce43",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_life_exp.png",
+      "source_page": "https://ourworldindata.org/grapher/life-expectancy",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/life-expectancy.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "Riley (2005); Zijdeman et al. (2015); HMD (2025); UN WPP (2024)",
+      "original_target_sha256": "9914e401dd8fa669507449b84f924d53c5e55dfe2b8a173e2a1b1b3374226655",
+      "original_metadata": {
+        "title": "Life Expectancy, United States",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "Life expectancy",
+          "unit": "years"
+        }
+      },
+      "original_series_names": [
+        "Life Expectancy, United States"
+      ],
+      "observed": {
+        "title": "Life expectancy",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "years"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_population",
+      "image": "images/owid_population.png",
+      "image_sha256": "64c69de3a15c2c2dd3ae3d65088bc8db24cca88e9b438bd3a122d9ebbb95aefe",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_population.png",
+      "source_page": "https://ourworldindata.org/grapher/population",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/population.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "HYDE (2023); Gapminder (2022); UN WPP (2024)",
+      "original_target_sha256": "36a07229ff2d215f1155a5ac748c1c58476f9e925798186c90e8728c5f9714e6",
+      "original_metadata": {
+        "title": "Population, United States",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "Population",
+          "unit": "people"
+        }
+      },
+      "original_series_names": [
+        "Population, United States"
+      ],
+      "observed": {
+        "title": "Population, 2000 to 2023",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "million"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_gdp_pc",
+      "image": "images/owid_gdp_pc.png",
+      "image_sha256": "9bebf2f18f8c5371a76108835c74304334d7c7e37627dda3e9b72d23d590c09f",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_gdp_pc.png",
+      "source_page": "https://ourworldindata.org/grapher/gdp-per-capita-worldbank",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/gdp-per-capita-worldbank.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "Eurostat, OECD, IMF, and World Bank (2026)",
+      "original_target_sha256": "c1d16152ab2882eecb5bd806d40b852d4152c34145955347e32959573ccadb6a",
+      "original_metadata": {
+        "title": "GDP per Capita, United States",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "GDP per capita",
+          "unit": "international-$"
+        }
+      },
+      "original_series_names": [
+        "GDP per Capita, United States"
+      ],
+      "observed": {
+        "title": "GDP per capita",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "$",
+          "international-$ at 2021 prices"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_co2_pc",
+      "image": "images/owid_co2_pc.png",
+      "image_sha256": "fc226cc743941b06d27b355c7302936b0769c669ef4eed7410ea737093feb7b6",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_co2_pc.png",
+      "source_page": "https://ourworldindata.org/grapher/co-emissions-per-capita",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/co-emissions-per-capita.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "Global Carbon Budget (2025); Population based on various sources (2024)",
+      "original_target_sha256": "2a1480d3b1c39f9164e7f52a878abf3adf19e3355ef18c3ed9663a4e1c5494cd",
+      "original_metadata": {
+        "title": "CO2 Emissions per Capita, US",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "CO2 per capita",
+          "unit": "tonnes"
+        }
+      },
+      "original_series_names": [
+        "CO2 Emissions per Capita, US"
+      ],
+      "observed": {
+        "title": "CO₂ emissions per capita",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "t"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_internet",
+      "image": "images/owid_internet.png",
+      "image_sha256": "d1c94ab48c86c9732b5493fea4518177633e1627c919183dd8e6d59bd73fbf9b",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_internet.png",
+      "source_page": "https://ourworldindata.org/grapher/share-of-individuals-using-the-internet",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/share-of-individuals-using-the-internet.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "World Telecommunication/ICT Indicators Database - International Telecommunication Union (ITU), via World Bank (2026)",
+      "original_target_sha256": "3b2ea4323ac626a43747de6173ca41e0a48acd63e6bd5aecef1c029b9b591b2f",
+      "original_metadata": {
+        "title": "Internet Use, United States",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "Share using the Internet",
+          "unit": "%"
+        }
+      },
+      "original_series_names": [
+        "Internet Use, United States"
+      ],
+      "observed": {
+        "title": "Share of the population using the Internet",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "%"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_hdi",
+      "image": "images/owid_hdi.png",
+      "image_sha256": "d56c80c3badae0ba7fa265ada4466a69e21ed45697fc1c6deaf053392f7415eb",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_hdi.png",
+      "source_page": "https://ourworldindata.org/grapher/human-development-index",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/human-development-index.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "UNDP, Human Development Report (2025)",
+      "original_target_sha256": "0bf696337436bbbd765101a33e1a2804219a68a7bbfb4a8f0cb0f92521e2aa16",
+      "original_metadata": {
+        "title": "Human Development Index, US",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "HDI",
+          "unit": null
+        }
+      },
+      "original_series_names": [
+        "Human Development Index, US"
+      ],
+      "observed": {
+        "title": "Human Development Index",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_energy_pc",
+      "image": "images/owid_energy_pc.png",
+      "image_sha256": "20a253d10e5d66a9dca0896d5e07fa0fb5cad45cb7770d53a22f9b3e22b17cb5",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_energy_pc.png",
+      "source_page": "https://ourworldindata.org/grapher/energy-use-per-capita",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/energy-use-per-capita.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "U.S. Energy Information Administration (2026); Energy Institute - Statistical Review of World Energy (2025); Population based on various sources (2024)",
+      "original_target_sha256": "cd09b386d2b9fff58c9ca61e7f2c3813710e0bdf5e35633c997fcfd4d2379c9d",
+      "original_metadata": {
+        "title": "Energy Use per Capita, US",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "Energy per capita",
+          "unit": "kWh"
+        }
+      },
+      "original_series_names": [
+        "Energy Use per Capita, US"
+      ],
+      "observed": {
+        "title": "Energy use per person",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "kWh"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    },
+    {
+      "id": "owid_co2_total",
+      "image": "images/owid_co2_total.png",
+      "image_sha256": "1dc6ff6d8e1f4378704086c0e22182eaede0c96db661b20fc7ca95202aff0e03",
+      "dimensions": [
+        850,
+        600
+      ],
+      "recovered_from": "unrender-vol:data/real_v0/images/owid_co2_total.png",
+      "source_page": "https://ourworldindata.org/grapher/annual-co2-emissions-per-country",
+      "historical_fetch_url": "https://ourworldindata.org/grapher/annual-co2-emissions-per-country.png?country=~USA&time=2000..2023&tab=chart",
+      "visualization_credit": "Our World in Data, CC BY; original embedded attribution preserved",
+      "underlying_source_credit": "Global Carbon Budget (2025)",
+      "original_target_sha256": "ee13800f2d5a62b6d764e56641fb4b4332afbfa0955a99aebfa5fa7cc4b86cb0",
+      "original_metadata": {
+        "title": "Annual CO2 Emissions, US",
+        "x_axis": {
+          "label": "Year",
+          "unit": null
+        },
+        "y_axis": {
+          "label": "Annual CO2 emissions",
+          "unit": "tonnes"
+        }
+      },
+      "original_series_names": [
+        "Annual CO2 Emissions, US"
+      ],
+      "observed": {
+        "title": "Annual CO₂ emissions",
+        "series_names": [
+          "United States"
+        ],
+        "x_axis_label": null,
+        "y_axis_label": null,
+        "visible_unit_text": [
+          "billion t",
+          "t"
+        ],
+        "labels_shown": false,
+        "chart_type": "line"
+      },
+      "confirmed_defects": [
+        "title_does_not_match_image",
+        "series_name_does_not_match_image",
+        "x_axis_label_not_printed",
+        "y_axis_label_not_printed"
+      ],
+      "numeric_values_status": "source_csv_snapshot_not_retained; not independently revalidated",
+      "claim_eligibility": "rejected"
+    }
+  ],
+  "affected_saved_predictions": [
+    {
+      "artifact": "eval_real_v0__Qwen3-VL-4B-Instruct",
+      "sha256": "2b709f069870121cedd170362ed1432a42c0f82b7e923b0934469ef8235ec884",
+      "rows": 8,
+      "rows_using_defective_truth": 8
+    },
+    {
+      "artifact": "eval_real_v0__qwen3vl4b-lora",
+      "sha256": "f19608db54a485ec5ae65820532864773ce1d2a35e4738a05f8eada9dce980bc",
+      "rows": 8,
+      "rows_using_defective_truth": 8
+    },
+    {
+      "artifact": "eval_real_v0__gemini",
+      "sha256": "ded049dd0cb62031d5f7e6eae4ad6f4723c51c9e92efa853eb48f573546c50a7",
+      "rows": 8,
+      "rows_using_defective_truth": 8
+    }
+  ],
+  "tolerance_sensitivity": [
+    {
+      "id": "owid_life_exp",
+      "constant_guess": 78.0,
+      "within_5pct": 24,
+      "total": 24,
+      "meaning": "value-only tolerance sensitivity on original targets, not model performance"
+    },
+    {
+      "id": "owid_hdi",
+      "constant_guess": 0.9,
+      "within_5pct": 24,
+      "total": 24,
+      "meaning": "value-only tolerance sensitivity on original targets, not model performance"
+    }
+  ],
+  "replacement_holdout_required": true
+}

@@ -1,0 +1,8 @@
+# CPU contract checks only; CUDA training uses requirements-train.lock.
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu
+transformers==5.17.0
+accelerate==1.15.0
+pytest==9.1.1
+pillow==12.3.0
+peft==0.21.0

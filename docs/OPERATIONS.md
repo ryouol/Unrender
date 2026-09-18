@@ -17,7 +17,7 @@ The adapter's `UNRENDER_PROVIDER_TIMEOUT_SECONDS` (default 240, allowed 1–240)
 
 The Dockerfile pins Python 3.11.16 slim-trixie by immutable multi-architecture manifest digest. Dependency upgrades must deliberately update both the readable tag and digest, then rerun the image build and scanner in CI.
 
-`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the embedded worker thread. Readiness consumes the global request-capacity bucket; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider. Global exhaustion can also reject readiness, so investigate request pressure before treating it as a storage failure.
+`/health/live` proves the process responds. `/health/ready` verifies the database schema, a write/delete probe on the private volume, and the configured worker pool. Readiness consumes the global request-capacity bucket; `/health/live` stays cheap and unmetered. The container probe supplies the configured public Host header so production TrustedHost policy remains intact. Neither health route spends money or calls the external inference provider. Global exhaustion can also reject readiness, so investigate request pressure before treating it as a storage failure.
 
 Request limits use global capacity plus validated tenant/account quotas. They do
 not trust forwarding headers or depend on ASGI peer addresses. Defaults and the
@@ -69,14 +69,15 @@ Missing current-attempt start evidence also requires attention.
 
 Reads share a one-minute cache, a nonblocking lock and a two-second SQLite VM
 budget. Contention, unavailable storage or a failed scan returns attention.
-`render.yaml` defines an hourly `unrender-monitor` cron at minute 17 UTC using
-`timeout --kill-after=5s 100s unrender-operations-check`. It retries twice, 30 seconds
-apart, then exits nonzero so Render can send a failure notification. The cron has
-a $1/month minimum and requires no app/Modal credentials or customer email setup.
-The probe URL is the current `https://unrender.onrender.com` origin; change it when
-moving to a custom domain or another deployment. Hourly cadence plus caching can
-delay detection by about an hour and can miss an incident that starts and ends
-between checks. Planned maintenance can cause a notification.
+The readiness branch configures `unrender-monitor` every two minutes using
+`timeout --kill-after=5s 55s unrender-operations-check`, with two retries ten
+seconds apart. Including the one-minute health cache, the nominal detection
+budget is under four minutes, before scheduler delay and notification delivery.
+This is a proposed configuration, not a measured live guarantee. Deploy it and
+measure failure detection/delivery before claiming the five-minute objective.
+The probe URL remains `https://unrender.onrender.com`; change it with the origin.
+The last measured production monitor below was hourly; these local edits have
+not changed that deployed service. Planned maintenance can cause notifications.
 
 The monitor is `crn-dahl5uh594qs73ffkbk0` in UNRENDER's Production environment,
 built from `02597a6`. Its first manual run started at 01:03:00 UTC on September 11,
@@ -109,7 +110,7 @@ failure receipts, not a newly induced outage or proof of every alert type.
 [Render's supported platform notifications](https://render.com/docs/notifications)
 include failed builds/deploys, unhealthy running services and persistent-disk use
 above 80%. This covers platform health/capacity events without application SMTP.
-Those native events do not inspect application data. The hourly cron above adds
+Those native events do not inspect application data. The operational cron adds
 stale-backup, queue, ledger and provider checks through a failed cron execution.
 Recheck both service overrides
 after service recreation; the current Blueprint specification does not document
@@ -158,7 +159,7 @@ Pause uploads, let housekeeping drain the deletion outbox, expand the volume, an
 
 ## Rollback
 
-Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. This release uses schema version 14 with crash-atomic, cross-process-serialized forward migrations from versions 1–13 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 added account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Version 8 gives every storage reservation an opaque owner token: resize renews only that live lease, publication must atomically consume the matching unexpired reservation, and deletion holds the exclusive operational lock through reference check and file removal. Version 9 adds verified-email state and expiring, hashed account challenges while preserving existing accounts. Version 10 separates account activation from mailbox verification and records challenge delivery provenance. It preserves legacy account/session access, clears legacy mailbox flags that previously also represented operator activation, and requires fresh password-confirmed email verification before future email recovery. Schema 11 adds Google identities and recent authentication; schema 12 adds private projects and chart names; schema 13 binds Google login completion to its initiating browser; schema 14 indexes owner and chart lookups used by bulk deletion. Existing accounts, credits, charts, and sessions are preserved. Reverting to an image that supports only an earlier schema requires restoring its coordinated recovery set into a fresh data directory; do not run it over the upgraded database. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
+Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. The readiness branch uses schema version 15 with crash-atomic, cross-process-serialized forward migrations from versions 1–14 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 added account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Version 8 gives every storage reservation an opaque owner token: resize renews only that live lease, publication must atomically consume the matching unexpired reservation, and deletion holds the exclusive operational lock through reference check and file removal. Version 9 adds verified-email state and expiring, hashed account challenges while preserving existing accounts. Version 10 separates account activation from mailbox verification and records challenge delivery provenance. It preserves legacy account/session access, clears legacy mailbox flags that previously also represented operator activation, and requires fresh password-confirmed email verification before future email recovery. Schema 11 adds Google identities and recent authentication; schema 12 adds private projects and chart names; schema 13 binds Google login completion to its initiating browser; schema 14 indexes owner and chart lookups used by bulk deletion. Schema 15 adds bounded immutable extraction receipts, marking older versions as missing evidence rather than backfilling claims; see [the extraction contract](API.md#export-and-extraction-evidence-contract). Drain workers before this upgrade because old result-capacity reservations lack the new receipt allowance. Existing accounts, credits, charts, and sessions are preserved. Reverting to an image that supports only an earlier schema requires restoring its coordinated recovery set into a fresh data directory; do not run it over the upgraded database. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
 
 ## Base-image advisory constraints
 
@@ -217,3 +218,15 @@ against treating whole-disk restores as database recovery. Keep the coordinated
 recovery copy workflow above. See [Render disks](https://render.com/docs/disks)
 and [Modal Volumes](https://modal.com/docs/guide/volumes); Modal notes that deleted
 storage may remain billable for up to four days.
+
+
+## Bounded worker capacity
+
+`UNRENDER_WORKER_CONCURRENCY` accepts integers 1–4, default 1. Slots use distinct
+lease owners and the existing atomic database dispatch/charge fences. Shutdown
+stops claiming across all slots and shares one total join deadline. Readiness
+requires every configured slot to be alive and not draining. Local tests prove
+overlapping claims and single charging, not production throughput. Measure peak
+memory, SQLite contention and provider queueing on the target host before
+increasing the deployed default; the small Render instance may need more memory.
+Local cancellation and timeout still do not prove that remote GPU work stopped.

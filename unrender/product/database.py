@@ -10,7 +10,9 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 14
+from unrender.product.provenance import UNAVAILABLE_RECEIPT_JSON
+
+SCHEMA_VERSION = 15
 
 
 SCHEMA = """
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS result_versions (
     version INTEGER NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('extraction','correction','reprocess')),
     chart_json TEXT NOT NULL,
+    extraction_receipt_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(job_id, version)
 );
@@ -443,6 +446,8 @@ class Database:
                 self._migrate_v12_to_v13(conn)
             elif version == 13:
                 self._migrate_v13_to_v14(conn)
+            elif version == 14:
+                self._migrate_v14_to_v15(conn)
             elif version == SCHEMA_VERSION:
                 break
             else:
@@ -514,6 +519,17 @@ class Database:
         if self._table_exists(conn, "sessions"):
             self._add_column(conn, "sessions", "reauthenticated_at", "TEXT")
         self._migration_execute(conn, "UPDATE schema_meta SET version=11")
+
+    def _migrate_v14_to_v15(self, conn: sqlite3.Connection) -> None:
+        # Preserve external users' tables without inventing historical evidence.
+        # There is one receipt contract after this atomic, forward-only upgrade.
+        self._add_column(
+            conn,
+            "result_versions",
+            "extraction_receipt_json",
+            "TEXT NOT NULL DEFAULT '" + UNAVAILABLE_RECEIPT_JSON + "'",
+        )
+        self._migration_execute(conn, "UPDATE schema_meta SET version=15")
 
     def _migrate_v13_to_v14(self, conn: sqlite3.Connection) -> None:
         # Bulk deletion must not repeatedly scan other tenants' quota records.

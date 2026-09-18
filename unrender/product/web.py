@@ -312,8 +312,16 @@ class JobCreate(StrictRequest):
     crop: Crop | None = None
 
 
-class ResultUpdate(StrictRequest):
+class ReviewRequest(StrictRequest):
+    expected_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ResultUpdate(ReviewRequest):
     result: dict[str, Any]
+
+
+class VersionRestore(ReviewRequest):
+    version: int = Field(ge=1)
 
 
 class ApiKeyCreate(StrictRequest):
@@ -1064,11 +1072,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: ResultUpdate,
         user: Any = csrf_user_dependency,
     ):
-        return service.save_correction(user_id=user["id"], job_id=job_id, result=payload.result)
+        return service.save_correction(
+            user_id=user["id"],
+            job_id=job_id,
+            result=payload.result,
+            expected_revision=payload.expected_revision,
+        )
+
+    @app.post("/api/jobs/{job_id}/restore")
+    def restore(job_id: str, payload: VersionRestore, user: Any = csrf_user_dependency):
+        return service.restore_version(
+            user_id=user["id"],
+            job_id=job_id,
+            version=payload.version,
+            expected_revision=payload.expected_revision,
+        )
 
     @app.post("/api/jobs/{job_id}/approve")
-    def approve(job_id: str, user: Any = csrf_user_dependency):
-        return service.approve(user_id=user["id"], job_id=job_id)
+    def approve(job_id: str, payload: ReviewRequest, user: Any = csrf_user_dependency):
+        return service.approve(
+            user_id=user["id"], job_id=job_id, expected_revision=payload.expected_revision
+        )
 
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel(job_id: str, user: Any = csrf_user_dependency):
@@ -1082,16 +1106,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def export(
         job_id: str,
         output_format: str,
+        expected_revision: Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")],
         user: Any = current_user_dependency,
     ):
         payload, mime = service.export(
-            user_id=user["id"], job_id=job_id, output_format=output_format
+            user_id=user["id"],
+            job_id=job_id,
+            output_format=output_format,
+            expected_revision=expected_revision,
         )
         filename = f"unrender-{job_id[:8]}.{output_format}"
         return Response(
             payload,
             media_type=mime,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Unrender-Review-Revision": expected_revision,
+            },
         )
 
     @app.delete("/api/jobs/{job_id}")

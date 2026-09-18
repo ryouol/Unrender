@@ -1,0 +1,37 @@
+{
+  "scope": "eight recovered real_v0 image audit and source-backed annotation review gate",
+  "validation_date": "2026-09-18",
+  "audit_sha256": "239f2aaad01ffc38e6555cb83e278456d4a3c6a16020f9201b41f9e70aaa6828",
+  "clean_source_archive_tree": "4be5fc74253d59574fe8ef72ab11c4352b87eeef",
+  "clean_archive_tests_passed": 18,
+  "full_suite": {
+    "passed": 476,
+    "skipped": 0,
+    "warnings": 4
+  },
+  "focused_suite_passed": 66,
+  "lint_and_format": "passed",
+  "common300_f1": {
+    "base": 0.06589006188569349,
+    "fair": 0.2890005448271687,
+    "numeric": 0.2667075038284839
+  },
+  "source_hashes": {
+    "unrender/eval/dataset.py": "66683e1eadbf1d413a3807adb3cc8e346be8e440fd1441ba541de3178833f21f",
+    "unrender/eval/build_real_set.py": "29d873539a6a081eb03b87a841e580ebcc064444041f5cb57c56e8baff950900",
+    "unrender/eval/fetch_real_set.py": "8500684e0dddaa729e31009a4710322f6617062b14ad5f61739f319688a7bf9f",
+    "unrender/eval/score.py": "a637da33dd9e94a56970ee3643718d00c73b202ec5772e97ae7389de4d8be7b5",
+    "unrender/eval/paired_bootstrap.py": "4101b0d879291073ce79d22c59baded973f51824e0edc492e729c8c2110f9ee1",
+    "unrender/eval/report.py": "bd5161e35ef1c21c7c2eab476a377ff8bb21c8d29d92890b1df85f85de37b053",
+    "analysis/scoreboard.py": "cc275cd7c3c5994693a25abfce4b572bb009f71498a02f594ced248b02a4694b"
+  },
+  "new_gpu_runs": 0,
+  "paid_model_api_calls": 0,
+  "deployed": false,
+  "limitations": [
+    "Recovered image identity with historical inference inputs is unproven because old runs lack image hashes.",
+    "Original source CSV snapshots were not retained; numeric values are not independently revalidated.",
+    "One agent visual review; not an independently double-reviewed final holdout.",
+    "Review receipts are attestations and drift checks, not proof of correctness or independence."
+  ]
+}

@@ -53,7 +53,7 @@ def check(
             kwargs["max_pixels"] = max_pixels
         proc = original_load(*args, **kwargs)
         if max_pixels:
-            proc.image_processor.size = {**proc.image_processor.size, "longest_edge": max_pixels}
+            proc.image_processor.size.longest_edge = max_pixels
             if hasattr(proc.image_processor, "max_pixels"):
                 proc.image_processor.max_pixels = max_pixels
         original_decode = proc.decode
@@ -114,10 +114,18 @@ def check(
             **observed,
             "original_cpu_threads": original_threads,
             "cpu_threads": torch.get_num_threads(),
-            "device_map": {k: str(v) for k, v in model.hf_device_map.items()},
+            "device_map": {
+                k: str(v) for k, v in getattr(model, "hf_device_map", {"": model.device}).items()
+            },
             "dtype": str(model.dtype),
             "flash_sdp": flash_sdp,
-            "image_size": proc.image_processor.size,
+            "image_size": {
+                "shortest_edge": proc.image_processor.size.shortest_edge,
+                "longest_edge": proc.image_processor.size.longest_edge,
+            },
+            "peak_cuda_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "peak_cuda_reserved_bytes": torch.cuda.max_memory_reserved(),
+            "gpu": torch.cuda.get_device_name(),
             "attention": model.config._attn_implementation,
             "use_cache": model.generation_config.use_cache,
             "output_tokens": len(proc.tokenizer.encode(result["raw"])),

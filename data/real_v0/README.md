@@ -1,94 +1,91 @@
-# real_v0 — the real-chart transfer eval
+# real_v0 — rejected historical evaluation labels
 
-Everything else in this repo is measured on **synthetic** charts (common300). This
-set answers the only question that decides the project's direction:
+The eight saved OWID charts are **not a valid model-comparison benchmark**.
+The [image-level audit](../../release/real-v0-audit/README.md) confirms mismatched
+series names and titles, plus axis labels invented by the fetcher, in all eight
+annotations. The original JSONL is retained unchanged so historical mistakes can
+be reproduced. Do not run new paid inference or training against these targets.
 
-> On charts the model never trained on — does our fine-tune transfer, and is
-> frontier (Gemini) actually weak at exact extraction the way the bet assumes?
+All eight charts are United States annual line charts, 2000–2023. They cannot
+establish generalization across chart families or a frontier-model advantage.
+The original source CSV snapshots and historical inference image hashes were not
+retained. Fixing visible labels after inspecting historical outputs does not turn
+this set into an untouched final holdout.
 
-See `MODEL_STATUS_REVIEW.md` ("Claim Boundaries") and the audit: real-world
-validity is the gate that has never been tested.
+## New real-chart datasets
 
-## The one rule
+Use a **new dataset directory and version**. The local fetcher now produces draft
+labels marked `needs_visual_review` and saves the downloaded source CSV bytes:
 
-You supply each chart's **exact true values by hand**, read off a source that
-*publishes the numbers* (FRED, OWID, a data table behind the figure) — **never
-machine-estimated from the pixels.** If the ground truth were a model's guess, the
-benchmark would measure nothing. ~15–20 charts is enough for a first read; spread
-them across chart types and across `labels_shown` true/false.
-
-## Quick start — auto-source from FRED + OWID (needs internet)
-
-FRED and OWID publish the rendered chart PNG **and** the official data CSV at
-parallel URLs, so the ground truth is read straight from the published data — no
-hand-typing, no pixel-estimation. Run this **on a machine with internet** (the
-agent sandbox has none):
-
-```
-python -m unrender.eval.fetch_real_set            # -> data/real_v0/{images,labels} (9 line charts)
-python -m unrender.eval.build_real_set --dir data/real_v0
+```sh
+python -m unrender.eval.fetch_real_set --dir data/real_dev_v1
 ```
 
-It seeds real **line** time series (US unemployment, rates, CPI, GDP, payrolls, life
-expectancy — all `labels_shown=false`, the measure-off-the-axis case). Line-only by
-design (FRED/OWID series are line charts); add bar/pie charts of your own via the
-manual workflow below for full type coverage.
+This is source collection, not benchmark validation. Review every actual image:
 
-## Workflow (manual / add your own)
+1. Transcribe the visible title, series names and axis labels; use null for absent
+   labels. Do not substitute a source-series identifier or an invented title.
+2. Match the image's entities, dates, aggregation, series and values to the saved
+   source data. A parallel CSV URL alone does not prove the chart uses that table.
+3. Check scales, units, multipliers, percent conventions, logarithms and precision.
+   Define numeric units and any permissible aliases before model comparison.
+4. Check recoverability at the model's actual input resolution. Preserve reference
+   source values, but do not demand precision invisible in the raster. Include
+   axis-span error and simple constant/trend baselines when relative error can
+   hide a missing trend. Mark ambiguous or unsupported charts separately.
+5. Record the reviewer, timezone-aware review time and the hashes below. A final
+   research holdout requires a second independent review, source/table-disjoint
+   groups, and no tuning on its outcomes; the receipt alone cannot prove those.
 
-1. **Drop images** into `images/` (e.g. `images/us_unemployment.png`).
-2. **Label each** — copy `labels/_TEMPLATE.json` to `labels/<name>.json`, fill in
-   the true values. Set `labels_shown` honestly (are exact numbers printed on the
-   chart?) — it drives the labeled-vs-label-free slice the thesis turns on.
-3. **Build** the eval set (validates every label, fails loudly on a typo):
+Each label needs `source_data_file` (relative to the dataset directory), a source
+citation, a boolean `labels_shown`, and a `ground_truth_review` object:
 
-   ```
-   python -m unrender.eval.build_real_set --dir data/real_v0
-   ```
-
-   → writes `test.jsonl` (local paths) and `test.modal.jsonl` (/vol paths).
-
-### Arm 1 — Gemini (local, ~$1–2)
-
-```
-python -m unrender.eval.run_baselines --provider gemini \
-    --model gemini-3.1-pro-preview \
-    --data data/real_v0/test.jsonl --out outputs/real_v0/gemini
-python -m unrender.eval.score --predictions outputs/real_v0/gemini/predictions.jsonl
-```
-(Use the current flagship id; the default `gemini-3.1-pro` has 404'd before — the
-`-preview` id is the real one. Add `--provider anthropic`/`openai` for more.)
-
-### Arm 2 — base-4B + table-LoRA (Modal GPU, ~$1–2)
-
-Upload images + the /vol-pathed jsonl (renamed to `test.jsonl` on the volume), then
-eval each model with `--data real_v0` (eval_model routes `real_*` → `data/real_v0`):
-
-```
-modal volume put unrender-vol data/real_v0/images          /vol/data/real_v0/images
-modal volume put unrender-vol data/real_v0/test.modal.jsonl /vol/data/real_v0/test.jsonl
-
-# table-only LoRA (the strongest arm so far, 36.8% on synthetic common300)
-modal run --detach modal_train.py::evaluate --model runs/qwen3vl4b-lora/merged --data real_v0
-# pinned base control (same revision as the synthetic base run)
-modal run --detach modal_train.py::evaluate \
-    --model unsloth/Qwen3-VL-4B-Instruct \
-    --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --data real_v0
+```json
+{
+  "contract": "real-ground-truth-review-v1",
+  "status": "verified",
+  "reviewer": "identified reviewer",
+  "reviewed_at": "2026-09-18T12:00:00Z",
+  "image_sha256": "<SHA-256 of reviewed image bytes>",
+  "annotation_sha256": "<hash of target, visibility and citation>",
+  "source_data_sha256": "<SHA-256 of saved source data bytes>",
+  "visible_metadata_checked": true,
+  "source_values_checked": true,
+  "scale_units_checked": true,
+  "recoverability_checked": true
+}
 ```
 
-Pull + (re)score locally:
+The annotation hash is computed by
+`unrender.eval.dataset.annotation_sha256(canonical_json(chart), label)` after
+`label_to_chartdata(label, filename)`. It binds the complete chart target,
+`labels_shown` and source citation. Image/source hashes use ordinary SHA-256 of
+file bytes. Fill the checks only after doing the review; software can validate a
+receipt and detect drift, but cannot prove the review was competent.
+
+Then build the reviewed dataset:
+
+```sh
+python -m unrender.eval.build_real_set --dir data/real_dev_v1 --out data/real_eval_v1
 ```
-modal volume get unrender-vol outputs/eval_v1__qwen3vl4b-lora__real_v0 ./outputs/real_v0/lora
-python -m unrender.eval.score --predictions outputs/real_v0/lora/predictions.jsonl
-```
 
-## Reading it
+The builder rejects missing/incomplete review, changed images/annotations/source
+bytes before writing output. The evaluation loader rechecks the receipt and image
+when present, so old unreviewed rows cannot start a new evaluation. Missing images
+remain input errors in the scheduled-attempt ledger and never reach a provider.
+A missing image does not invalidate offline inspection of a review receipt.
+Local and Modal collection use the same draft collector. A new directory is
+required for every attempt. `collection.json` retains every scheduled source,
+including failed and interrupted downloads; partial collections cannot silently
+publish only their successful rows. Collection never writes an evaluation split.
 
-Compare cell@5_exact (and the labeled / label-free slices) across Gemini, base-4B,
-and the LoRA on the SAME real charts:
+Publication copies reviewed source artifacts into a staged snapshot and atomically
+publishes one portable `test.jsonl`. Existing versions cannot be replaced. The
+loader verifies the published inventory, including the source CSV bytes. Upload
+the whole `data/real_eval_v1` bundle to Modal; separate absolute-path splits are
+no longer needed. A changed draft does not change its published snapshot.
 
-- **Frontier weak + LoRA competitive** → the wedge is real → worth scaling.
-- **Gemini strong / LoRA doesn't transfer** → "beats frontier" is retired; ship the
-  benchmark + reliability story instead.
-
-> Tracked as **R00c / R012** in `refine-logs/EXPERIMENT_TRACKER.md`.
+Saved historical outputs can still be rescored for diagnostics. Scores expose
+`ground_truth_review.review_gate_passed`; unreviewed external charts block paired
+bootstrap and comparison reports. This does not authenticate claims for rows that
+omit source provenance, or turn synthetic data into a real-world holdout.

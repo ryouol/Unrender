@@ -1,0 +1,76 @@
+{
+  "generator_commit": "904e87dc2b18c327b38daa8c83a725fea4b1c82c",
+  "seed": 5678,
+  "hard": true,
+  "original_vs_counterfactual_proofs": [
+    {
+      "id": "0004056",
+      "changed_field": "series_name",
+      "image": "proofs/0004056.png",
+      "targets": "proofs/0004056.json",
+      "identical_pixels": true,
+      "image_sha256": "e0eefdbb9d2f55c4c258845c29173730ca47aaae3883a109181f6e66ccb97107",
+      "targets_sha256": "3a5da8bf4f1095413e207b40f38420c363e450ea5e955458b00a912af568cb31",
+      "dimensions": [
+        495,
+        405
+      ]
+    },
+    {
+      "id": "0003073",
+      "changed_field": "y_unit",
+      "image": "proofs/0003073.png",
+      "targets": "proofs/0003073.json",
+      "identical_pixels": true,
+      "image_sha256": "ef8a69c67caf3b82d46e0b5a769b6e2eeca2907d6d165c8fb1030f5a38020ac3",
+      "targets_sha256": "642fcfe677b062a8b0eef97f041b628204f136c2a10448f4e299a4c75b36a901",
+      "dimensions": [
+        500,
+        270
+      ]
+    },
+    {
+      "id": "0000950",
+      "changed_field": "series[3].points[0].y",
+      "original_value": 3,
+      "counterfactual_value": 7,
+      "image": "proofs/0000950.png",
+      "targets": "proofs/0000950.json",
+      "identical_pixels": true,
+      "image_sha256": "7c5f966fc8bfbea77cd3f4393bb927a698f14142d78310cd48c8704ab692adf0",
+      "targets_sha256": "a7982c2a914190df4b4bb17393aa61f7be194ed3a3fb990cba5c9f44b9376f26",
+      "dimensions": [
+        489,
+        336
+      ]
+    }
+  ],
+  "generator_sources": {
+    "unrender/data_gen/chart_specs.py": "deafbcd689246769f7b8c3ca72e91ca8f3573fccd1cb29a21b5419f6c5400bce",
+    "unrender/data_gen/render.py": "f0486cebe83361ca4c70044d5e47db6b973fd21472938ecdba9174acbec8af3d"
+  },
+  "reconstructed_specs": {
+    "file": "reconstructed-specs.jsonl.gz",
+    "sha256": "e383d00724fe67e5a457e94c3103c64a168d1daa145de7571f5e0f0c39698a22",
+    "compressed_sha256": "6308dc00263dc88bedc3515b49b40d1574673b6196b1fb6ebde2d17fadd3a804",
+    "rows": 300,
+    "exact_target_matches": 300,
+    "historical_image_identity": "not verified; these specifications were reconstructed now from the recorded seed and matched to saved targets"
+  },
+  "recovered_volume_images": [
+    {
+      "id": "0001155",
+      "file": "recovered/0001155.png",
+      "sha256": "e5791768bb2a81ec2c45d8c57d45b0ef965a5b2a85e371a168fbffca760a5d03",
+      "remote_path": "unrender-vol:data/synthetic_v1/images/0001155.png",
+      "historical_inference_image_identity": "unproven; original predictions have no image hash"
+    },
+    {
+      "id": "0003073",
+      "file": "recovered/0003073.png",
+      "sha256": "10f50d8cfdc326f8e0410be73c9d36cb81b3f81fb5f8da9bd25cd08a5b26fc64",
+      "remote_path": "unrender-vol:data/synthetic_v1/images/0003073.png",
+      "historical_inference_image_identity": "unproven; original predictions have no image hash"
+    }
+  ]
+}

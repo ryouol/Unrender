@@ -27,6 +27,14 @@ from openpyxl import Workbook
 from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.extractors import ExtractionError, Extractor
+from unrender.product.provenance import (
+    MAX_RECEIPT_BYTES,
+    Crop,
+    ExtractionDiagnostics,
+    ExtractionReceipt,
+    receipt_warnings,
+    sha256,
+)
 from unrender.product.security import (
     api_key,
     hash_password,
@@ -445,7 +453,8 @@ class ProductService:
             "COALESCE((SELECT SUM(byte_size) FROM pending_deletions),0) + "
             "COALESCE((SELECT SUM(byte_count) FROM storage_reservations),0) + "
             "COALESCE((SELECT SUM(retained_byte_reservation) FROM jobs),0) + "
-            "COALESCE((SELECT SUM(LENGTH(CAST(chart_json AS BLOB))) FROM result_versions),0) + "
+            "COALESCE((SELECT SUM(LENGTH(CAST(chart_json AS BLOB)) + "
+            "LENGTH(CAST(extraction_receipt_json AS BLOB))) FROM result_versions),0) + "
             "COALESCE((SELECT SUM(LENGTH(CAST(COALESCE(raw_result,'') AS BLOB)) + "
             "LENGTH(CAST(COALESCE(original_result_json,'') AS BLOB)) + "
             "LENGTH(CAST(COALESCE(current_result_json,'') AS BLOB))) FROM jobs),0) AS bytes"
@@ -510,7 +519,8 @@ class ProductService:
         if attempt <= 0:
             raise ValueError("Result-capacity reservations require a positive attempt")
         usage = conn.execute(
-            "SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB))),0) AS history_bytes "
+            "SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB)) + "
+            "LENGTH(CAST(extraction_receipt_json AS BLOB))),0) AS history_bytes "
             "FROM result_versions WHERE user_id=?",
             (user_id,),
         ).fetchone()
@@ -522,7 +532,7 @@ class ProductService:
             ).fetchone()["bytes"]
         )
         if (
-            int(usage["history_bytes"]) + reserved + self.settings.max_result_json_bytes
+            int(usage["history_bytes"]) + reserved + self.settings.result_version_reservation_bytes
             > self.settings.max_history_bytes_per_user
         ):
             raise ProductError(
@@ -1836,7 +1846,7 @@ class ProductService:
                         page_index,
                         json.dumps(crop, separators=(",", ":")) if crop else None,
                         credit_cost,
-                        self.settings.max_result_json_bytes,
+                        self.settings.result_version_reservation_bytes,
                         1,
                         self.settings.result_publication_reservation_bytes,
                         now,
@@ -2143,7 +2153,7 @@ class ProductService:
                         inspection.sha256,
                         inspection.byte_size,
                         page_index,
-                        self.settings.max_result_json_bytes,
+                        self.settings.result_version_reservation_bytes,
                         1,
                         self.settings.result_publication_reservation_bytes,
                         created_at,
@@ -2258,15 +2268,95 @@ class ProductService:
 
     def _job_row(self, *, user_id: str, job_id: str) -> sqlite3.Row:
         with self.database.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
-            ).fetchone()
+            return self._review_row(conn, user_id, job_id)
+
+    def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
+        with self.database.transaction() as conn:
+            return self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+
+    @staticmethod
+    def _review_row(conn: sqlite3.Connection, user_id: str, job_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
+        ).fetchone()
         if not row:
             raise ProductError("job_not_found", "Extraction not found", 404)
         return row
 
-    def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
-        return public_job(self._job_row(user_id=user_id, job_id=job_id))
+    @staticmethod
+    def _review_snapshot(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        """Read the result and its immutable identity in the caller's transaction."""
+        snapshot = public_job(row)
+        snapshot.update(
+            result_version=None,
+            result_sha256=None,
+            review_revision=None,
+            extraction_receipt=None,
+            extraction_receipt_sha256=None,
+            extraction_warnings=[],
+        )
+        if not row["current_result_json"]:
+            return snapshot
+        version = conn.execute(
+            "SELECT id,version,chart_json,extraction_receipt_json FROM result_versions "
+            "WHERE job_id=? AND user_id=? ORDER BY version DESC LIMIT 1",
+            (row["id"], row["user_id"]),
+        ).fetchone()
+        if not version or version["chart_json"] != row["current_result_json"]:
+            raise ProductError(
+                "result_history_inconsistent", "The result history needs operator attention", 503
+            )
+        try:
+            receipt = ExtractionReceipt.model_validate_json(version["extraction_receipt_json"])
+        except ValueError as exc:
+            raise ProductError(
+                "result_history_inconsistent",
+                "The extraction history needs operator attention",
+                503,
+            ) from exc
+        receipt_digest = sha256(version["extraction_receipt_json"])
+        digest = sha256(version["chart_json"])
+        # Include the immutable version ID to reject ABA edits, and lifecycle state
+        # so a draft/approval or reprocessing transition also invalidates old views.
+        identity = json.dumps(
+            [
+                row["id"],
+                version["id"],
+                digest,
+                receipt_digest,
+                row["attempt"],
+                row["status"],
+                row["approved_at"],
+            ],
+            separators=(",", ":"),
+        )
+        snapshot.update(
+            extractor=receipt.extractor,
+            model_version=receipt.model_version,
+            extraction_receipt=receipt.model_dump(),
+            extraction_receipt_sha256=receipt_digest,
+            extraction_warnings=receipt_warnings(receipt),
+            result_version=int(version["version"]),
+            result_sha256=digest,
+            review_revision=hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+        )
+        return snapshot
+
+    @staticmethod
+    def _assert_review_revision(snapshot: dict[str, Any], expected_revision: str) -> None:
+        actual = snapshot["review_revision"]
+        if (
+            not actual
+            or not isinstance(expected_revision, str)
+            or not expected_revision.isascii()
+            or not hmac.compare_digest(actual, expected_revision)
+        ):
+            raise ProductError(
+                "result_conflict",
+                "This result changed in another tab. Your edits are still here. "
+                "Load the latest version before saving, approving, restoring, or exporting.",
+                409,
+            )
 
     def job_source(self, *, user_id: str, job_id: str, thumbnail: bool = False) -> bytes:
         row = self._job_row(user_id=user_id, job_id=job_id)
@@ -2361,7 +2451,8 @@ class ProductService:
             raise ProductError("invalid_version_cursor", "Version cursor must be positive", 422)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT version,source,created_at,LENGTH(CAST(chart_json AS BLOB)) AS byte_size "
+                "SELECT version,source,created_at,LENGTH(CAST(chart_json AS BLOB)) + "
+                "LENGTH(CAST(extraction_receipt_json AS BLOB)) AS byte_size "
                 "FROM result_versions WHERE job_id=? AND user_id=? "
                 "AND (? IS NULL OR version<?) ORDER BY version DESC LIMIT ?",
                 (job_id, user_id, before, before, bounded_limit + 1),
@@ -2386,7 +2477,8 @@ class ProductService:
         self._job_row(user_id=user_id, job_id=job_id)
         with self.database.connect() as conn:
             row = conn.execute(
-                "SELECT version,source,chart_json,created_at FROM result_versions "
+                "SELECT version,source,chart_json,extraction_receipt_json,created_at "
+                "FROM result_versions "
                 "WHERE job_id=? AND user_id=? AND version=?",
                 (job_id, user_id, version),
             ).fetchone()
@@ -2396,6 +2488,10 @@ class ProductService:
             "version": int(row["version"]),
             "source": row["source"],
             "result": json.loads(row["chart_json"]),
+            "extraction_receipt": ExtractionReceipt.model_validate_json(
+                row["extraction_receipt_json"]
+            ).model_dump(),
+            "extraction_receipt_sha256": sha256(row["extraction_receipt_json"]),
             "created_at": row["created_at"],
         }
 
@@ -2406,13 +2502,19 @@ class ProductService:
         user_id: str,
         job_id: str,
         encoded_bytes: int = 0,
+        receipt_bytes: int = 0,
         reservation_attempt: int | None = None,
     ) -> int:
         if encoded_bytes < 0 or encoded_bytes > self.settings.max_result_json_bytes:
             raise ProductError("invalid_result", "The chart result exceeds the service limit", 422)
+        if not 0 <= receipt_bytes <= MAX_RECEIPT_BYTES:
+            raise ProductError(
+                "invalid_result", "The extraction receipt exceeds the service limit", 422
+            )
         usage = conn.execute(
             "SELECT COALESCE(MAX(version),0) AS latest,COUNT(*) AS job_versions,"
-            "(SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB))),0) "
+            "(SELECT COALESCE(SUM(LENGTH(CAST(chart_json AS BLOB)) + "
+            "LENGTH(CAST(extraction_receipt_json AS BLOB))),0) "
             "FROM result_versions WHERE user_id=?) AS user_bytes,"
             "(SELECT COALESCE(SUM(result_reservation_bytes),0) FROM jobs "
             "WHERE user_id=?) AS reserved_bytes,"
@@ -2440,6 +2542,7 @@ class ProductService:
             + int(usage["reserved_bytes"])
             - int(usage["own_reservation"] or 0)
             + encoded_bytes
+            + receipt_bytes
             > self.settings.max_history_bytes_per_user
         ):
             raise ProductError(
@@ -2450,58 +2553,111 @@ class ProductService:
         return int(usage["latest"]) + 1
 
     def save_correction(
-        self, *, user_id: str, job_id: str, result: dict[str, Any]
+        self, *, user_id: str, job_id: str, result: dict[str, Any], expected_revision: str
     ) -> dict[str, Any]:
         try:
             chart = ChartData.model_validate(result)
             self._validate_product_chart(chart)
         except (TypeError, ValueError) as exc:
             raise ProductError("invalid_result", "The edited table is not valid", 422) from exc
-        encoded = chart.model_dump_json()
-        encoded_bytes = len(encoded.encode("utf-8"))
         with self.database.transaction(immediate=True) as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
+            row = self._review_row(conn, user_id, job_id)
+            self._assert_review_revision(self._review_snapshot(conn, row), expected_revision)
+            return self._store_correction(conn, row, chart.model_dump_json())
+
+    def restore_version(
+        self, *, user_id: str, job_id: str, version: int, expected_revision: str
+    ) -> dict[str, Any]:
+        with self.database.transaction(immediate=True) as conn:
+            row = self._review_row(conn, user_id, job_id)
+            self._assert_review_revision(self._review_snapshot(conn, row), expected_revision)
+            saved = conn.execute(
+                "SELECT chart_json,extraction_receipt_json FROM result_versions "
+                "WHERE job_id=? AND user_id=? AND version=?",
+                (job_id, user_id, version),
             ).fetchone()
-            if not row:
-                raise ProductError("job_not_found", "Extraction not found", 404)
-            if row["status"] not in {"review", "approved"}:
-                raise ProductError("job_not_editable", "Wait for extraction before editing", 409)
-            version = self._next_result_version(
+            if not saved:
+                raise ProductError("version_not_found", "Result version not found", 404)
+            return self._store_correction(
                 conn,
-                user_id=user_id,
-                job_id=job_id,
-                encoded_bytes=encoded_bytes,
+                row,
+                saved["chart_json"],
+                receipt_json=saved["extraction_receipt_json"],
+                restored_from=version,
             )
-            old_current_bytes = len(str(row["current_result_json"] or "").encode("utf-8"))
-            self._assert_retained_byte_capacity(
-                conn,
-                additional_bytes=encoded_bytes + max(0, encoded_bytes - old_current_bytes),
-            )
-            now = timestamp()
-            self._insert_row(
-                conn,
-                "INSERT INTO result_versions("
-                "id,job_id,user_id,version,source,chart_json,created_at"
-                ") "
-                "VALUES (?,?,?,?,?,?,?)",
-                (self._id(), job_id, user_id, version, "correction", encoded, now),
-                user_id=user_id,
-            )
-            conn.execute(
-                "UPDATE jobs SET current_result_json=?,status='review',"
-                "approved_at=NULL,updated_at=? "
-                "WHERE id=?",
-                (encoded, now, job_id),
-            )
-            self._audit(
-                conn,
-                user_id=user_id,
-                job_id=job_id,
-                event_type="result_corrected",
-                details={"version": version},
-            )
-        return self.get_job(user_id=user_id, job_id=job_id)
+
+    def _store_correction(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        encoded: str,
+        *,
+        restored_from: int | None = None,
+        receipt_json: str | None = None,
+    ) -> dict[str, Any]:
+        if row["status"] not in {"review", "approved"}:
+            raise ProductError("job_not_editable", "Wait for extraction before editing", 409)
+        user_id, job_id = str(row["user_id"]), str(row["id"])
+        encoded_bytes = len(encoded.encode("utf-8"))
+        if receipt_json is None:
+            receipt_json = conn.execute(
+                "SELECT extraction_receipt_json FROM result_versions "
+                "WHERE job_id=? AND user_id=? ORDER BY version DESC LIMIT 1",
+                (job_id, user_id),
+            ).fetchone()["extraction_receipt_json"]
+        receipt = ExtractionReceipt.model_validate_json(receipt_json)
+        receipt_bytes = len(receipt_json.encode("utf-8"))
+        version = self._next_result_version(
+            conn,
+            user_id=user_id,
+            job_id=job_id,
+            encoded_bytes=encoded_bytes,
+            receipt_bytes=receipt_bytes,
+        )
+        old_current_bytes = len(str(row["current_result_json"] or "").encode("utf-8"))
+        self._assert_retained_byte_capacity(
+            conn,
+            additional_bytes=encoded_bytes
+            + receipt_bytes
+            + max(0, encoded_bytes - old_current_bytes),
+        )
+        now = timestamp()
+        self._insert_row(
+            conn,
+            "INSERT INTO result_versions("
+            "id,job_id,user_id,version,source,chart_json,extraction_receipt_json,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (self._id(), job_id, user_id, version, "correction", encoded, receipt_json, now),
+            user_id=user_id,
+        )
+        conn.execute(
+            "UPDATE jobs SET current_result_json=?,extractor=?,model_version=?,"
+            "status='review',approved_at=NULL,updated_at=? WHERE id=? AND user_id=?",
+            (encoded, receipt.extractor, receipt.model_version, now, job_id, user_id),
+        )
+        snapshot = self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+        self._audit(
+            conn,
+            user_id=user_id,
+            job_id=job_id,
+            event_type="result_corrected",
+            details={
+                **self._result_reference(snapshot),
+                "restored_from_version": restored_from,
+            },
+        )
+        # Never re-fetch after commit: another writer could otherwise replace the
+        # result before this response is used by Save & approve.
+        return snapshot
+
+    @staticmethod
+    def _result_reference(snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "version": snapshot["result_version"],
+            "sha256": snapshot["result_sha256"],
+            "review_revision": snapshot["review_revision"],
+            "extraction_receipt_sha256": snapshot["extraction_receipt_sha256"],
+        }
 
     def _validate_product_chart(self, chart: ChartData) -> None:
         if chart.chart_type not in CHART_TYPES or not 1 <= len(chart.series) <= 50:
@@ -2530,25 +2686,31 @@ class ProductService:
         if len(chart.model_dump_json().encode()) > self.settings.max_result_json_bytes:
             raise ValueError("Chart result is too large")
 
-    def approve(self, *, user_id: str, job_id: str) -> dict[str, Any]:
+    def approve(self, *, user_id: str, job_id: str, expected_revision: str) -> dict[str, Any]:
         with self.database.transaction(immediate=True) as conn:
-            row = conn.execute(
-                "SELECT status,current_result_json FROM jobs WHERE id=? AND user_id=?",
-                (job_id, user_id),
-            ).fetchone()
-            if not row:
-                raise ProductError("job_not_found", "Extraction not found", 404)
+            row = self._review_row(conn, user_id, job_id)
+            reviewed = self._review_snapshot(conn, row)
+            self._assert_review_revision(reviewed, expected_revision)
             if row["status"] != "review" or not row["current_result_json"]:
                 raise ProductError("job_not_approvable", "Review the result before approval", 409)
             now = timestamp()
             conn.execute(
-                "UPDATE jobs SET status='approved',"
-                "progress_stage='Approved for export',approved_at=?,updated_at=? "
-                "WHERE id=?",
-                (now, now, job_id),
+                "UPDATE jobs SET status='approved',progress_stage='Approved for export',"
+                "approved_at=?,updated_at=? WHERE id=? AND user_id=?",
+                (now, now, job_id, user_id),
             )
-            self._audit(conn, user_id=user_id, job_id=job_id, event_type="result_approved")
-        return self.get_job(user_id=user_id, job_id=job_id)
+            snapshot = self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+            self._audit(
+                conn,
+                user_id=user_id,
+                job_id=job_id,
+                event_type="result_approved",
+                details={
+                    **self._result_reference(snapshot),
+                    "reviewed_revision": expected_revision,
+                },
+            )
+            return snapshot
 
     def cancel(self, *, user_id: str, job_id: str) -> dict[str, Any]:
         with self.database.transaction(immediate=True) as conn:
@@ -2610,7 +2772,7 @@ class ProductService:
                 (
                     attempt,
                     credit_cost,
-                    self.settings.max_result_json_bytes,
+                    self.settings.result_version_reservation_bytes,
                     attempt,
                     self.settings.result_publication_reservation_bytes,
                     now,
@@ -2704,19 +2866,30 @@ class ProductService:
             )
         return True
 
-    def export(self, *, user_id: str, job_id: str, output_format: str) -> tuple[bytes, str]:
-        row = self._job_row(user_id=user_id, job_id=job_id)
+    def export(
+        self, *, user_id: str, job_id: str, output_format: str, expected_revision: str
+    ) -> tuple[bytes, str]:
+        with self.database.transaction() as conn:
+            row = self._review_row(conn, user_id, job_id)
+            snapshot = self._review_snapshot(conn, row)
+            self._assert_review_revision(snapshot, expected_revision)
         if row["status"] not in {"review", "approved"} or not row["current_result_json"]:
             raise ProductError("result_unavailable", "No reviewed result is available", 409)
         chart = ChartData.model_validate_json(row["current_result_json"])
+        provenance = self._export_provenance(chart, row, snapshot)
         if output_format == "json":
-            payload = chart.model_dump_json(indent=2).encode("utf-8")
+            payload = json.dumps(
+                {"chart": chart.model_dump(), "provenance": provenance},
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            ).encode("utf-8")
             mime = "application/json"
         elif output_format == "csv":
-            payload = self._safe_csv(chart).encode("utf-8")
+            payload = self._safe_csv(chart, provenance).encode("utf-8")
             mime = "text/csv; charset=utf-8"
         elif output_format == "xlsx":
-            payload = self._xlsx(chart, row)
+            payload = self._xlsx(chart, row, snapshot)
             mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             raise ProductError("invalid_export", "Use csv, json, or xlsx")
@@ -2726,9 +2899,42 @@ class ProductService:
                 user_id=user_id,
                 job_id=job_id,
                 event_type="result_exported",
-                details={"format": output_format, "approved": row["status"] == "approved"},
+                details={
+                    "format": output_format,
+                    "approved": row["status"] == "approved",
+                    **self._result_reference(snapshot),
+                },
             )
         return payload, mime
+
+    @staticmethod
+    def _export_provenance(
+        chart: ChartData, row: sqlite3.Row, snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "contract": "unrender-export-v1",
+            "job_id": row["id"],
+            "source": {
+                "name": row["source_name"],
+                "sha256": row["source_sha256"],
+                "page_index": row["page_index"],
+                "crop": json.loads(row["crop_json"]) if row["crop_json"] else None,
+            },
+            "result_version": snapshot["result_version"],
+            "result_sha256": snapshot["result_sha256"],
+            "review_revision": snapshot["review_revision"],
+            "status": row["status"],
+            "approved_at": row["approved_at"],
+            "axes": {"x": chart.x_axis.model_dump(), "y": chart.y_axis.model_dump()},
+            "values_rescaled_on_export": False,
+            "extraction_receipt": snapshot["extraction_receipt"],
+            "extraction_receipt_sha256": snapshot["extraction_receipt_sha256"],
+            "extraction_warnings": snapshot["extraction_warnings"],
+            "accuracy_notice": "Check every value and unit against the source. "
+            "Parsing and completion checks do not verify extraction accuracy.",
+            "raw_retention": "Only the latest successful extraction's raw response is retained; "
+            "version receipts retain hashes, not raw responses.",
+        }
 
     @staticmethod
     def _spreadsheet_cell(value: str) -> str:
@@ -2742,6 +2948,10 @@ class ProductService:
     def _export_rows(self, chart: ChartData) -> list[list[str | float]]:
         x_label = chart.x_axis.label or ("category" if chart.chart_type == "pie" else "x")
         y_label = chart.y_axis.label or "value"
+        if chart.x_axis.unit:
+            x_label += f" [{chart.x_axis.unit}]"
+        if chart.y_axis.unit:
+            y_label += f" [{chart.y_axis.unit}]"
         if len(chart.series) <= 1:
             rows: list[list[str | float]] = [[x_label, y_label]]
             if chart.series:
@@ -2753,10 +2963,14 @@ class ProductService:
             rows.extend([[series_name, point.x, point.y] for point in series.points])
         return rows
 
-    def _safe_csv(self, chart: ChartData) -> str:
+    def _safe_csv(self, chart: ChartData, provenance: dict[str, Any]) -> str:
         output = io.StringIO()
         writer = csv.writer(output)
-        for row in self._export_rows(chart):
+        metadata = json.dumps(provenance, ensure_ascii=False, separators=(",", ":"))
+        for index, row in enumerate(self._export_rows(chart)):
+            # One file-level manifest, in the first data record. This remains a
+            # rectangular CSV without repeating up to 8 KiB for every point.
+            row = [*row, "export_metadata_json" if index == 0 else metadata if index == 1 else ""]
             writer.writerow(
                 [
                     self._spreadsheet_cell(value) if isinstance(value, str) else value
@@ -2765,7 +2979,7 @@ class ProductService:
             )
         return output.getvalue()
 
-    def _xlsx(self, chart: ChartData, row: sqlite3.Row) -> bytes:
+    def _xlsx(self, chart: ChartData, row: sqlite3.Row, snapshot: dict[str, Any]) -> bytes:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Extracted data"
@@ -2780,9 +2994,27 @@ class ProductService:
         meta.append(["Field", "Value"])
         meta.append(["Source", self._spreadsheet_cell(row["source_name"])])
         meta.append(["Job ID", row["id"]])
-        meta.append(["Model", self._spreadsheet_cell(row["model_version"] or "unknown")])
+        meta.append(["Result version", snapshot["result_version"]])
+        meta.append(["Result SHA-256", snapshot["result_sha256"]])
+        meta.append(["Review revision", snapshot["review_revision"]])
+        meta.append(["Model", self._spreadsheet_cell(snapshot["model_version"] or "Unknown")])
         meta.append(["Status", row["status"]])
         meta.append(["Approved at", row["approved_at"] or "Not approved"])
+        provenance = self._export_provenance(chart, row, snapshot)
+        # The canonical manifest is also machine-readable in one Excel text cell.
+        meta.append(["Export metadata JSON", json.dumps(provenance, ensure_ascii=False)])
+        for label, value in (
+            ("Source SHA-256", row["source_sha256"]),
+            ("Page index (zero-based)", row["page_index"]),
+            ("Crop (normalized)", row["crop_json"] or "Full page / image"),
+            ("Category unit", chart.x_axis.unit or "Unspecified"),
+            ("Value unit", chart.y_axis.unit or "Unspecified"),
+            ("Values rescaled on export", "No"),
+            ("Extraction receipt SHA-256", snapshot["extraction_receipt_sha256"]),
+            ("Extraction warnings", " ".join(snapshot["extraction_warnings"]) or "None recorded"),
+            ("Accuracy notice", provenance["accuracy_notice"]),
+        ):
+            meta.append([label, self._spreadsheet_cell(value) if isinstance(value, str) else value])
         output = io.BytesIO()
         workbook.save(output)
         return output.getvalue()
@@ -3306,7 +3538,8 @@ class ProductService:
                 self._finish_cancelled_claim_in_transaction(conn, current, claim)
                 return False
             if (
-                int(current["result_reservation_bytes"]) != self.settings.max_result_json_bytes
+                int(current["result_reservation_bytes"])
+                != self.settings.result_version_reservation_bytes
                 or int(current["result_reservation_attempt"] or -1) != claim.attempt
                 or int(current["retained_byte_reservation"])
                 != self.settings.result_publication_reservation_bytes
@@ -3465,6 +3698,26 @@ class ProductService:
                 raw_output = truncate_utf8(output.raw, self.settings.max_result_json_bytes)
                 extractor_name = truncate_utf8(output.extractor, 200)
                 model_version = truncate_utf8(output.model_version, 500)
+                diagnostics = ExtractionDiagnostics.model_validate(output.diagnostics)
+                receipt_json = ExtractionReceipt(
+                    capture="recorded",
+                    origin=output.origin,
+                    attempt=claim.attempt,
+                    execution_generation=claim.generation,
+                    provider_roundtrip_ms=provider_duration_ms,
+                    captured_at=timestamp(),
+                    extractor=extractor_name,
+                    model_version=model_version,
+                    source_sha256=row["source_sha256"],
+                    provider_input_sha256=sha256(image),
+                    page_index=int(row["page_index"]),
+                    crop=Crop.model_validate_json(row["crop_json"]) if row["crop_json"] else None,
+                    raw_sha256=sha256(output.raw),
+                    raw_byte_count=len(output.raw.encode("utf-8")),
+                    stored_raw_sha256=sha256(raw_output),
+                    raw_truncated=raw_output != output.raw,
+                    diagnostics=diagnostics,
+                ).encode()
             except (AttributeError, TypeError, ValueError) as exc:
                 raise ExtractionError(
                     "model_output_invalid", "The provider returned an invalid chart result"
@@ -3491,6 +3744,7 @@ class ProductService:
                     user_id=claim.user_id,
                     job_id=job_id,
                     encoded_bytes=len(encoded.encode("utf-8")),
+                    receipt_bytes=len(receipt_json.encode("utf-8")),
                     reservation_attempt=claim.attempt,
                 )
                 now = timestamp()
@@ -3498,9 +3752,18 @@ class ProductService:
                 self._insert_row(
                     conn,
                     "INSERT INTO result_versions("
-                    "id,job_id,user_id,version,source,chart_json,created_at"
-                    ") VALUES (?,?,?,?,?,?,?)",
-                    (self._id(), job_id, claim.user_id, version, source, encoded, now),
+                    "id,job_id,user_id,version,source,chart_json,extraction_receipt_json,created_at"
+                    ") VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        self._id(),
+                        job_id,
+                        claim.user_id,
+                        version,
+                        source,
+                        encoded,
+                        receipt_json,
+                        now,
+                    ),
                     user_id=claim.user_id,
                     mandatory=True,
                 )

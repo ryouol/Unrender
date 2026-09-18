@@ -21,7 +21,7 @@ from unrender.schema.chart_schema import ChartData, Point, Series
 
 
 def _fit_axis(ticks, quant: Optional[int], n_ticks, robust: bool):
-    """Return an affine fn frac->value from tick [[frac, value], ...], or None."""
+    """Fit an affine axis, preserving exact retained tick anchors, or return None."""
     pts = [(round(f, quant) if quant is not None else f, v) for f, v in ticks]
     # collapse ticks that quantized to the same fraction (keep mean value)
     by_f: Dict[float, list] = {}
@@ -41,7 +41,18 @@ def _fit_axis(ticks, quant: Optional[int], n_ticks, robust: bool):
         keep = resid <= np.median(resid) + 3.0 * mad
         if keep.sum() >= 2 and keep.sum() < len(fs):
             a, b = np.polyfit(F[keep], V[keep], 1)
-    return lambda f: a * f + b
+            fs = [f for f, retained in zip(fs, keep) if retained]
+    anchors = {f: by_f[f][0] for f in fs if len(set(by_f[f])) == 1}
+
+    def calibrated(f):
+        # Equal encoded coordinates denote the same explicit calibration anchor.
+        # Fitting rounded ticks can otherwise turn a true zero into a small
+        # nonzero value. Do not snap nearby coordinates or guess extra precision.
+        if f in anchors:
+            return anchors[f]
+        return a * f + b
+
+    return calibrated
 
 
 def decode_geometry(geom: Dict, quant: Optional[int] = None, n_ticks="all",

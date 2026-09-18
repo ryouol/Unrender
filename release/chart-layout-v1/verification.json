@@ -1,0 +1,418 @@
+{
+  "contract": "chart-layout-verification-v1",
+  "base_commit": "ede1f1d",
+  "generation_receipts": {
+    "easy": {
+      "generation": {
+        "manifest_sha256": "06c1dae386b6123f5e2a8a1872fcc81dff9e20d9a2fcfb253f127f7a0d9c7766",
+        "recipe": {
+          "contract": "synthetic-generation-v2",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.85,
+            "base_seed": 47000,
+            "hard": false,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": false
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "2b6c33b7a4b7b40e42501cac5e0cda8677de00ac7ae1a5fc2ec723a66a60e580",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "139f68d621536a070557b59e5357c7ee28b874043b4b4fa9fccfde3ec119bfa3",
+            "unrender/data_gen/layout.py": "5af5f1284ea323af725df2828b04debf553ede21872ad65851157fe40c3b7062",
+            "unrender/data_gen/provenance.py": "4ef0f06631ecaf79c8e87cb884752d3d402c9889b31ca10293368704477b1729",
+            "unrender/data_gen/render.py": "924788f45b89ec12d075b453b06b35af6f3cda9f65c3d8438ac96d5ae5136c85",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "7fddc6f725abcfe2a316fed108fe22293840b5fa7c08a2982eee253eb56c1c68",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v2",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "33ceb192d9c26519cc27a39aed2e5805e0e69041f55804d275a345796fb31ae0"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "639dd788cc191794330e7a38134e33ac8d52493d42322fb0ce144806bbf31721"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "3ea7eb4e3bd729793ae65555424293a781e5997b611c4fef163609701d4b30d0"
+          }
+        },
+        "manifest_sha256": "06c1dae386b6123f5e2a8a1872fcc81dff9e20d9a2fcfb253f127f7a0d9c7766",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "7fddc6f725abcfe2a316fed108fe22293840b5fa7c08a2982eee253eb56c1c68",
+        "seed": 7,
+        "splitter_sha256": "6507c1286f6aea012945a3c06bf184919ed52ae05ff58fc3b9f767a82db339a6",
+        "status": "complete"
+      }
+    },
+    "hard": {
+      "generation": {
+        "manifest_sha256": "0512a9ebd3b3c345057056eaaba80e9d16d100f99963f2d6ba902d07542aa5b4",
+        "recipe": {
+          "contract": "synthetic-generation-v2",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.95,
+            "base_seed": 47000,
+            "hard": true,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": false
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "2b6c33b7a4b7b40e42501cac5e0cda8677de00ac7ae1a5fc2ec723a66a60e580",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "139f68d621536a070557b59e5357c7ee28b874043b4b4fa9fccfde3ec119bfa3",
+            "unrender/data_gen/layout.py": "5af5f1284ea323af725df2828b04debf553ede21872ad65851157fe40c3b7062",
+            "unrender/data_gen/provenance.py": "4ef0f06631ecaf79c8e87cb884752d3d402c9889b31ca10293368704477b1729",
+            "unrender/data_gen/render.py": "924788f45b89ec12d075b453b06b35af6f3cda9f65c3d8438ac96d5ae5136c85",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "fa142a4e807b7e710c5a74c63784196323855102a425829699c147abad72c11a",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v2",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "333646eb584fe50940d625a2b05f82eda626671ed943fe43f9ffafec4465da0b"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "833040927df507b05f3d26b98a28112d3481021839f917cf1215c98901ce5cef"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "d0d47726c652a3cf646538f25551eb3a0b65fe78b4565da2645d6b6aa8ff818f"
+          }
+        },
+        "manifest_sha256": "0512a9ebd3b3c345057056eaaba80e9d16d100f99963f2d6ba902d07542aa5b4",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "fa142a4e807b7e710c5a74c63784196323855102a425829699c147abad72c11a",
+        "seed": 7,
+        "splitter_sha256": "6507c1286f6aea012945a3c06bf184919ed52ae05ff58fc3b9f767a82db339a6",
+        "status": "complete"
+      }
+    },
+    "varied": {
+      "generation": {
+        "manifest_sha256": "dcccd38fafad9bae422d37dfc6e83702a44a6b28b5fe1a5708904b62cd3e1302",
+        "recipe": {
+          "contract": "synthetic-generation-v2",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.95,
+            "base_seed": 47000,
+            "hard": false,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": true
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "2b6c33b7a4b7b40e42501cac5e0cda8677de00ac7ae1a5fc2ec723a66a60e580",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "139f68d621536a070557b59e5357c7ee28b874043b4b4fa9fccfde3ec119bfa3",
+            "unrender/data_gen/layout.py": "5af5f1284ea323af725df2828b04debf553ede21872ad65851157fe40c3b7062",
+            "unrender/data_gen/provenance.py": "4ef0f06631ecaf79c8e87cb884752d3d402c9889b31ca10293368704477b1729",
+            "unrender/data_gen/render.py": "924788f45b89ec12d075b453b06b35af6f3cda9f65c3d8438ac96d5ae5136c85",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "b5a043dde2420b40d6b3d8f1b6e7e035aa7a9311b1e35c9f5599de9dc5d35ee5",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v2",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "e8744506cf0f6eb264dfd153c37d82f5e3f4d191d86ef6962d0be45f579f255f"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "89c6e5b2edc3576f201b7eefba4e762a7281ac99e9ee324b29b785f27ece1beb"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "203493d47148a55e4b8538ec0c7ecc7e72576d2f3730fb216a343300ffb33ca3"
+          }
+        },
+        "manifest_sha256": "dcccd38fafad9bae422d37dfc6e83702a44a6b28b5fe1a5708904b62cd3e1302",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "b5a043dde2420b40d6b3d8f1b6e7e035aa7a9311b1e35c9f5599de9dc5d35ee5",
+        "seed": 7,
+        "splitter_sha256": "6507c1286f6aea012945a3c06bf184919ed52ae05ff58fc3b9f767a82db339a6",
+        "status": "complete"
+      }
+    }
+  },
+  "all_72_targets_unchanged_from_synthetic_contract_v1": {
+    "easy": {
+      "unchanged": true,
+      "count": 24
+    },
+    "hard": {
+      "unchanged": true,
+      "count": 24
+    },
+    "varied": {
+      "unchanged": true,
+      "count": 24
+    }
+  },
+  "native_development_checks": {
+    "total": 252,
+    "status_clear": 252,
+    "seed_47000_per_profile": 24,
+    "seed_91000_per_profile": 60,
+    "independent_review": false
+  },
+  "processor": {
+    "images": 72,
+    "budgets_per_image": 2,
+    "reconstructed_rasters_equal_encoded_pixels": 144,
+    "fewer_tokens_at_512": 19,
+    "retained_release_path": "unrender-inference-cache/releases/3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e/preprocessor_config.json",
+    "full_model_release_rehashed": false,
+    "model_inference_calls": 0
+  },
+  "historical_artifacts_changed": false,
+  "artifacts": {
+    "augmentation/hard-0000013/00-native.png": "85b84f17ee29b4e4cccacf54720cd4c6eccd4a942ac7ad1a8f648501fa40336b",
+    "augmentation/hard-0000013/01-lambda.png": "f66272b9a99dad8d5be55280862ebc1b6a539cd9c6771c168d279d577ab1d97a",
+    "augmentation/hard-0000013/02-jpeg.png": "80e2260f02171b3955b9b9e775fdfa0ed221d8921d2e90b9c90103dacbc8c29e",
+    "augmentation/hard-0000013/03-noise.png": "d826fcec0d6f28fc17bdc602b0d2a34a43d0850ede5a2b609c9dc8c2dd176083",
+    "augmentation/hard-0000013/04-final.png": "d826fcec0d6f28fc17bdc602b0d2a34a43d0850ede5a2b609c9dc8c2dd176083",
+    "augmentation/hard-0000013/report.json": "53202fcbcee39afa953ea32c0b2adb74c44bf95a6d0d8332ab73ec6fdbecd5af",
+    "augmentation/varied-0000020/00-native.png": "6e404265dc61f1d7a3fffdf7afa03a11df9a123c00010483f9cae906c8ddf9ec",
+    "augmentation/varied-0000020/01-lambda.png": "dca26ee7d851c325f827e122322c6ffb2fb3c9a4aabdcae51027d516eb22418e",
+    "augmentation/varied-0000020/02-rescale.png": "a2e3593ef61e94df93e4d6755b7245856373b5fd67f3195ab896c40ebf649229",
+    "augmentation/varied-0000020/03-brightness_contrast.png": "71acef75174a0b8573feff2d45ee894104f674ae8bcb5b66524e929348bd8b4d",
+    "augmentation/varied-0000020/04-final.png": "71acef75174a0b8573feff2d45ee894104f674ae8bcb5b66524e929348bd8b4d",
+    "augmentation/varied-0000020/report.json": "daa7df4ba413fc704c295a2adf52d87f67881183a1f91b715f46e05ec92bdfdb",
+    "easy.manifest.jsonl.gz": "0da35af3e7687bc862b0d40ed79a42311354d1aee8eab7c693111141dda58daa",
+    "hard.manifest.jsonl.gz": "ac77173630d3d63a9392ec5d3af1a5a1cf5268126c6a1daeadeae21fcb1b1542",
+    "native/varied-0000003.png": "69636bf22fbf988533bd816dc5ff51ce630ef44cf78fa82fc0dd60835a003b29",
+    "native/varied-0000005.png": "cb16411934abf02aa8be71dc8584e924d1e845798873aff574fb8637be1f0aeb",
+    "native/varied-0000006.png": "b1291fd7778b4661642cdebfabcd9c8b666b941cf312f3c6dbf202875101a29f",
+    "native/varied-0000015.png": "095501c1746a2f4c7d13946cde1007990d5705fa5f4a8b7b90927f04da486b1c",
+    "native-180.json.gz": "414bdf958fb46a864abaac230d7bc67d82a066e3de6597dd9bb13ca353f749e1",
+    "preprocessor_config.json": "93585062a80db5e8ca038efc7726a3e6411d9db948472d81d63c6303993be8c5",
+    "processor/hard/0000013-512.png": "8f8b836b059dfa01da09dbb77309dde21adc121ea28306853d2e4e98bb785fcf",
+    "processor/hard/0000013-full.png": "8f8b836b059dfa01da09dbb77309dde21adc121ea28306853d2e4e98bb785fcf",
+    "processor/varied/0000003-512.png": "68dfd9cda4ff3f476b12c47d3f461bd019b94e9467174931f851c95fb085474a",
+    "processor/varied/0000003-full.png": "68dfd9cda4ff3f476b12c47d3f461bd019b94e9467174931f851c95fb085474a",
+    "processor/varied/0000005-512.png": "cc020d7c999572b0458d24dd47d353e08bef77f49c198f907946f58b80a301d8",
+    "processor/varied/0000005-full.png": "cc020d7c999572b0458d24dd47d353e08bef77f49c198f907946f58b80a301d8",
+    "processor/varied/0000006-512.png": "690315c90dee6eef3ebdacbfa959880c6617172d438b5cc67f9354f2680e55bf",
+    "processor/varied/0000006-full.png": "690315c90dee6eef3ebdacbfa959880c6617172d438b5cc67f9354f2680e55bf",
+    "processor/varied/0000015-512.png": "3a5eb7ed5f8f514280866ea5b13509047970e0ebccac035070dd67462de8a123",
+    "processor/varied/0000015-full.png": "3a5eb7ed5f8f514280866ea5b13509047970e0ebccac035070dd67462de8a123",
+    "processor/varied/0000020-512.png": "536a49201925af6e42e638d540fcd391edfc1a1c27223f8e2926fcfdecdf3c50",
+    "processor/varied/0000020-full.png": "536a49201925af6e42e638d540fcd391edfc1a1c27223f8e2926fcfdecdf3c50",
+    "processor-report.json.gz": "4b18366a83223456374be963c935b7c1a6e5f733fc4f08dbf340fabea53bfa48",
+    "varied.manifest.jsonl.gz": "d4945fb78edbc11bc14cefe1a9e26fd145173c27af640f0a747aa610d610309a"
+  },
+  "validation": {
+    "tests": {
+      "passed": 543,
+      "skipped": 0,
+      "warnings": 4,
+      "seconds": 154.23
+    },
+    "lint": "passed",
+    "product_types": "passed",
+    "clean_source_archive": {
+      "retained_png_count": 26,
+      "artifact_hashes": "passed",
+      "recorded_generation_source_hashes": "passed",
+      "auditor_source_and_processor_config_hashes": "passed",
+      "historical_common300": {
+        "predictions_verified": 900,
+        "scores_and_paired_intervals": "unchanged",
+        "valid_new_benchmark": false
+      }
+    }
+  }
+}

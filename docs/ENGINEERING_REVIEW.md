@@ -4,7 +4,11 @@ This guide is the entry point for an independent review of Unrender's controlled
 
 [Live product](https://unrender.onrender.com/) · [Demo video](https://screen.studio/share/4lFdVojh) · [README and screenshots](../README.md) · [CI history](https://github.com/ryouol/Unrender/actions/workflows/ci.yml)
 
-## Review baseline
+## Current local remediation
+
+The September 18 readiness branch changes are tracked in [audit remediation](AUDIT_REMEDIATION.md), with explicit remaining gates and benchmark requirements. [Training reproducibility](TRAINING_REPRODUCIBILITY.md) describes the pinned recipe, weighted objective, processor and resume checks. The 72-chart packet is development material awaiting an independent reviewer. No new quality, speedup or production rollout is established by these edits.
+
+## Dated deployment baseline
 
 The September 12, 2026 handoff describes runtime commit [`a14b961`](https://github.com/ryouol/Unrender/commit/a14b961db721004a4ad77d4e2ab5cdac343d1ef9), schema 14. Documentation-only commits may follow without a runtime redeploy. The latest deployment record is in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md).
 
@@ -27,7 +31,7 @@ The demo and screenshots explain the user experience. They are not a model evalu
 
 Use the exact installation and `sh scripts/run_local.sh` instructions in the [README](../README.md#run-locally). The launcher sets local destinations explicitly, so production credentials in an operator shell do not turn a replay review into a cloud inference call.
 
-1. Open `/login` and choose **Run saved model replay**. Confirm the UI identifies the sample workspace.
+1. Open `/login` and choose **Open reference example**. Confirm the UI identifies the sample workspace.
 2. Compare source and table, edit one value, and save a correction. Open version history.
 3. Save and approve. Download CSV, JSON, and XLSX; inspect the workbook's Audit sheet.
 4. Sign out. The ephemeral sample is deleted; open a new sample to start fresh.

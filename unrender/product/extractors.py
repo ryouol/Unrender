@@ -11,14 +11,17 @@ import hashlib
 import hmac
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from PIL import Image, ImageOps
 
 from unrender.product.config import Settings
+from unrender.product.provenance import ExtractionDiagnostics, ExtractionOrigin, sha256
+from unrender.prompts import EXTRACTION_PROMPT
 from unrender.schema.chart_schema import ChartData
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
 
 class ExtractionError(RuntimeError):
@@ -33,6 +36,8 @@ class ExtractionOutput:
     raw: str
     extractor: str
     model_version: str
+    diagnostics: ExtractionDiagnostics = field(default_factory=ExtractionDiagnostics)
+    origin: ExtractionOrigin = "unavailable"
 
 
 class Extractor(Protocol):
@@ -40,7 +45,7 @@ class Extractor(Protocol):
 
 
 class ReplayExtractor:
-    """Serve one saved model result only when the bundled source matches exactly."""
+    """Serve reference data only when the bundled synthetic source matches exactly."""
 
     def __init__(self, static_dir: Path):
         self.source_path = static_dir / "demo" / "budget-quarter.webp"
@@ -71,6 +76,7 @@ class ReplayExtractor:
             raw=payload["raw"],
             extractor="saved-replay",
             model_version=payload["model_version"],
+            origin="reference_fixture",
         )
 
 
@@ -139,17 +145,43 @@ class ModalExtractor:
                 "provider_release_mismatch",
                 "The inference provider release did not match the approved deployment.",
             )
-        if not payload.get("json"):
+        if payload.get("parser_version") != PARSER_VERSION:
+            raise ExtractionError(
+                "provider_contract_mismatch",
+                "The provider output contract needs an operator update.",
+            )
+        if payload.get("finish_reason") == "length":
+            raise ExtractionError(
+                "model_output_truncated",
+                "The model reached its output limit. No partial table was published. "
+                "Try a smaller chart crop.",
+            )
+        count, limit = payload.get("output_tokens"), payload.get("max_output_tokens")
+        if (
+            payload.get("finish_reason") != "eos"
+            or type(count) is not int
+            or type(limit) is not int
+            or not 0 < count < limit
+        ):
+            raise ExtractionError(
+                "model_completion_unverified",
+                "The model did not confirm a complete response. No table was published.",
+            )
+        raw = payload.get("raw")
+        if not isinstance(raw, str):
+            raise ExtractionError("model_output_invalid", "The model returned no raw response.")
+        chart, errors = parse_chart_json(raw)
+        if chart is None:
             raise ExtractionError(
                 "model_output_invalid",
-                "The model response could not be parsed. Review the source and try again.",
+                "The model returned incomplete or unsupported chart data. "
+                "No partial table was published.",
             )
-        try:
-            chart = ChartData.model_validate(payload["json"])
-        except ValueError as exc:
+        if payload.get("json") != chart.model_dump() or payload.get("parse_errors") != errors:
             raise ExtractionError(
-                "model_output_invalid", "The model returned an unsupported chart structure."
-            ) from exc
+                "provider_contract_mismatch",
+                "The provider result did not match its raw response and parsing diagnostics.",
+            )
         model_version = (
             f"{self.settings.modal_model_path}@{self.settings.modal_model_revision}"
             if self.settings.modal_model_revision
@@ -157,11 +189,31 @@ class ModalExtractor:
         )
         if actual_release:
             model_version += f"+provider:{actual_release[:12]}"
+        try:
+            diagnostics = ExtractionDiagnostics(
+                parser_version=PARSER_VERSION,
+                parse_status="syntax_repaired" if errors else "raw_valid",
+                finish_reason="eos",
+                output_tokens=count,
+                max_output_tokens=limit,
+                provider_release=actual_release or None,
+                model_repository=self.settings.modal_model_path,
+                model_revision=self.settings.modal_model_revision or None,
+                model_digest=self.settings.modal_model_digest or None,
+                prompt_sha256=sha256(EXTRACTION_PROMPT),
+                schema_sha256=sha256(json.dumps(ChartData.model_json_schema(), sort_keys=True)),
+            )
+        except ValueError as exc:
+            raise ExtractionError(
+                "provider_contract_mismatch", "The provider returned invalid extraction metadata."
+            ) from exc
         return ExtractionOutput(
             chart=chart,
-            raw=str(payload.get("raw", "")),
+            raw=raw,
             extractor="modal",
             model_version=model_version,
+            diagnostics=diagnostics,
+            origin="model",
         )
 
 

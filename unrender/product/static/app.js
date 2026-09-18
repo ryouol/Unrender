@@ -1451,7 +1451,7 @@ function renderJob() {
   byId("job-status").textContent = statusLabel(job.status);
   byId("job-title").textContent = job.status === "approved" ? "Approved data" : ["review"].includes(job.status) ? "Review data" : statusLabel(job.status);
   byId("review-filename").textContent = chartName(job);
-  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage} · ${formatDate(job.updated_at)}`;
+  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage}${job.result_version ? ` · Version ${job.result_version}` : ""} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
   byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
   const error = byId("job-error");
@@ -1461,6 +1461,7 @@ function renderJob() {
   } else {
     error.hidden = true;
   }
+  setHidden("review-conflict", true);
   const resultReady = ["review", "approved"].includes(job.status) && job.result;
   setHidden("review-notice", !resultReady || job.status === "approved");
   setHidden("result-loading", Boolean(resultReady));
@@ -1469,12 +1470,44 @@ function renderJob() {
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
   renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
+  renderExtractionEvidence(job, Boolean(resultReady));
   if (resultReady) renderEditor(job.result);
   renderJobActions();
   setHidden("audit-list", true);
   setHidden("version-list", true);
   byId("toggle-audit-button").textContent = "Show activity";
   byId("toggle-versions-button").textContent = "Show versions";
+}
+
+function renderExtractionEvidence(job, visible) {
+  setHidden("extraction-details", !visible);
+  const warnings = job.extraction_warnings || [];
+  const notice = byId("extraction-notice");
+  notice.textContent = warnings.join(" ");
+  notice.hidden = !visible || warnings.length === 0;
+  const receipt = job.extraction_receipt;
+  const diagnostics = receipt?.diagnostics;
+  const rows = [
+    ["Result", `Version ${job.result_version || "unknown"}`],
+    ["Origin", receipt?.origin === "reference_fixture" ? "Saved reference example" : receipt?.origin === "model" ? "Model extraction" : "Not recorded"],
+    ["Model or reference", receipt?.model_version || "Not recorded"],
+    ["Output formatting", diagnostics?.parse_status === "raw_valid" ? "Accepted without repair" : diagnostics?.parse_status === "syntax_repaired" ? "Formatting repaired" : "Not recorded"],
+    ["Completion", diagnostics?.finish_reason === "eos" ? "End of response observed below the token limit" : "Not verified"],
+    ["Response tokens", diagnostics?.output_tokens == null ? "Not recorded" : `${diagnostics.output_tokens} of ${diagnostics.max_output_tokens} maximum`],
+    ["Parser", diagnostics?.parser_version || "Not recorded"],
+    ["Provider release", diagnostics?.provider_release || "Not recorded"],
+    ["Source SHA-256", receipt?.source_sha256 || "Not recorded"],
+    ["Provider input SHA-256", receipt?.provider_input_sha256 || "Not recorded"],
+    ["Result SHA-256", job.result_sha256 || "Not recorded"],
+    ["Extraction receipt SHA-256", job.extraction_receipt_sha256 || "Not recorded"],
+  ];
+  byId("extraction-evidence").replaceChildren(...rows.flatMap(([label, value]) => {
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = value;
+    return [term, detail];
+  }));
 }
 
 function renderWorkflowSteps(currentStep) {
@@ -1560,6 +1593,45 @@ function discardEditorChanges() {
   return true;
 }
 
+function showReviewError(error, jobId, viewEpoch) {
+  if (isStaleRequest(error) || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) return;
+  if (error.code === "result_conflict") {
+    const notice = byId("review-conflict");
+    const text = document.createElement("p");
+    text.textContent = "This result changed in another tab. Your displayed table and unsaved edits have been kept. Load the latest version and review it before continuing.";
+    const reload = actionButton("Load latest version", "button-secondary", reloadLatestResult);
+    notice.replaceChildren(text, reload);
+    notice.hidden = false;
+    notice.tabIndex = -1;
+    notice.focus();
+  }
+  showToast(error);
+}
+
+async function reloadLatestResult() {
+  const jobId = state.currentJob?.id;
+  const viewEpoch = state.viewEpoch;
+  const form = byId("result-form");
+  if (!jobId || form.getAttribute("aria-busy") === "true") return;
+  if (state.editorDirty && !window.confirm("Load the latest saved version? This replaces your unsaved corrections. Cancel to keep your edits.")) return;
+  form.setAttribute("aria-busy", "true");
+  form.inert = true;
+  try {
+    const latest = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: state.viewController.signal });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    state.currentJob = latest;
+    renderJob();
+    showToast("Latest version loaded. Review it before approving.");
+  } catch (error) {
+    showReviewError(error, jobId, viewEpoch);
+  } finally {
+    if (viewEpoch === state.viewEpoch) {
+      form.inert = false;
+      form.removeAttribute("aria-busy");
+    }
+  }
+}
+
 async function downloadExport(job, format) {
   if (state.editorDirty) {
     showToast("Save your corrections before exporting so the download includes your changes.");
@@ -1573,7 +1645,7 @@ async function downloadExport(job, format) {
   let objectUrl = null;
   try {
     const response = await fetch(
-      `/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format)}`,
+      `/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format)}?expected_revision=${routeSegment(job.review_revision)}`,
       { headers: { Accept: "application/octet-stream" }, signal }
     );
     if (!authContextMatches(authEpoch, authRecord)
@@ -1587,7 +1659,10 @@ async function downloadExport(job, format) {
         void publishAuthChange("session-ended");
         throw staleAuthError("The authenticated session ended");
       }
-      throw new Error(`Export failed (${response.status})`);
+      const payload = await response.json().catch(() => null);
+      const error = new Error(payload?.error?.message || `Export failed (${response.status})`);
+      error.code = payload?.error?.code;
+      throw error;
     }
     const blob = await response.blob();
     if (!authContextMatches(authEpoch, authRecord)
@@ -1611,7 +1686,7 @@ async function downloadExport(job, format) {
     setHidden("export-completion", false);
     showToast("Download started. Check your browser’s downloads.");
   } catch (error) {
-    if (!isStaleRequest(error)) showToast(error);
+    showReviewError(error, job.id, viewEpoch);
   } finally {
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl);
@@ -1636,6 +1711,7 @@ async function jobMutation(action) {
   try {
     const updated = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, {
       method: "POST", signal,
+      ...(action === "approve" ? { body: { expected_revision: job.review_revision } } : {}),
     });
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     state.currentJob = updated;
@@ -1650,7 +1726,7 @@ async function jobMutation(action) {
     }
     showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
   } catch (error) {
-    showToast(error);
+    showReviewError(error, job.id, viewEpoch);
   } finally {
     if (viewEpoch === state.viewEpoch) {
       form.inert = false;
@@ -1672,9 +1748,9 @@ function clearSelectedChart() {
   byId("job-source-image").style.width = "";
   byId("job-source-image").className = "";
   byId("source-zoom").value = "1";
-  for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
-  for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
-  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);
+  for (const id of ["result-table", "series-editor-list", "chart-type-input", "extraction-evidence", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
+  for (const id of ["extraction-notice", "editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
+  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "review-conflict", "extraction-notice", "extraction-details", "audit-list", "version-list"]) setHidden(id, true);
 }
 
 async function deleteCurrentJob() {
@@ -1727,6 +1803,7 @@ function renderEditor(result) {
   byId("chart-title-input").value = result.title || "";
   byId("x-label-input").value = result.x_axis?.label || "";
   byId("y-label-input").value = result.y_axis?.label || "";
+  byId("x-unit-input").value = result.x_axis?.unit || "";
   byId("y-unit-input").value = result.y_axis?.unit || "";
   state.editorRows = editorRows(result);
   state.editorSeries = (result.series?.length ? result.series : [{ name: null }]).map(
@@ -1743,7 +1820,9 @@ function renderResultTable() {
   table.replaceChildren();
   const head = document.createElement("thead");
   const heading = document.createElement("tr");
-  for (const title of ["Series", "Category / x", "Value", "Row"]) {
+  const xUnit = byId("x-unit-input").value.trim();
+  const yUnit = byId("y-unit-input").value.trim();
+  for (const title of ["Series", `Category / x${xUnit ? ` (${xUnit})` : ""}`, `Value${yUnit ? ` (${yUnit})` : ""}`, "Row"]) {
     const th = document.createElement("th");
     th.scope = "col";
     th.textContent = title;
@@ -1864,7 +1943,6 @@ function coerceX(value, xType) {
 
 function buildEditedResult() {
   collectEditorRows();
-  const original = state.currentJob.result;
   const series = state.editorSeries.map((item, seriesIndex) => ({
     name: item.name,
     points: state.editorRows
@@ -1876,7 +1954,7 @@ function buildEditedResult() {
     title: byId("chart-title-input").value.trim() || null,
     x_axis: {
       label: byId("x-label-input").value.trim() || null,
-      unit: original.x_axis?.unit || null,
+      unit: byId("x-unit-input").value.trim() || null,
     },
     y_axis: {
       label: byId("y-label-input").value.trim() || null,
@@ -1892,6 +1970,7 @@ async function saveCorrections(event, { approve = false } = {}) {
   if (form.getAttribute("aria-busy") === "true") return false;
   if (!form.reportValidity()) return false;
   const jobId = state.currentJob?.id;
+  const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
   const authEpoch = state.authEpoch;
   const signal = state.viewController.signal;
@@ -1902,13 +1981,15 @@ async function saveCorrections(event, { approve = false } = {}) {
   try {
     const result = buildEditedResult();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result }, signal,
+      method: "PATCH", body: { result, expected_revision: expectedRevision }, signal,
     });
     if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
     saved = true;
     if (approve) {
-      const approved = await api(`/api/jobs/${routeSegment(jobId)}/approve`, { method: "POST", signal });
+      const approved = await api(`/api/jobs/${routeSegment(jobId)}/approve`, {
+        method: "POST", body: { expected_revision: updated.review_revision }, signal,
+      });
       if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
       state.currentJob = approved;
     }
@@ -1920,7 +2001,7 @@ async function saveCorrections(event, { approve = false } = {}) {
   } catch (error) {
     if (approve && saved && authEpoch === state.authEpoch
       && viewEpoch === state.viewEpoch && state.currentJob?.id === jobId) renderJob();
-    showToast(error);
+    showReviewError(error, jobId, viewEpoch);
     return false;
   } finally {
     if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
@@ -1985,6 +2066,7 @@ async function toggleAudit() {
 
 async function restoreVersion(version) {
   const jobId = state.currentJob?.id;
+  const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
   const signal = state.viewController.signal;
   const form = byId("result-form");
@@ -1996,12 +2078,8 @@ async function restoreVersion(version) {
   form.setAttribute("aria-busy", "true");
   form.inert = true;
   try {
-    const saved = await api(
-      `/api/jobs/${routeSegment(jobId)}/versions/${routeSegment(version.version)}`, { signal },
-    );
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
-    const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result: saved.result }, signal,
+    const updated = await api(`/api/jobs/${routeSegment(jobId)}/restore`, {
+      method: "POST", body: { version: version.version, expected_revision: expectedRevision }, signal,
     });
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
@@ -2010,7 +2088,7 @@ async function restoreVersion(version) {
     renderJob();
     showToast(`Version ${version.version} restored as a new correction`);
   } catch (error) {
-    showToast(error);
+    showReviewError(error, jobId, viewEpoch);
   } finally {
     if (viewEpoch === state.viewEpoch) {
       form.inert = false;
@@ -2302,7 +2380,13 @@ function bindEvents() {
     else if (!discardEditorChanges()) event.preventDefault();
   });
   byId("export-another-button").addEventListener("click", startUpload);
-  byId("result-form").addEventListener("input", markEditorDirty);
+  byId("result-form").addEventListener("input", (event) => {
+    markEditorDirty(event);
+    if (["x-unit-input", "y-unit-input"].includes(event.target.id)) {
+      collectEditorRows();
+      renderResultTable();
+    }
+  });
   byId("result-form").addEventListener("change", markEditorDirty);
   window.addEventListener("beforeunload", (event) => {
     if (!state.editorDirty) return;

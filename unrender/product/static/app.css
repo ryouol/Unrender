@@ -426,3 +426,9 @@ dialog::backdrop { background: rgb(12 18 30 / .4); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+.extraction-details { margin-bottom: 16px; }
+.extraction-details p { color: var(--muted); }
+.extraction-details dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
+.extraction-details dt { font-weight: 600; }
+.extraction-details dd { margin: 0; overflow-wrap: anywhere; }

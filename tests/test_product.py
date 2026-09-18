@@ -59,6 +59,7 @@ from unrender.product.web import (
 )
 from unrender.product.worker import JobWorker
 from unrender.schema.chart_schema import ChartData
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
 STATIC_DIR = Path(__file__).parents[1] / "unrender" / "product" / "static"
 
@@ -279,6 +280,11 @@ def test_modal_release_handshake_rejects_drift_and_records_approved_release(
     response = {
         "json": fixture["result"],
         "raw": fixture["raw"],
+        "parser_version": PARSER_VERSION,
+        "parse_errors": parse_chart_json(fixture["raw"])[1],
+        "finish_reason": "eos",
+        "output_tokens": 100,
+        "max_output_tokens": 4096,
         "provider_release": "b" * 64,
     }
     remote_calls: list[tuple[object, ...]] = []
@@ -2852,7 +2858,16 @@ def test_modal_contract_is_exact_nonspending_and_release_digest_is_case_normaliz
         "json": json.loads(
             (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
         )["result"],
-        "raw": "case-normalized",
+        "raw": json.dumps(
+            json.loads(
+                (STATIC_DIR / "demo" / "budget-quarter-result.json").read_text(encoding="utf-8")
+            )["result"]
+        ),
+        "parser_version": PARSER_VERSION,
+        "parse_errors": [],
+        "finish_reason": "eos",
+        "output_tokens": 100,
+        "max_output_tokens": 4096,
         "provider_release": "a" * 64,
     }
 

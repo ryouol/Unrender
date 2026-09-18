@@ -58,7 +58,7 @@ production_app = modal.App("unrender-production")
 # Production inference is deliberately separate from the mutable research image.
 # This contract changes automatically when any reviewed provider/schema source
 # changes, rather than relying on an operator to remember a manual version bump.
-INFER_PROVIDER_CONTRACT = "unrender-infer-one-v2"
+INFER_PROVIDER_CONTRACT = "unrender-infer-one-v3"
 INFER_DIRECT_DEPENDENCIES = {
     "accelerate": "1.12.0",
     "huggingface-hub": "0.36.0",
@@ -796,7 +796,7 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
     from unrender.eval.providers import hf_vlm_provider
     from unrender.prompts import EXTRACTION_PROMPT
     from unrender.schema.json_to_csv import chart_to_csv
-    from unrender.schema.validate import parse_chart_json
+    from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
     started = time.perf_counter()
     timings = {}
@@ -846,6 +846,10 @@ def infer_one(image_bytes: bytes, model_path: str, revision: str, model_digest: 
             "json": pred.model_dump() if pred else None,
             "csv": chart_to_csv(pred) if pred else None,
             "parse_errors": errs,
+            "parser_version": PARSER_VERSION,
+            "finish_reason": timings["finish_reason"],
+            "output_tokens": timings["output_tokens"],
+            "max_output_tokens": timings["max_output_tokens"],
             "provider_release": provider_release,
         }
         succeeded = True

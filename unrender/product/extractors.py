@@ -19,6 +19,7 @@ from PIL import Image, ImageOps
 
 from unrender.product.config import Settings
 from unrender.schema.chart_schema import ChartData
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json
 
 
 class ExtractionError(RuntimeError):
@@ -139,17 +140,43 @@ class ModalExtractor:
                 "provider_release_mismatch",
                 "The inference provider release did not match the approved deployment.",
             )
-        if not payload.get("json"):
+        if payload.get("parser_version") != PARSER_VERSION:
+            raise ExtractionError(
+                "provider_contract_mismatch",
+                "The provider output contract needs an operator update.",
+            )
+        if payload.get("finish_reason") == "length":
+            raise ExtractionError(
+                "model_output_truncated",
+                "The model reached its output limit. No partial table was published. "
+                "Try a smaller chart crop.",
+            )
+        count, limit = payload.get("output_tokens"), payload.get("max_output_tokens")
+        if (
+            payload.get("finish_reason") != "eos"
+            or type(count) is not int
+            or type(limit) is not int
+            or not 0 < count < limit
+        ):
+            raise ExtractionError(
+                "model_completion_unverified",
+                "The model did not confirm a complete response. No table was published.",
+            )
+        raw = payload.get("raw")
+        if not isinstance(raw, str):
+            raise ExtractionError("model_output_invalid", "The model returned no raw response.")
+        chart, errors = parse_chart_json(raw)
+        if chart is None:
             raise ExtractionError(
                 "model_output_invalid",
-                "The model response could not be parsed. Review the source and try again.",
+                "The model returned incomplete or unsupported chart data. "
+                "No partial table was published.",
             )
-        try:
-            chart = ChartData.model_validate(payload["json"])
-        except ValueError as exc:
+        if payload.get("json") != chart.model_dump() or payload.get("parse_errors") != errors:
             raise ExtractionError(
-                "model_output_invalid", "The model returned an unsupported chart structure."
-            ) from exc
+                "provider_contract_mismatch",
+                "The provider result did not match its raw response and parsing diagnostics.",
+            )
         model_version = (
             f"{self.settings.modal_model_path}@{self.settings.modal_model_revision}"
             if self.settings.modal_model_revision
@@ -159,7 +186,7 @@ class ModalExtractor:
             model_version += f"+provider:{actual_release[:12]}"
         return ExtractionOutput(
             chart=chart,
-            raw=str(payload.get("raw", "")),
+            raw=raw,
             extractor="modal",
             model_version=model_version,
         )

@@ -1,0 +1,45 @@
+{
+  "parser_version": "chart-json-v2",
+  "scope": "common300 saved synthetic outputs; no new generation or stop-reason evidence",
+  "source_sha256": "bf4fd0a0b9c15eecd725f3a39e9a63146f8161c1adfc9e98f0b2fd5d655b2322",
+  "models": {
+    "base 4B (pinned)": {
+      "prediction_sha256": "f68eab3219ad63d8a5ae8fc4fb96b2d5828acdcf331411a38967561248e395fc",
+      "n": 300,
+      "accepted": 232,
+      "syntax_repaired": 0,
+      "rejected": 68,
+      "diagnostics": {
+        "invalid_chart_structure": 26,
+        "invalid_chart_values": 6,
+        "invalid_json": 36
+      },
+      "primary_cell_f1": 0.06589006188569349,
+      "raw_semantic_valid_rate": 0.7166666666666667
+    },
+    "table-LoRA (fair)": {
+      "prediction_sha256": "c3cc0b1cff5c9b757b6ee533bf4f6d4a5ee250cbe615a96e10674e18cb2233a4",
+      "n": 300,
+      "accepted": 289,
+      "syntax_repaired": 0,
+      "rejected": 11,
+      "diagnostics": {
+        "invalid_json": 11
+      },
+      "primary_cell_f1": 0.2890005448271687,
+      "raw_semantic_valid_rate": 0.9533333333333334
+    },
+    "table-LoRA + numeric-loss": {
+      "prediction_sha256": "ba5add1a5607e2f35150d36f4012341103bb7df1fa3ebe12d9b085b692b5262f",
+      "n": 300,
+      "accepted": 284,
+      "syntax_repaired": 0,
+      "rejected": 16,
+      "diagnostics": {
+        "invalid_json": 16
+      },
+      "primary_cell_f1": 0.2667075038284839,
+      "raw_semantic_valid_rate": 0.9366666666666666
+    }
+  }
+}

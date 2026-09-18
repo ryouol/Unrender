@@ -153,6 +153,20 @@ HF_MODEL_CONFIG: dict = {}
 HF_GEN_CONFIG: dict = {}
 
 
+def generation_finish_reason(tokens, eos_token_id, max_output_tokens: int) -> str:
+    """Conservatively classify a single generated sequence, before decoding.
+
+    Reaching the cap wins over EOS: generation configs may force EOS at the limit.
+    Without an observed EOS below the cap, completion is not established.
+    """
+    if len(tokens) >= max_output_tokens:
+        return "length"
+    eos_ids = eos_token_id if isinstance(eos_token_id, (list, tuple)) else [eos_token_id]
+    if len(tokens) and int(tokens[-1]) in eos_ids:
+        return "eos"
+    return "unknown"
+
+
 def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timings=None) -> str:
     """Local open-model baseline (base Qwen-VL, your fine-tune, etc.).
 
@@ -231,6 +245,10 @@ def hf_vlm_provider(image_path, prompt, model, gt_json=None, rng=None, *, timing
         timings["generate_decode_seconds"] = time.perf_counter() - preprocessed
         timings["input_tokens"] = inputs["input_ids"].shape[1]
         timings["output_tokens"] = len(trimmed)
+        timings["max_output_tokens"] = gen_kwargs["max_new_tokens"]
+        timings["finish_reason"] = generation_finish_reason(
+            trimmed, net.generation_config.eos_token_id, gen_kwargs["max_new_tokens"]
+        )
     return decoded
 
 

@@ -442,6 +442,7 @@ def test_inference_timings_preserve_response_and_hide_customer_data(monkeypatch,
         if fails:
             raise ValueError("private exception detail")
         timings["generate_decode_seconds"] = 1.25
+        timings.update(finish_reason="eos", output_tokens=100, max_output_tokens=4096)
         return raw
 
     monkeypatch.setattr(providers, "hf_vlm_provider", provider)
@@ -453,7 +454,17 @@ def test_inference_timings_preserve_response_and_hide_customer_data(monkeypatch,
         response = call(b"private image", "private repository", "revision", "digest")
         assert response["raw"] == raw
         assert response["provider_release"] == "release-pin"
-        assert set(response) == {"raw", "json", "csv", "parse_errors", "provider_release"}
+        assert set(response) == {
+            "raw",
+            "json",
+            "csv",
+            "parse_errors",
+            "provider_release",
+            "parser_version",
+            "finish_reason",
+            "output_tokens",
+            "max_output_tokens",
+        }
     output = capsys.readouterr().out
     event = json.loads(output)
     assert event["event"] == "inference_timings"
@@ -507,6 +518,7 @@ def test_hf_timing_does_not_change_generation_or_cached_output(monkeypatch, tmp_
 
     class Model:
         device = "cpu"
+        generation_config = SimpleNamespace(eos_token_id=4)
 
         def generate(self, **kwargs):
             calls.append(kwargs)
@@ -547,9 +559,13 @@ def test_hf_timing_does_not_change_generation_or_cached_output(monkeypatch, tmp_
                 "generate_decode_seconds",
                 "input_tokens",
                 "output_tokens",
+                "finish_reason",
+                "max_output_tokens",
             }
             assert collector["input_tokens"] == 2
             assert collector["output_tokens"] == 2
-            assert all(value >= 0 for value in collector.values())
+            assert collector["finish_reason"] == "eos"
+            assert collector["max_output_tokens"] == 4096
+            assert all(value >= 0 for key, value in collector.items() if key != "finish_reason")
     assert loads == ["processor", "model"]
     assert all(call["max_new_tokens"] == 4096 and call["do_sample"] is False for call in calls)

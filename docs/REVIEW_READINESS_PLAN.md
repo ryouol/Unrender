@@ -20,7 +20,8 @@ verified provider or merge the older branch's product implementation over main.
   [initial rescore](../release/evaluation-v2/RESULTS.md).
 - [ ] Evidence packaging: clean-clone reproduction with permitted raw artifacts,
   hashes, train-overlap verification and a complete scheduled/in-flight attempt
-  ledger for future runs. The private saved model artifacts remain external.
+  ledger for future runs, including generation stop reasons and the actual product
+  validation outcome. The private saved model artifacts remain external.
 - [x] Approval integrity for new operations: required revision on correction,
   restoration, approval and export; atomic checks; conflict UI preserving drafts;
   exact snapshot responses/audit; concurrent-connection and real two-tab checks.
@@ -29,9 +30,17 @@ verified provider or merge the older branch's product implementation over main.
 - [ ] Approval rollout: fresh review of historical approvals before asserting the
   new guarantee; old audit receipts cannot prove the version a person actually saw.
   Deploy the browser and server contract together and verify a controlled canary.
-- [ ] Safe parsing and diagnostics: never invent truncated numbers, change quoted
-  labels or silently drop points; persist stop/repair/partial reasons through
-  provider, database, API, UI and exports; bounded explicit retry policy.
+- [x] Safe parsing and provider completion checks: only complete-table formatting
+  repair; no invented truncated numbers, changed labels, dropped points or unit
+  coercion. The provider reports observed EOS/cap/unknown and the API independently
+  parses raw output; token-cap failures publish no partial table and do not retry.
+  See [parser contract and saved-output audit](../release/parser-v2/README.md).
+- [ ] Durable extraction diagnostics: persist successful raw/repaired status,
+  parser version, finish reason and generation/provenance receipt per result
+  version; carry through correction/restore, API, UI and every export. Existing
+  failure codes already reach the job's API/UI. Do not claim this full item done.
+- [ ] Provider rollout: coordinate v3 provider and API release pins, validate
+  completion metadata with a bounded real GPU canary, then run broad quality gates.
 - [ ] Export correctness: preserve units/scales; source hash/page/crop; approved
   version/content hash; model/provider/prompt/schema identities; verify actual
   CSV/JSON/XLSX output and retain formula-injection defenses.

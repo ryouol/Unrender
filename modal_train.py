@@ -61,13 +61,13 @@ production_app = modal.App("unrender-production")
 # changes, rather than relying on an operator to remember a manual version bump.
 INFER_PROVIDER_CONTRACT = "unrender-infer-one-v3"
 INFER_DIRECT_DEPENDENCIES = {
-    "accelerate": "1.12.0",
-    "huggingface-hub": "0.36.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.32.0",
     "pillow": "12.3.0",
     "pydantic": "2.13.5",
-    "torch": "2.9.1",
-    "torchvision": "0.24.1",
-    "transformers": "4.57.6",
+    "torch": "2.14.0",
+    "torchvision": "0.29.0",
+    "transformers": "5.17.0",
 }
 _MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MODEL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -124,36 +124,11 @@ gen_image = (
     .add_local_python_source("unrender")
 )
 
-# Train/eval image: the pyproject [train] extra + the eval scorer's deps.
-# If the unsloth install ever fails to import on a fresh build, swap the base for
-# modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11").
+# Exact standard Transformers/PEFT candidate; a CUDA integration canary is required.
 train_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "unsloth",
-        "trl>=0.9",
-        "peft>=0.11",
-        "bitsandbytes>=0.43",
-        "transformers>=4.46",
-        "accelerate>=0.34",
-        "datasets>=2.20",
-        "pillow>=10.0",
-        "matplotlib==3.11.1",  # source-bundle verification imports generator metadata
-        "pydantic>=2.5",
-        "tqdm>=4.66",
-        "rapidfuzz>=3.6",
-        "python-dotenv>=1.0",
-    )
-    .env(
-        {
-            "HF_HOME": f"{V}/.hf_cache",  # cache the ~9GB base model on the Volume once
-            # Unsloth's auto-compiler code-gens a patched qwen3_vl module that (with
-            # current transformers) contains a syntax error and crashes from_pretrained.
-            # Disabling it falls back to stock transformers modeling: slightly slower,
-            # fully correct. Revisit when unsloth/transformers re-sync.
-            "UNSLOTH_COMPILE_DISABLE": "1",
-        }
-    )
+    .pip_install_from_requirements("requirements-train.lock", extra_options="--require-hashes")
+    .env({"HF_HOME": f"{V}/.hf_cache"})
     .add_local_python_source("unrender")
 )
 
@@ -567,25 +542,6 @@ def generate_data_v2(
     print(f"Committed generation and split receipts to {out}; visual review remains required")
 
 
-@app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
-def gen_geometry_data(train_files: str = "v1,v0"):
-    """Build the geometry-supervision training targets (train.geom.jsonl) from the
-    existing train splits on the Volume — CPU, ~$0.3. Regenerates each chart's spec
-    from its seed, captures exact renderer geometry, writes the compact geometry
-    target (verified against the stored GT). Run once before the geometry train."""
-    from unrender.train.geometry_data import build_geometry_split
-
-    seeds = {"v0": 1234, "v1": 5678}
-    for t in (s.strip() for s in train_files.split(",")):
-        build_geometry_split(
-            f"{V}/data/synthetic_{t}/train.jsonl",
-            f"{V}/data/synthetic_{t}/train.geom.jsonl",
-            base_seed=seeds[t],
-            hard=(t == "v1"),
-        )
-    VOL.commit()
-
-
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=3600)
 def preflight(
     train_files: str = "",
@@ -643,77 +599,19 @@ def preflight(
 
 
 @app.function(image=train_image, volumes={V: VOL}, cpu=2.0, memory=4096, timeout=1800)
-def fetch_real_data(dirname: str = "real_v0"):
-    """Source the REAL-chart transfer eval INSIDE Modal — the dev sandbox has no
-    egress, but a Modal container does. Downloads each curated FRED/OWID chart PNG
-    plus its OFFICIAL data CSV, reads ground truth straight from the CSV (never
-    estimated off the pixels), and writes images + a test.jsonl (with /vol-absolute
-    image paths) to {V}/data/<dirname>/. Then eval with `--data <dirname>`. CPU/~free.
-    See data/real_v0/README.md."""
-    import json
-    import urllib.request
+def fetch_real_data(dirname: str):
+    """Collect unreviewed sources in a NEW directory; never writes an eval split."""
     from pathlib import Path
 
-    from unrender.data_gen.split_dataset import _row
-    from unrender.eval.build_real_set import label_to_chartdata
+    from unrender.eval.fetch_real_set import fetch
 
-    # OWID only: FRED is unreachable from Modal egress (DNS fails / datacenter IPs
-    # time out). The local tool (unrender.eval.fetch_real_set) still does FRED for a
-    # machine that can reach it; here we use OWID, which resolves and serves cleanly.
-    from unrender.eval.fetch_real_set import (
-        _OWID_COUNTRY,
-        _OWID_HI,
-        _OWID_LO,
-        OWID,
-        _is_png,
-        _owid_urls,
-        make_line_label,
-        parse_owid_csv,
-    )
-    from unrender.schema.chart_schema import canonical_json
-
-    root = Path(f"{V}/data/{dirname}")
-    imgs = root / "images"
-    imgs.mkdir(parents=True, exist_ok=True)
-
-    def get(url: str) -> bytes:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (unrender real-set)"})
-        with urllib.request.urlopen(req, timeout=45) as r:
-            return r.read()
-
-    def add(out_id, png_url, csv_url, parse, title, ylab, yunit, sname, source, rows):
-        png = get(png_url)
-        if not _is_png(png):  # bad slug/param => an HTML error page; never write a fake chart
-            print(f"  ! {out_id}: non-PNG ({len(png)}B) from {png_url} — skip")
-            return
-        pts = parse(get(csv_url).decode("utf-8", "replace"))
-        if len(pts) < 3:
-            print(f"  ! {out_id}: only {len(pts)} points — skip ({csv_url})")
-            return
-        label = make_line_label(out_id, title, ylab, yunit, sname, pts, source)
-        gt = label_to_chartdata(label, out_id)  # validate; fail loud on a bad value
-        (imgs / f"{out_id}.png").write_bytes(png)
-        meta = {"labels_shown": False, "chart_type": "line", "augmented": False, "source": source}
-        rows.append(_row(f"{root}/images/{out_id}.png", canonical_json(gt), meta))
-        print(f"  ✓ {out_id}: {len(pts)} pts  ({title})")
-
-    rows = []
-    print(f"OWID ({len(OWID)}):")
-    for out_id, slug, title, ylab, yunit in OWID:
-        png_url, csv_url = _owid_urls(slug)
-        src = (
-            f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
-            f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}"
-        )
-        try:
-            add(out_id, png_url, csv_url, parse_owid_csv, title, ylab, yunit, title, src, rows)
-        except Exception as e:  # noqa: BLE001 — one bad source shouldn't abort the batch
-            print(f"  ! {out_id}: {type(e).__name__}: {e}")
-
-    (root / "test.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    VOL.commit()
-    print(f"\nfetched {len(rows)}/{len(OWID)} real charts -> {root}/test.jsonl")
-    return len(rows)
+    if not dirname or Path(dirname).name != dirname or dirname in {".", ".."}:
+        raise ValueError("dirname must be a new dataset directory name")
+    try:
+        return fetch(f"{V}/data/{dirname}", sources="owid")
+    finally:
+        # Retain pending/failed attempts even if collection was interrupted.
+        VOL.commit()
 
 
 @app.function(
@@ -731,11 +629,10 @@ def eval_gemini(model: str = "gemini-3.1-pro-preview", dirname: str = "real_v0")
     base/LoRA arms, so the number is directly comparable. Results -> Volume."""
     import subprocess
 
-    from unrender.eval.run_baselines import run
     from unrender.prompts import EXTRACTION_PROMPT
 
     out_dir = f"{V}/outputs/eval_{dirname}__gemini"
-    pred = run(
+    pred = _cloud_evaluation(
         provider="gemini",
         model=model,
         data=f"{V}/data/{dirname}/test.jsonl",
@@ -934,6 +831,7 @@ def train_model(
     train_files: str = "",
     out_name: str = "qwen3vl4b-lora",
     base: str = "Qwen/Qwen3-VL-4B-Instruct",
+    base_revision: str = "",
     labelfree_weight: float = 1.5,
     epochs: float = 2.0,
     max_steps: int = 0,
@@ -958,6 +856,17 @@ def train_model(
     observed = require_training_sources(paths, val_paths, V)
     if expected_source_reviews is None or observed != expected_source_reviews:
         raise ValueError("source review changed or CPU preflight is missing")
+    from unrender.train.recipe import require_revision
+
+    require_revision(base_revision)
+    if not out_name or Path(out_name).name != out_name or out_name in {".", ".."}:
+        raise ValueError("training output must be a run directory name")
+    owners = modal.Dict.from_name("unrender-training-owners", create_if_missing=True)
+    claim = {"token": uuid.uuid4().hex, "call_id": modal.current_function_call_id()}
+    if not owners.put(out_name, claim, skip_if_exists=True):
+        raise ValueError("training run is owned; verify the prior call before explicit recovery")
+    # A crash/failure intentionally retains ownership. Never steal a stale-looking
+    # claim: an operator must confirm the recorded call is terminal first.
     train(
         train_paths=paths,
         val_paths=val_paths,
@@ -965,6 +874,8 @@ def train_model(
         n_evals=n_evals,
         out=f"{V}/runs/{out_name}",
         base=base,
+        base_revision=base_revision,
+        checkpoint_commit=VOL.commit,
         data_root=V,
         labelfree_weight=labelfree_weight,
         hbar_weight=hbar_weight,
@@ -977,6 +888,9 @@ def train_model(
         lora_r=lora_r,
     )
     VOL.commit()
+    if owners.get(out_name) != claim:
+        raise ValueError("training ownership changed unexpectedly")
+    owners.pop(out_name)
 
     # One-shot chain (eval_after="real_v0,common300,v2:300"): run the evals in
     # THIS container right after the merge commits — no human needed between
@@ -1005,6 +919,36 @@ def train_model(
     VOL.commit()
 
 
+def _cloud_evaluation(**kwargs):
+    """One distributed writer; persist every dispatch before buying inference.
+
+    Failed calls retain their claim. An operator must prove the former Modal
+    call terminal before clearing that claim and resuming only pending rows.
+    """
+    import uuid
+    from pathlib import Path
+
+    from unrender.eval.run_baselines import run
+
+    directory = Path(kwargs["out"])
+    if not directory.is_absolute() or not directory.is_relative_to(Path(V) / "outputs"):
+        raise ValueError("evaluation output must be below the Volume outputs directory")
+    if ".." in directory.parts:
+        raise ValueError("evaluation output cannot traverse directories")
+    owners = modal.Dict.from_name("unrender-evaluation-owners", create_if_missing=True)
+    key = directory.as_posix()
+    claim = {"token": uuid.uuid4().hex, "call_id": modal.current_function_call_id()}
+    if not owners.put(key, claim, skip_if_exists=True):
+        raise ValueError("evaluation output already owned; inspect its prior call before recovery")
+    VOL.reload()
+    prediction = run(**kwargs, persist=VOL.commit)
+    VOL.commit()
+    if owners.get(key) != claim:
+        raise ValueError("evaluation ownership changed unexpectedly")
+    owners.pop(key)
+    return prediction
+
+
 def _eval_impl(
     model_path: str,
     data: str = "v1",
@@ -1024,7 +968,6 @@ def _eval_impl(
     import subprocess
     from pathlib import Path
 
-    from unrender.eval.run_baselines import run
     from unrender.prompts import EXTRACTION_PROMPT, GEOMETRY_PROMPT
 
     prompt = GEOMETRY_PROMPT if decode == "geometry" else EXTRACTION_PROMPT
@@ -1042,7 +985,7 @@ def _eval_impl(
     # "v0"/"v1" -> the synthetic splits; "real_*" -> a hand-labeled real-chart set
     # (data/real_v0, uploaded to the Volume) for the transfer eval. See data/real_v0/README.md.
     data_sub = data if data.startswith("real") else f"synthetic_{data}"
-    pred = run(
+    pred = _cloud_evaluation(
         provider="hf",
         model=mp,
         data=f"{V}/data/{data_sub}/test.jsonl",
@@ -1153,7 +1096,6 @@ def sweep_model(
     import random
     from pathlib import Path
 
-    from unrender.eval.run_baselines import run
     from unrender.eval.score import row_status, score_rows
     from unrender.io_utils import read_jsonl
 
@@ -1187,7 +1129,7 @@ def sweep_model(
 
     data_path = f"{V}/data/synthetic_{data}/test.jsonl"
     for rp in [float(x) for x in penalties.split(",") if x.strip()]:
-        pred = run(
+        pred = _cloud_evaluation(
             provider="hf",
             model=mp,
             data=data_path,
@@ -1207,7 +1149,11 @@ def sweep_model(
     print(f"{'arm':<10}{'invalid':>9}{'invalid%':>10}{'cell@5%':>10}{'valid-cell':>12}  verdict")
     for r in results:
         ok = r["invalid_pct"] < 1.0 and (valid_floor - r["valid_cell"]) <= 1.0
-        verdict = "" if r["arm"] == "greedy" else ("ADOPT" if ok else "reject")
+        verdict = (
+            ""
+            if r["arm"] == "greedy"
+            else ("development candidate; final study required" if ok else "reject")
+        )
         print(
             f"{r['arm']:<10}{r['invalid']:>9}{r['invalid_pct']:>9.1f}%"
             f"{r['cell']:>9.1f}%{r['valid_cell']:>11.1f}%  {verdict}"
@@ -1228,12 +1174,12 @@ def probe_model(model_path: str):
     for name, fn in (
         (
             "AutoProcessor",
-            lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=True),
+            lambda: AutoProcessor.from_pretrained(mp, trust_remote_code=False),
         ),
         (
             "AutoModel",
             lambda: AutoModelForImageTextToText.from_pretrained(
-                mp, torch_dtype="auto", device_map="auto", trust_remote_code=True
+                mp, dtype="auto", device_map="auto", trust_remote_code=False, use_safetensors=True
             ),
         ),
     ):
@@ -1308,23 +1254,20 @@ def gen_v2(n: int = 20000, seed: int = 9012, dataset: str = "synthetic_visible_v
 
 
 @app.local_entrypoint()
-def gen_geom(train_files: str = "v1,v0"):
-    """Build geometry-supervision targets on the Volume (CPU, ~$0.3). Run once
-    before `train ... --geometry`."""
-    gen_geometry_data.remote(train_files=train_files)
-
-
-@app.local_entrypoint()
-def smoke(dataset: str = ""):
+def smoke(dataset: str = "", base_revision: str = ""):
     """Explicit reviewed dataset: CPU gate, then 30 training steps and five evals.
 
     This is a paid integration run, not a quality or compute-cost benchmark.
     """
     _training_source_paths(dataset, dataset)
+    from unrender.train.recipe import require_revision
+
+    require_revision(base_revision)
     checked = preflight.remote(train_files=dataset, val_files=dataset, max_steps=30)
     train_model.remote(
         train_files=dataset,
         out_name="smoke",
+        base_revision=base_revision,
         max_steps=30,
         val_files=dataset,
         val_size=64,
@@ -1334,13 +1277,10 @@ def smoke(dataset: str = ""):
 
 
 @app.local_entrypoint()
-def fetch_real(dirname: str = "real_v0"):
-    """Build the real-chart transfer eval on the Volume (FRED/OWID downloaded inside
-    Modal, GT read from the official CSVs). Blocking — CPU, ~free, ~1-2 min. Then:
-        modal run modal_train.py::evaluate --model runs/qwen3vl4b-lora/merged --data real_v0
-    """
+def fetch_real(dirname: str):
+    """Collect source-backed DRAFTS into a new Volume directory; review before publication."""
     n = fetch_real_data.remote(dirname)
-    print(f"done: {n} real charts on the Volume at data/{dirname}/ (eval with --data {dirname})")
+    print(f"Collected {n} draft charts at data/{dirname}; no evaluation split published.")
 
 
 @app.local_entrypoint()
@@ -1388,6 +1328,7 @@ def train(
     train_files: str = "",
     out_name: str = "qwen3vl4b-lora",
     base: str = "Qwen/Qwen3-VL-4B-Instruct",
+    base_revision: str = "",
     labelfree_weight: float = 1.5,
     epochs: float = 2.0,
     max_steps: int = 0,
@@ -1409,6 +1350,9 @@ def train(
     those and generated task-quality checkpoint selection remain open work.
     """
     _training_source_paths(train_files, val_files, geometry=geometry)
+    from unrender.train.recipe import require_revision
+
+    require_revision(base_revision)
     checked = preflight.remote(
         train_files=train_files,
         val_files=val_files,
@@ -1425,6 +1369,7 @@ def train(
         train_files=train_files,
         out_name=out_name,
         base=base,
+        base_revision=base_revision,
         labelfree_weight=labelfree_weight,
         epochs=epochs,
         max_steps=max_steps,

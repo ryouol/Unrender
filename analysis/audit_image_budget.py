@@ -1,6 +1,6 @@
 """Inspect actual pinned Qwen image-processor rasters on CPU, without model weights.
 
-Run in a separate environment with the production torch/torchvision/transformers/
+Run in a separate environment with the candidate torch/torchvision/transformers/
 Pillow versions. The processor configuration is a local recovered release artifact.
 This measures resizing, not model accuracy, GPU parity, or human recoverability.
 """
@@ -84,25 +84,22 @@ def audit(datasets: list[Path], processor_dir: Path, out: Path) -> dict:
     from PIL import Image
     from transformers import AutoImageProcessor
 
-    required = {
-        "torch": "2.9.1",
-        "torchvision": "0.24.1",
-        "transformers": "4.57.6",
-        "pillow": "12.3.0",
-    }
+    from unrender.data_gen.review import PROCESSOR_RUNTIME
+
+    required = PROCESSOR_RUNTIME
     for name, version in required.items():
         if importlib.metadata.version(name).split("+")[0] != version:
-            raise ValueError(f"requires production {name}=={version}")
+            raise ValueError(f"requires candidate {name}=={version}")
     if len({path.name for path in datasets}) != len(datasets):
         raise ValueError("dataset names must be unique")
     if out.exists() and any(out.iterdir()):
         raise ValueError("output must be a fresh directory")
     prepared = [(path, *_inputs(path)) for path in datasets]
     processor = AutoImageProcessor.from_pretrained(
-        processor_dir, local_files_only=True, use_fast=True
+        processor_dir, local_files_only=True, backend="torchvision"
     )
-    if type(processor).__name__ != "Qwen2VLImageProcessorFast":
-        raise ValueError("unexpected production image processor")
+    if type(processor).__name__ != "Qwen2VLImageProcessor":
+        raise ValueError("unexpected candidate image processor")
     torch.set_num_threads(4)
     out.mkdir(parents=True, exist_ok=True)
     capture = []
@@ -115,7 +112,7 @@ def audit(datasets: list[Path], processor_dir: Path, out: Path) -> dict:
 
     processor.resize = captured_resize
     report = {
-        "contract": "qwen-image-budget-audit-v1",
+        "contract": "qwen-image-budget-audit-v2",
         "device": "cpu",
         "inference_calls": 0,
         "python": platform.python_version(),
@@ -150,11 +147,11 @@ def audit(datasets: list[Path], processor_dir: Path, out: Path) -> dict:
                 "source_size": list(image.size),
                 "budgets": {},
             }
-            for name, maximum in (("full", processor.size["longest_edge"]), ("512", 512 * 32 * 32)):
+            for name, maximum in (("full", processor.size.longest_edge), ("512", 512 * 32 * 32)):
                 capture.clear()
                 encoded = processor(
                     images=[image],
-                    size={**processor.size, "longest_edge": maximum},
+                    size={"shortest_edge": processor.size.shortest_edge, "longest_edge": maximum},
                     return_tensors="pt",
                     device="cpu",
                 )

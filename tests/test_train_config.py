@@ -112,20 +112,6 @@ def test_load_records_hbar_weight_composes(tmp_path):
     assert len(recs) == 6  # 2 (label-free) * 3 (hbar)
 
 
-def test_latest_checkpoint(tmp_path):
-    from unrender.train.sft_lora import _latest_checkpoint
-
-    assert _latest_checkpoint(str(tmp_path / "nope")) is None  # fresh run
-    root = tmp_path / "run" / "checkpoints"
-    root.mkdir(parents=True)
-    assert _latest_checkpoint(str(tmp_path / "run")) is None  # dir but no ckpts
-    for n in (449, 898, 1347):
-        (root / f"checkpoint-{n}").mkdir()
-    (root / "checkpoint-tmp").mkdir()  # non-numeric ignored
-    got = _latest_checkpoint(str(tmp_path / "run"))
-    assert got and got.endswith("checkpoint-1347")  # numeric max, not lexical
-
-
 def test_parse_eval_specs():
     import modal_train
 

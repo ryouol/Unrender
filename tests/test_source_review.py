@@ -17,6 +17,7 @@ from unrender.data_gen.generate import generate
 from unrender.data_gen.provenance import digest, json_bytes, read_split, verify_dataset
 from unrender.data_gen.review import (
     CHECKS,
+    PROCESSOR_RUNTIME,
     prepare,
     require_source_review,
     require_training_sources,
@@ -36,9 +37,10 @@ def packet_source(tmp_path_factory):
     config = b'{"test_double":true}'
     (audit / "preprocessor_config.json").write_bytes(config)
     report = {
-        "contract": "qwen-image-budget-audit-v1",
+        "contract": "qwen-image-budget-audit-v2",
         "device": "cpu",
-        "processor_class": "Qwen2VLImageProcessorFast",
+        "packages": dict(PROCESSOR_RUNTIME),
+        "processor_class": "Qwen2VLImageProcessor",
         "processor_config_sha256": digest(config),
         "datasets": {root.name: generation},
         "rows": [],
@@ -239,7 +241,7 @@ def test_cloud_entrypoint_does_not_allocate_gpu_after_failed_cpu_gate(monkeypatc
         modal_train, "train_model", SimpleNamespace(spawn=lambda **k: gpu.append(k))
     )
     with pytest.raises(ValueError, match="pending source review"):
-        launch_body(modal_train, "train")(train_files="visible_fixture")
+        launch_body(modal_train, "train")(train_files="visible_fixture", base_revision="a" * 40)
     assert gpu == []
 
 
@@ -259,7 +261,7 @@ def test_cloud_entrypoint_binds_cpu_review_to_worker(monkeypatch):
         return SimpleNamespace(object_id="test-call")
 
     monkeypatch.setattr(modal_train, "train_model", SimpleNamespace(spawn=spawn))
-    launch_body(modal_train, "train")(train_files="visible_fixture")
+    launch_body(modal_train, "train")(train_files="visible_fixture", base_revision="a" * 40)
     assert received[0]["expected_source_reviews"] == evidence
 
 

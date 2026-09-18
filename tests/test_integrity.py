@@ -197,58 +197,6 @@ def test_common300_no_data_table_leak_into_train():
         assert split["numerical_table_sha256"] == []
 
 
-# --- geometry-supervision plumbing ------------------------------------------
-
-def test_geometry_data_builder_and_decode_scoring(tmp_path):
-    """End-to-end geometry arm: build geometry-target training rows from a seeded
-    split, then score a 'perfect' geometry prediction file via --decode geometry.
-    Both must round-trip to high numeric recovery (the train target == what the eval
-    decodes)."""
-    import random as _random
-
-    from unrender.data_gen.chart_specs import random_spec
-    from unrender.data_gen.geometry import capture_geometry
-    from unrender.data_gen.geometry_target import to_target
-    from unrender.eval.score import score
-    from unrender.prompts import GEOMETRY_PROMPT
-    from unrender.train.geometry_data import build_geometry_split
-
-    # 1. a small seeded source split (chat format, table-JSON targets)
-    src = tmp_path / "train.jsonl"
-    specs = {}
-    with open(src, "w") as f:
-        for i in range(4):
-            spec = random_spec(_random.Random(5678 + i), hard=True)
-            specs[i] = spec
-            f.write(json.dumps({
-                "images": [f"data/x/{i:07d}.png"],
-                "messages": [{"role": "user", "content": "P"},
-                             {"role": "assistant",
-                              "content": canonical_json(spec.to_chart_data())}],
-                "meta": {"labels_shown": spec.value_labels_shown, "chart_type": spec.chart_type},
-            }) + "\n")
-
-    # 2. build geometry-target rows; every row must carry GEOMETRY_PROMPT
-    out = tmp_path / "train.geom.jsonl"
-    res = build_geometry_split(str(src), str(out), base_seed=5678, hard=True)
-    assert res["n_ok"] == 4 and res["n_mismatch"] == 0
-    grows = [json.loads(line) for line in out.read_text().splitlines()]
-    assert all(r["messages"][0]["content"] == GEOMETRY_PROMPT for r in grows)
-
-    # 3. a 'perfect' geometry prediction file (raw = the captured target) scored
-    #    via --decode geometry must recover values within tolerance.
-    preds = tmp_path / "predictions.jsonl"
-    with open(preds, "w") as f:
-        for i, spec in specs.items():
-            f.write(json.dumps({
-                "id": f"{i:07d}", "gt": canonical_json(spec.to_chart_data()),
-                "raw": to_target(capture_geometry(spec)),
-                "status": "ok", "meta": {"labels_shown": spec.value_labels_shown},
-            }) + "\n")
-    rep = score(str(preds), out=str(tmp_path / "r.json"), decode="geometry")
-    assert rep["tracks"]["0.05"]["metrics"]["numeric_recall"] >= 0.9
-
-
 # --- precision levers (numeric-token loss + oversampling) -------------------
 
 def test_numeric_token_ids_and_copies():

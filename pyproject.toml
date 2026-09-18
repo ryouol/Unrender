@@ -43,17 +43,8 @@ eval = [
     "anthropic>=0.34",
     "google-genai>=0.3",
 ]
-# Phase 3 LoRA fine-tune (Qwen3-VL via Unsloth). CUDA-only — install on the
-# rented GPU box, NOT Apple Silicon. torch is provided by the box's CUDA image.
-train = [
-    "unsloth",
-    "trl>=0.9",
-    "peft>=0.11",
-    "bitsandbytes>=0.43",
-    "transformers>=4.46",
-    "accelerate>=0.34",
-    "datasets>=2.20",
-]
+# CUDA training uses requirements-train.lock (exact Linux wheel hashes), then
+# install the project with --no-deps. Do not resolve a separate mutable train extra.
 # Compatibility extra retained for existing `unrender[app]` install commands;
 # product runtime dependencies are core because the wheel always ships its CLIs.
 app = []

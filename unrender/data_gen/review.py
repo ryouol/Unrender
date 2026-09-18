@@ -76,11 +76,23 @@ class Review(BaseModel):
     rows: list[Decision]
 
 
+PROCESSOR_RUNTIME = {
+    "torch": "2.14.0",
+    "torchvision": "0.29.0",
+    "transformers": "5.17.0",
+    "pillow": "12.3.0",
+}
+
+
 def _audit_rows(audit: dict, generation: dict, manifest: list[dict], name: str) -> dict:
     if (
-        audit.get("contract") != "qwen-image-budget-audit-v1"
-        or audit.get("processor_class") != "Qwen2VLImageProcessorFast"
+        audit.get("contract") != "qwen-image-budget-audit-v2"
+        or audit.get("processor_class") != "Qwen2VLImageProcessor"
         or audit.get("device") != "cpu"
+        or any(
+            audit.get("packages", {}).get(k, "").split("+")[0] != v
+            for k, v in PROCESSOR_RUNTIME.items()
+        )
         or audit.get("datasets", {}).get(name) != generation
     ):
         raise ValueError("processor audit does not match the generated bundle")

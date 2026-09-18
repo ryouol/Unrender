@@ -20,7 +20,9 @@ def test_hf_preserves_all_image_tokens_past_training_tokenizer_limit(tmp_path, m
             return self
 
     class Processor:
-        image_processor = SimpleNamespace(size={"shortest_edge": 65536, "longest_edge": 16777216})
+        image_processor = SimpleNamespace(
+            size=SimpleNamespace(shortest_edge=65536, longest_edge=16777216)
+        )
 
         def apply_chat_template(self, *args, **kwargs):
             return "expanded image prompt"
@@ -33,7 +35,7 @@ def test_hf_preserves_all_image_tokens_past_training_tokenizer_limit(tmp_path, m
                 "shortest_edge": 65536,
                 "longest_edge": 524288,
             }
-            assert self.image_processor.size["longest_edge"] == 16777216
+            assert self.image_processor.size.longest_edge == 16777216
             return Inputs(input_ids=np.zeros((1, 2500), dtype=int))
 
         def decode(self, tokens, **kwargs):

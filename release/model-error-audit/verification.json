@@ -1,0 +1,22 @@
+{
+  "scope": "historical synthetic target visibility and frozen-score error accounting",
+  "date": "2026-09-18",
+  "full_suite": {
+    "passed": 486,
+    "skipped": 0,
+    "warnings": 4
+  },
+  "focused_tests_passed": 10,
+  "lint_and_format": "passed",
+  "clean_source_archive_tree": "2410194ffa28066113b189e41a6a932aa454356e",
+  "clean_archive_report_bytes_match": true,
+  "per_chart_report_sha256": "d18b74e9dfcc4960d8212a96317c1e72089faadc72bde60b51a5af96e13e43bc",
+  "proof_manifest_sha256": "6915c86680ce81ac8d034232ce95d4acb3710177bc3b2403fcb5a0c5ac890884",
+  "reconstructed_target_matches": 300,
+  "identical_pixel_counterfactual_pairs": 3,
+  "known_defective_common300_charts": 109,
+  "new_inference_runs": 0,
+  "new_training_runs": 0,
+  "deployments": 0,
+  "scope_limit": "Generator fixes and replacement datasets are still required; this audit does not establish model accuracy."
+}

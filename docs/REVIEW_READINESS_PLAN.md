@@ -63,6 +63,15 @@ verified provider or merge the older branch's product implementation over main.
 - [ ] Unify the serving experiment with current main: selectively port code and
   raw evidence; retain failed/missing-input ledgers; identify all experiment versus
   deployment boundaries and update stale review/claim documentation.
+- [x] Historical synthetic observability/error audit: 109/300 Common300 charts
+  have hidden-field or clipping defects. Three distinct-target/identical-pixel
+  counterexamples are preserved, and per-cell accounting matches the scorer.
+  [Evidence and corrective requirements](../release/model-error-audit/README.md).
+- [ ] Replace the defective generator/target contract before more inference or
+  training: visible-only series identity, unit-only axis text, cumulative stack
+  bounds, immutable versioned generation recipes and paired image/target hashes.
+  Verify counterfactual visibility, geometry bounds and label legibility at the
+  actual model input resolution. Do not regenerate over frozen artifacts.
 - [ ] Dataset: development pool plus at least 300 independent final charts;
   source/table-disjoint groups, multiple renderers, representative real charts,
   all supported families, density/resolution/scale/date slices and unsupported

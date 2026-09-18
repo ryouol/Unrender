@@ -1,5 +1,10 @@
 # Offline Common300 evidence
 
+**Subsequent audit:** 109/300 charts have known hidden-field or clipping defects.
+The [visibility/error audit](../model-error-audit/README.md) qualifies all model
+comparisons below: these reproduce frozen-target scores, not clean extraction
+accuracy. Reproducibility alone does not validate the targets.
+
 This bundle makes the historical three-model comparison inspectable from a clean
 Git checkout. It contains the original saved raw responses, embedded answers and
 metadata for all 300 charts in each arm, plus the recovered synthetic_v0 and
@@ -46,7 +51,8 @@ F1. Fair minus base is **+22.31 percentage points**, 95% interval **[18.98, 25.7
 Numeric loss minus fair is **−2.23 points**, interval **[−3.97, −0.61]**. Unlabeled
 pies remain a separate proportion proxy; 280 charts contribute to exact numeric
 table rates. The fair arm has only 13/280 exactly correct charts. These scores
-show useful improvement over the base and substantial remaining extraction error.
+reproduce frozen-label differences; the visibility defects prevent interpreting
+them as a clean model-quality comparison.
 
 Both recovered training splits have **zero matching Common300 tables** under:
 

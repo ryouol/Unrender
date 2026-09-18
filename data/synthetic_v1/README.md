@@ -1,5 +1,11 @@
 # eval-v1 — frozen hard evaluation set
 
+**Historical generator warning:** the [visibility audit](../../release/model-error-audit/README.md)
+confirmed unobservable target fields and clipped stacked data in the v1 benchmark.
+The shared generator is not approved for new quality claims or training until its
+observable-target contract is fixed. Preserve frozen files; do not regenerate over
+this directory. The recipes below document historical generation.
+
 Pre-registered hard-mode evaluation set (git tag `eval-v1`). Supersedes
 `eval-v0` for the headline benchmark; v0 stays frozen as the historical record.
 See `CHANGELOG.md` at the repo root for what changed and why (scorer fixes are

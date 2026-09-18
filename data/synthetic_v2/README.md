@@ -1,5 +1,11 @@
 # synthetic_v2 — real-transfer training set (2026-07-01)
 
+**Historical generator warning:** the [visibility audit](../../release/model-error-audit/README.md)
+confirmed unobservable target fields and clipped stacked data in the v1 benchmark.
+The shared generator is not approved for new quality claims or training until its
+observable-target contract is fixed. Preserve frozen files; do not regenerate over
+this directory. The recipes below document historical generation.
+
 Built to close the real-chart gaps measured in the 2026-07-01 sweep
 (`refine-logs/FRONTIER_PLAN.md` P1; changes in `CHANGELOG.md`): value magnitudes
 to **1e9** (v0/v1 capped below 1e6 — the model scored 0% on real population/CO₂

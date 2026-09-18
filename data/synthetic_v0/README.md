@@ -1,5 +1,11 @@
 # eval-v0 — frozen evaluation set
 
+**Historical generator warning:** the [visibility audit](../../release/model-error-audit/README.md)
+confirmed unobservable target fields and clipped stacked data in the v1 benchmark.
+The shared generator is not approved for new quality claims or training until its
+observable-target contract is fixed. Preserve frozen files; do not regenerate over
+this directory. The recipes below document historical generation.
+
 Pre-registered evaluation set for Unrender (git tag `eval-v0`). Freezing it means
 nobody — including us — can tune the generator or the test after seeing baseline
 results: the ground truth and the recipe are committed.

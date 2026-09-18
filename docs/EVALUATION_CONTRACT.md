@@ -192,3 +192,19 @@ For narrow-range/high-offset real time series, 5% relative error can reward a
 constant answer. The replacement benchmark must also predeclare axis-span error,
 simple constant/trend baselines and recoverable precision at actual model input
 resolution. This audit does not retroactively change the chart-table-v2 ruler.
+
+
+## Historical synthetic target defects
+
+The [synthetic observability audit](../release/model-error-audit/README.md) found
+unprinted randomized series names, omitted unit-only labels and clipped stacked
+values in 109/300 Common300 charts. Distinct required targets can produce identical
+pixels. Saved chart-table-v2 scores and paired intervals remain reproducible, but
+are historical diagnostics against defective targets. They must not be used to
+claim recoverable extraction accuracy or promote a model. The real-chart review
+gate does not validate these synthetic labels.
+
+The error audit conserves the frozen scorer's denominator and credit; it does not
+relax identities, repair labels or replace the headline with a favorable post-hoc
+subset. New generation/target provenance, visibility and clipping checks, and
+independent real/multirenderer evaluation are required before quality claims.

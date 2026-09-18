@@ -150,7 +150,7 @@ def test_unsafe_repair_cannot_create_primary_quality_credit():
     r = row(raw='{"chart_type":"bar","series":[{"points":[{"x":"A","y":1e')
     r["gt"] = '{"chart_type":"bar","series":[{"points":[{"x":"A","y":1}]}]}'
     result = score_rows([r], 0.05)
-    assert result["n_repaired"] == 1
+    assert result["n_repaired"] == 0
     assert result["metrics"]["cell_f1"] == 0
 
 

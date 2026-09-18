@@ -15,6 +15,7 @@ from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.paired_bootstrap import compare, verdict
 from unrender.eval.score import score_rows, validate_rows
 from unrender.io_utils import read_jsonl
+from unrender.schema.validate import PARSER_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 TOL = 0.05
@@ -77,6 +78,7 @@ def build(model_root: Path | None = None, frontier_root: Path | None = None):
         frontier[name] = entry
     return {
         "metric_version": METRIC_VERSION,
+        "parser_version": PARSER_VERSION,
         "metric": "cell_f1",
         "tol": TOL,
         "common300_n": len(COMMON300),

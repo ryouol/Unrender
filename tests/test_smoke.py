@@ -51,7 +51,7 @@ def test_csv_export_shape():
 
 
 def test_repair_strips_fences_and_prose():
-    raw = 'Here is the data:\n```json\n{"chart_type":"bar","series":[],}\n```\nDone.'
+    raw = 'Here is the data:\n```json\n{"chart_type":"bar","series":[{"points":[{"x":"A","y":1}]}],}\n```\nDone.'
     parsed, _ = parse_chart_json(raw)
     assert parsed is not None
     assert parsed.chart_type == "bar"

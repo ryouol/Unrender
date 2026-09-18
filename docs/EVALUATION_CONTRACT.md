@@ -15,8 +15,11 @@ Report precision and recall alongside F1. An all-failed set cannot look successf
 
 Primary table scoring uses the **raw, strict ChartData response**. Repaired or
 coerced outputs get no primary credit, even if the current parser recovers a table.
-Recovery is reported separately; it can change content and must not manufacture
-benchmark successes. Raw JSON validity, raw schema validity, raw semantic validity,
+Recovery is reported separately and must not manufacture benchmark successes.
+The current `chart-json-v2` parser only repairs complete-table formatting. Reports
+include `parser_version` because this secondary recovery definition changed;
+historical recovery rates used the earlier data-changing parser. The primary raw
+scoring definition remains unchanged. Raw JSON validity, raw schema validity, raw semantic validity,
 recovery count, and each input's outcome are distinct measurements. The current
 wire schema is permissive; type validation alone does not establish chart semantics.
 

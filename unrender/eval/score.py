@@ -28,7 +28,7 @@ from unrender.eval.metrics import (
 )
 from unrender.io_utils import fingerprint_ids, read_jsonl
 from unrender.schema.chart_schema import ChartData
-from unrender.schema.validate import parse_chart_json
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json, strict_json
 
 
 def _decode_raw(raw: str, mode: str):
@@ -82,25 +82,10 @@ def validate_rows(rows: Iterable[dict], only_ids=None) -> list[dict]:
     return [row for row in rows if str(row["id"]) in requested_set]
 
 
-def _strict_json(raw: str):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("duplicate JSON key")
-            result[key] = value
-        return result
-
-    def constant(_value):
-        raise ValueError("nonfinite JSON constant")
-
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
-
-
 def score_prediction(row: dict, tol: float, decode: str = "table") -> tuple[dict, dict]:
     """The same per-attempt definition is used by reports and paired comparisons."""
     try:
-        gt = ChartData.model_validate(_strict_json(row["gt"]), strict=True)
+        gt = ChartData.model_validate(strict_json(row["gt"]), strict=True)
         if errors := semantic_errors(gt):
             raise ValueError(", ".join(errors))
     except (ValueError, KeyError, TypeError) as exc:
@@ -111,7 +96,7 @@ def score_prediction(row: dict, tol: float, decode: str = "table") -> tuple[dict
     strict = None
     if not infra and decode == "table":
         try:
-            obj = _strict_json(raw)
+            obj = strict_json(raw)
             raw_json = True
             strict = ChartData.model_validate(obj, strict=True)
             raw_schema = True
@@ -124,8 +109,8 @@ def score_prediction(row: dict, tol: float, decode: str = "table") -> tuple[dict
         recovered, errors = None, []
     else:
         recovered, errors = _decode_raw(raw, decode)
-    # Primary table quality never credits repaired/coerced values. The old parser
-    # can alter numeric content; recovery is exposed as a diagnostic only.
+    # Primary table quality never credits repaired values. Syntax recovery is
+    # exposed separately even when it preserves the complete table.
     pred = strict if decode == "table" else recovered
     structural = semantic_errors(pred) if pred is not None else ["unparseable"]
     sample = score_sample(pred, gt, tol, (row.get("meta") or {}).get("labels_shown"))
@@ -185,6 +170,7 @@ def score_rows(
     count = len(rows)
     return {
         "metric_version": METRIC_VERSION,
+        "parser_version": PARSER_VERSION,
         "metrics": aggregate([sample for _, sample in scored]),
         "conditional_model_metrics": aggregate(conditional),
         "slices": _slice(scored),
@@ -217,6 +203,7 @@ def score(
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     report = {
         "metric_version": METRIC_VERSION,
+        "parser_version": PARSER_VERSION,
         "provider": meta.get("provider"),
         "model": meta.get("model"),
         "dataset_fp": fingerprint_ids(r["id"] for r in rows),

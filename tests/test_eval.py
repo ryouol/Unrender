@@ -133,16 +133,12 @@ def test_classify_status():
     assert classify_status(None, {"chart_type": "bar"}) == "ok"
 
 
-def test_repair_maps_key_synonyms():
-    """category/label/name->x, value/amount->y, data/values->points (A2)."""
+def test_noncanonical_keys_are_rejected_without_dropping_points():
     raw = ('{"chart_type":"bar","series":[{"name":"Rev",'
            '"data":[{"category":"Jan","value":10},{"label":"Feb","amount":20}]}]}')
-    parsed, _ = parse_chart_json(raw)
-    assert parsed is not None
-    pts = parsed.series[0].points
-    assert parsed.series[0].name == "Rev"          # series 'name' preserved
-    assert (pts[0].x, pts[0].y) == ("Jan", 10.0)   # category->x, value->y
-    assert (pts[1].x, pts[1].y) == ("Feb", 20.0)   # label->x, amount->y
+    parsed, errors = parse_chart_json(raw)
+    assert parsed is None
+    assert errors == ["invalid_chart_structure"]
 
 
 def test_pie_label_free_scored_on_proportions():

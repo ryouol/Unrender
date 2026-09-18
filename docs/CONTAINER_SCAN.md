@@ -209,7 +209,7 @@ base's AMD64 image remains unchanged, so a tag refresh alone would not apply the
 The rebuilt AMD64 image has **zero critical findings, 44 high, 53 medium,
 57 low and one unknown**, with zero Python findings. None of the remaining high
 findings has a fixed version in this scan. This removes all three critical and
-thirteen high package/advisory pairs from the September 18 pre-update scan.
+ten high package/advisory pairs from the September 18 pre-update scan.
 Remaining package risks are visible; the historical reachability assessments
 above still require their stated operational boundaries and are not a clean
 security certification. See the [scan receipt](../release/readiness-remediation-20260918/container-scan-summary.json) and compressed full report beside it.

@@ -147,34 +147,28 @@ def test_score_duplicate_rows_raise(tmp_path):
 
 # --- deterministic splitting -------------------------------------------------
 
-def _make_manifest(d, order):
-    d = Path(d)
-    (d / "labels").mkdir(parents=True, exist_ok=True)
-    entries = []
-    for i in order:
-        stem = f"{i:07d}"
-        (d / "labels" / f"{stem}.json").write_text(canonical_json(_gt()))
-        entries.append({"id": stem, "image": f"data/img/{stem}.png",
-                        "label": str(d / "labels" / f"{stem}.json"),
-                        "chart_type": "bar", "labels_shown": True, "augmented": False})
-    _write_jsonl(d / "manifest.jsonl", entries)
-
-
 def test_split_membership_independent_of_manifest_order(tmp_path):
-    from unrender.data_gen.split_dataset import split
-    order = list(range(1, 21))
-    shuffled = order[:]
-    random.Random(99).shuffle(shuffled)
-    _make_manifest(tmp_path / "a", order)       # ascending manifest
-    _make_manifest(tmp_path / "b", shuffled)    # same ids, different write-order
-    split(str(tmp_path / "a"), val_size=4, test_size=6, seed=7)
-    split(str(tmp_path / "b"), val_size=4, test_size=6, seed=7)
+    import shutil
 
-    def ids(p):
-        return {Path(json.loads(line)["images"][0]).stem
-                for line in Path(p).read_text().splitlines() if line.strip()}
+    from unrender.data_gen.generate import generate
+    from unrender.data_gen.provenance import digest, json_bytes
+    from unrender.data_gen.split_dataset import split
+
+    first, second = tmp_path / "a", tmp_path / "b"
+    generate(12, str(first), workers=1, augment=False)
+    shutil.copytree(first, second)
+    manifest = second / "manifest.jsonl"
+    entries = [json.loads(line) for line in manifest.read_text().splitlines()]
+    random.Random(99).shuffle(entries)
+    manifest.write_bytes(b"".join(json_bytes(row) for row in entries))
+    receipt_path = second / "generation.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["manifest_sha256"] = digest(manifest.read_bytes())
+    receipt_path.write_bytes(json_bytes(receipt))
+    for root in (first, second):
+        split(str(root), val_size=2, test_size=4, seed=7)
     for name in ("train", "val", "test"):
-        assert ids(tmp_path / "a" / f"{name}.jsonl") == ids(tmp_path / "b" / f"{name}.jsonl")
+        assert (first / f"{name}.jsonl").read_bytes() == (second / f"{name}.jsonl").read_bytes()
 
 
 # --- table-level leakage (data-table dedup across splits) -------------------

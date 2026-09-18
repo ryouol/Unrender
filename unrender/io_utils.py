@@ -5,7 +5,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Iterable, List
+
+
+def resolve_image(image: str, split_path: str | Path) -> str:
+    """Absolute paths stay absolute; relative images belong to their split directory.
+
+    Never search the working directory or guess a dataset root. Missing images
+    remain resolvable so evaluation can record them as input failures.
+    """
+    if Path(image).is_absolute():
+        return image
+    return str(Path(split_path).resolve().parent / image)
 
 
 def read_jsonl(path, limit: int = 0) -> List[dict]:

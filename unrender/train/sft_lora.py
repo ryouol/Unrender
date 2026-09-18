@@ -13,20 +13,11 @@ NOT re-specify the prompt or reformat the target, only feed those rows to the
 trainer. (prompts.py spells out why drift here silently invalidates the
 benchmark.)
 
-Runbook (on the GPU box, from the repo root):
-    pip install -e ".[train]"
-    # images aren't committed — regenerate them byte-for-byte first:
-    python -m unrender.data_gen.generate      --n 5000 --out data/synthetic_v1 --seed 5678 --hard
-    python -m unrender.data_gen.split_dataset --out data/synthetic_v1   # rewrites train/val/test.jsonl
-    # train (v0+v1 mixed, label-free oversampled 1.5x, best-ckpt on a val set):
-    python -m unrender.train.sft_lora \
-        --train data/synthetic_v1/train.jsonl data/synthetic_v0/train.jsonl \
-        --val   data/synthetic_v1/val.jsonl   data/synthetic_v0/val.jsonl \
-        --labelfree-weight 1.5 --epochs 2 --out runs/qwen3vl4b-lora
-    # eval the merged model through the SAME scorer as the frontier baselines:
-    python -m unrender.eval.run_baselines --provider hf --model runs/qwen3vl4b-lora/merged \
-        --data data/synthetic_v1/test.jsonl --out outputs/eval_v1/unrender-lora
-    python -m unrender.eval.score --predictions outputs/eval_v1/unrender-lora/predictions.jsonl
+Dataset prerequisite: create a NEW visible-contract dataset, then review its
+native and model-input recoverability before training. See docs/SYNTHETIC_DATA.md.
+Historical synthetic_v0/v1/v2 cannot be regenerated with current code. Relative
+image paths now belong to the split file directory, never the working directory.
+The loader verifies current synthetic generation/split evidence before use.
 
 On Modal, all of the above is wrapped by modal_train.py (gen/smoke/train/evaluate).
 
@@ -44,7 +35,8 @@ import random
 from pathlib import Path
 from typing import List
 
-from unrender.io_utils import read_jsonl
+from unrender.data_gen.provenance import read_split
+from unrender.io_utils import resolve_image
 
 # Iteration base; --base swaps to Qwen3-VL-8B for the launch run.
 # CAUTION: with load_in_4bit=True, Unsloth REDIRECTS this id to its own
@@ -54,18 +46,6 @@ from unrender.io_utils import read_jsonl
 # confound) — it must be the Unsloth full-precision mirror pinned to the matching
 # revision. See PREREGISTRATION.md and run_baselines.py --revision.
 DEFAULT_BASE = "Qwen/Qwen3-VL-4B-Instruct"
-
-
-def _resolve_image(path: str, data_root: str) -> str:
-    """Image paths in the jsonl are repo-root-relative (data/synthetic_*/...).
-    Honor them as-is, else fall back to --data-root, else fail loudly — a missing
-    image must not silently drop a training sample."""
-    if Path(path).exists():
-        return path
-    alt = Path(data_root) / path
-    if alt.exists():
-        return str(alt)
-    raise FileNotFoundError(f"image not found: {path} (also tried {alt})")
 
 
 def _copies(mult: float, rng: random.Random) -> int:
@@ -102,9 +82,13 @@ def load_records(train_paths: List[str], data_root: str, labelfree_weight: float
     records: List[dict] = []
     n_labelfree_src = n_hbar_src = 0
     for tp in train_paths:
-        for r in read_jsonl(tp):
+        split_path = Path(data_root) / tp
+        for r in read_split(split_path):
+            image = resolve_image(r["images"][0], split_path)
+            if not Path(image).is_file():
+                raise FileNotFoundError(f"training image not found: {image}")
             rec = {
-                "image": _resolve_image(r["images"][0], data_root),
+                "image": image,
                 "user": r["messages"][0]["content"],
                 "assistant": r["messages"][1]["content"],
             }

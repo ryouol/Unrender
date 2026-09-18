@@ -1,9 +1,8 @@
 """Render a ChartSpec to a PIL image with matplotlib.
 
-All value labels are formatted from the spec's exact values, so any number
-printed on the chart equals the ground-truth number byte-for-byte. The variety
-(palette, dpi, fonts, rotation, gridlines, value-labels-on/off) is what forces
-the model to generalize instead of memorizing one chart look.
+Printed values use the specification's display precision. Shared specifications
+do not guarantee readable labels, distinguishable marks or real-world transfer;
+those require separate visual and model-input recoverability checks.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ def _fmt(v: float, decimals: int, thousands_sep: bool) -> str:
 def _axis_text(label, unit=None):
     if label and unit:
         return f"{label} ({unit})"
-    return label or ""
+    return label or unit or ""
 
 
 def _apply_value_axis(ax, spec, horizontal):
@@ -81,8 +80,11 @@ _THEME_RC = {
 
 def render_chart(spec: ChartSpec) -> Image.Image:
     """Draw the chart described by `spec` and return it as a PIL RGB image."""
-    # Scope font + theme so they can't leak into the next render in this worker.
-    rc = {"font.family": spec.font_family, **_THEME_RC.get(spec.theme or "", {})}
+    # Use the versioned library defaults, not ambient caller styles (which also
+    # differ between spawn workers and their parent). Preserve the caller's state.
+    rc = {**matplotlib.rcParamsDefault,
+          "font.family": spec.font_family, **_THEME_RC.get(spec.theme or "", {})}
+    rc.pop("backend", None)  # retain the explicitly selected headless backend
     with plt.rc_context(rc):
         return _draw_chart(spec)
 
@@ -102,6 +104,7 @@ def _build_figure(spec: ChartSpec):
     rasterization. Shared by _draw_chart (which saves+closes) and the geometry
     capture in geometry.py (which reads back artist transforms), so the captured
     geometry is guaranteed to match the rendered pixels. Caller owns plt.close."""
+    spec.validate_visible_target()
     fig, ax = plt.subplots(figsize=spec.figsize)
 
     n_cat = len(spec.categories)

@@ -496,52 +496,54 @@ def _eval_tag(mp: str, data: str, subset: str, gen_config: dict) -> str:
     return "__".join(parts)
 
 
+def _generation_dir(name: str) -> str:
+    """New visible-contract datasets cannot target frozen historical names."""
+    import re
+
+    if not re.fullmatch(r"synthetic_visible_[a-z0-9_-]+", name):
+        raise ValueError("choose a new dataset name beginning synthetic_visible_")
+    return f"{V}/data/{name}"
+
+
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
-def generate_data(n: int = 5000):
-    """Regenerate v0 (easy) + v1 (hard) and split them, exactly per the frozen
-    recipes. workers=8 matches the cpu reservation (os.cpu_count() in a container
-    reports the host's cores, which would oversubscribe the pool)."""
+def generate_data(n: int = 5000, prefix: str = "synthetic_visible_v1"):
+    """Create new easy/hard datasets with the current visible-target contract.
+
+    Existing directories are rejected. Historical recipes belong to their frozen
+    source revisions; these commands do not regenerate historical v0/v1 targets.
+    """
+    from pathlib import Path
+
     from unrender.data_gen.generate import generate
     from unrender.data_gen.split_dataset import split
 
-    for name, seed, hard in (
-        ("synthetic_v0", 1234, False),
-        ("synthetic_v1", 5678, True),
-    ):
-        out = f"{V}/data/{name}"
+    outputs = [_generation_dir(f"{prefix}_{profile}") for profile in ("easy", "hard")]
+    if any(Path(out).exists() and any(Path(out).iterdir()) for out in outputs):
+        raise ValueError("dataset already exists; choose a fresh prefix")
+    for out, seed, hard in zip(outputs, (1234, 5678), (False, True), strict=True):
         generate(n=n, out=out, base_seed=seed, hard=hard, workers=8)
         split(out=out, val_size=500, test_size=1000)
     VOL.commit()
 
 
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=4 * 3600)
-def generate_data_v2(n: int = 20000, seed: int = 9012):
-    """synthetic_v2 (FRONTIER_PLAN P1): magnitudes to 1e9, real-world axis formats,
-    continuous year x-axes, themes; 20k charts by default (data scale is the moat
-    and CPU is cheap). Rows bake EXTRACTION_PROMPT (v1) for now — switch to the V2
-    prompt only when ALL compared arms are re-run on it (comparability rule)."""
-    from pathlib import Path
+def generate_data_v2(
+    n: int = 20000, seed: int = 9012, dataset: str = "synthetic_visible_v1_varied"
+):
+    """Create a fresh varied-profile dataset; never modify frozen synthetic_v2.
 
+    generation.json and split.json bind local completion and artifact bytes.
+    VOL.commit publishes them; neither local fsync nor these receipts alone
+    promises checkpoint survival before that volume commit.
+    """
     from unrender.data_gen.generate import generate
     from unrender.data_gen.split_dataset import split
 
-    out = f"{V}/data/synthetic_v2"
-    # Completion sentinel: removed FIRST so an interrupted regen can't be mistaken
-    # for a finished one, written LAST so its presence proves the whole
-    # gen+split+commit ran. This is how a detached run (immune to the client/
-    # session dying) is verified afterwards — the recurring local-upload failure
-    # mode was session teardown, and server-side --detach + this sentinel sidesteps
-    # it entirely (no 6GB upload).
-    ready = Path(out) / "READY.json"
-    ready.unlink(missing_ok=True)
-    generate(n=n, out=out, base_seed=seed, hard=False, v2=True, workers=8)
+    out = _generation_dir(dataset)
+    generate(n=n, out=out, base_seed=seed, v2=True, workers=8)
     split(out=out, val_size=500, test_size=1000)
-    n_img = len(list((Path(out) / "images").glob("*.png")))
-    import json as _json
-
-    ready.write_text(_json.dumps({"n": n, "seed": seed, "images": n_img, "v2_fixed": True}))
     VOL.commit()
-    print(f"gen_v2 DONE: {n_img} images + splits + READY.json committed to {out}")
+    print(f"Committed generation and split receipts to {out}; visual review remains required")
 
 
 @app.function(image=gen_image, volumes={V: VOL}, cpu=8.0, memory=8192, timeout=2 * 3600)
@@ -579,19 +581,23 @@ def preflight(
     tar/upload/untar — plus a sample of the rest), (4) the longest targets fit
     the 4096-token budget with room for image tokens, and (5) print the step/
     time/cost estimate for the planned run. Fails loudly on any problem."""
-    import json
     from pathlib import Path
 
     from PIL import Image
 
+    from unrender.data_gen.provenance import read_split
+    from unrender.io_utils import resolve_image
+
     def rows_of(tag, fname):
         p = Path(f"{V}/data/synthetic_{tag}/{fname}")
         assert p.exists(), f"MISSING split: {p}"
-        return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+        rows = read_split(p)
+        for row in rows:
+            row["images"] = [resolve_image(row["images"][0], p)]
+        return rows
 
     def img_path(r):
-        p = r["images"][0]
-        return p if Path(p).exists() else f"{V}/{p}"
+        return r["images"][0]
 
     tags = [t.strip() for t in train_files.split(",")]
     n_records = 0
@@ -1307,8 +1313,8 @@ def probe(model: str = "runs/smoke/merged"):
 
 
 @app.local_entrypoint()
-def gen(n: int = 5000):
-    generate_data.remote(n=n)
+def gen(n: int = 5000, prefix: str = "synthetic_visible_v1"):
+    generate_data.remote(n=n, prefix=prefix)
 
 
 @app.local_entrypoint()
@@ -1330,18 +1336,16 @@ def check(
 
 
 @app.local_entrypoint()
-def gen_v2(n: int = 20000, seed: int = 9012):
-    """Regenerate synthetic_v2 ON the Volume (CPU, ~$1-2, ~5-8 min). Use with
-    `modal run --detach` — .spawn() returns immediately and the work runs
-    server-side, so it CANNOT be killed by the client/session dying (the failure
-    mode that killed the 6GB upload three times). Verify afterward: a committed
-    data/synthetic_v2/READY.json means it finished. Then (GATED, GPU):
-        modal run --detach modal_train.py::train --train-files v2,v1,v0 --out-name qwen3vl4b-v2
+def gen_v2(n: int = 20000, seed: int = 9012, dataset: str = "synthetic_visible_v1_varied"):
+    """Create a new varied-profile dataset on the Volume with --detach.
+
+    Verify generation.json, split.json and their artifact hashes after the call
+    completes. These are generation receipts, not final annotation approval.
     """
-    call = generate_data_v2.spawn(n=n, seed=seed)
+    call = generate_data_v2.spawn(n=n, seed=seed, dataset=dataset)
     print(
-        f"submitted gen_v2 (FunctionCall {call.object_id}); returns now — use --detach. "
-        f"Done when data/synthetic_v2/READY.json exists on the Volume."
+        f"submitted generation (FunctionCall {call.object_id}); use --detach. "
+        f"Inspect data/{dataset}/generation.json and split.json after completion."
     )
 
 

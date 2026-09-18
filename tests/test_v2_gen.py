@@ -1,48 +1,15 @@
-"""synthetic_v2 generator tests + frozen-recipe regression.
+"""Current varied-profile tests. Frozen evidence is tested from its stored artifacts.
 
-The frozen fingerprints were captured from the code as of commit 49f2366 (before
-any v2 change): if random_spec's easy or hard path ever produces different specs
-for the same seed, regenerating eval-v0/eval-v1 would silently stop matching the
-committed ground truth. This test makes that failure loud.
-
-Run: pytest -q tests/test_v2_gen.py
+Current sampling intentionally changes the defective historical target contract;
+old RNG fingerprints are not a promise to regenerate historical images here.
 """
 
-import dataclasses
-import hashlib
-import json
 import random
 
-from unrender.data_gen.chart_specs import _v2_spec, random_spec
+from unrender.data_gen.chart_specs import _v2_spec
 from unrender.data_gen.render import render_chart
 from unrender.schema.chart_schema import canonical_json
 from unrender.schema.validate import parse_chart_json
-
-# Captured 2026-07-01 from the pre-v2 code (see module docstring).
-_FROZEN_EASY = {0: "c1bd2b999bb1d065", 1: "5b441b48572326b2", 2: "4676bbe9a412a0ce",
-                3: "769efebb40468e69", 4: "08526fdc05ee7ed0", 5: "0a99e461151e1f0f"}
-_FROZEN_HARD = {0: "cb0c87bb164f9b1a", 1: "93d9f39ae02471d8", 2: "3a1345c2fe2f955d",
-                3: "25ce323c6a6b84ca", 4: "043b81acbd84f5e0", 5: "3b69993e3dbd640a"}
-
-
-_V2_ONLY_FIELDS = ("tick_format", "x_numeric", "theme")
-
-
-def _fp(seed: int, hard: bool) -> str:
-    s = random_spec(random.Random(seed), hard=hard)
-    d = dataclasses.asdict(s)
-    for f in _V2_ONLY_FIELDS:  # added after the freeze; must stay inert on frozen paths
-        assert d.pop(f) in (None, False), f"frozen path set v2 field {f}: {d}"
-    return hashlib.sha256(
-        json.dumps(d, sort_keys=True, default=str).encode()
-    ).hexdigest()[:16]
-
-
-def test_frozen_recipes_unchanged():
-    """v0 (easy) and v1 (hard) spec sequences must be byte-identical pre/post v2
-    (hashes cover every pre-v2 field, i.e. everything that reaches pixels or GT)."""
-    assert {s: _fp(s, False) for s in _FROZEN_EASY} == _FROZEN_EASY
-    assert {s: _fp(s, True) for s in _FROZEN_HARD} == _FROZEN_HARD
 
 
 def _v2_specs(n=400):

@@ -1,8 +1,8 @@
 """Generate a synthetic chart dataset: images + exact JSON labels.
 
-Each sample is fully determined by its index and the base seed, so the whole
-dataset is reproducible and you can grow it deterministically (indices
-0..N are stable as you raise --n). Runs across CPU cores.
+Each sample is determined by its index, seed, recorded source and rendering
+environment. Each invocation creates one immutable dataset in an empty directory;
+there is no in-place regeneration or append. Runs across CPU cores.
 
 Usage:
     python -m unrender.data_gen.generate --n 1000 --out data/synthetic
@@ -12,17 +12,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
+import io
 import os
 import random
+from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 from PIL import Image
 from tqdm import tqdm
 
 from unrender.data_gen.augment import augment_image
-from unrender.data_gen.chart_specs import random_spec
+from unrender.data_gen.chart_specs import TARGET_CONTRACT, random_spec
+from unrender.data_gen.provenance import digest, json_bytes, recipe
 from unrender.data_gen.render import render_chart
 from unrender.schema.chart_schema import canonical_json
 
@@ -37,15 +38,18 @@ def _cap_long_side(img: Image.Image, max_side: int) -> Image.Image:
     if longest <= max_side:
         return img
     scale = max_side / longest
-    return img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    return img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
 
 
 def _make_one(args_tuple):
-    index, base_seed, images_dir, labels_dir, augment, max_side, hard, aug_frac, v2 = args_tuple
+    index, base_seed, images_dir, labels_dir, augment, max_side, hard, aug_frac, v2, recipe_hash = (
+        args_tuple
+    )
     rng = random.Random(base_seed + index)
 
     spec = random_spec(rng, hard=hard, v2=v2)
     img = render_chart(spec)
+    native_size = list(img.size)
     did_augment = augment and rng.random() < aug_frac
     if did_augment:
         img = augment_image(img, rng)
@@ -54,17 +58,29 @@ def _make_one(args_tuple):
     stem = f"{index:07d}"
     img_path = os.path.join(images_dir, f"{stem}.png")
     label_path = os.path.join(labels_dir, f"{stem}.json")
-    img.save(img_path)
-    with open(label_path, "w", encoding="utf-8") as f:
-        f.write(canonical_json(spec.to_chart_data()))
-
-    # `labels_shown` and `chart_type` are the slice keys the eval table needs;
-    # they live only in the spec, so capture them here or they're lost.
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+    label_bytes = canonical_json(spec.to_chart_data()).encode()
+    with open(img_path, "xb") as stream:
+        stream.write(image_bytes)
+    with open(label_path, "xb") as stream:
+        stream.write(label_bytes)
     return {
-        "id": stem, "image": img_path, "label": label_path,
+        "id": stem,
+        "image": f"images/{stem}.png",
+        "label": f"labels/{stem}.json",
         "chart_type": spec.chart_type,
         "labels_shown": spec.value_labels_shown,
         "augmented": did_augment,
+        "target_contract": TARGET_CONTRACT,
+        "recipe_sha256": recipe_hash,
+        "image_sha256": digest(image_bytes),
+        "label_sha256": digest(label_bytes),
+        "spec": asdict(spec),
+        "native_size": native_size,
+        "image_size": list(img.size),
+        "visual_review": "not_reviewed",
     }
 
 
@@ -73,46 +89,88 @@ def generate(
     out: str,
     base_seed: int = 1234,
     augment: bool = True,
-    workers: Optional[int] = None,
+    workers: int | None = None,
     max_side: int = 1280,
     start_index: int = 0,
     hard: bool = False,
     v2: bool = False,
 ) -> Path:
+    if n <= 0 or start_index < 0 or max_side < 1 or (workers is not None and workers < 1):
+        raise ValueError(
+            "n, max_side and workers must be positive; start_index must be nonnegative"
+        )
+    if hard and v2:
+        raise ValueError("choose one sampling profile: hard or v2")
     out_dir = Path(out)
-    images_dir = out_dir / "images"
-    labels_dir = out_dir / "labels"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    labels_dir.mkdir(parents=True, exist_ok=True)
-
-    workers = workers or max(1, (os.cpu_count() or 4) - 2)
-    aug_frac = 0.95 if (hard or v2) else _AUGMENT_FRACTION  # heavier augmentation on hard/v2
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise ValueError(
+            "output directory is not empty; frozen or partial datasets "
+            "cannot be overwritten or appended"
+        )
+    workers = workers if workers is not None else max(1, (os.cpu_count() or 4) - 2)
+    aug_frac = 0.95 if (hard or v2) else _AUGMENT_FRACTION
+    parameters = dict(
+        n=n,
+        base_seed=base_seed,
+        augment=augment,
+        max_side=max_side,
+        start_index=start_index,
+        hard=hard,
+        v2=v2,
+        augmentation_fraction=aug_frac,
+    )
+    identity = recipe(**parameters)
+    recipe_hash = digest(json_bytes(identity))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = out_dir / "generation.json"
+    receipt = {"status": "generating", "recipe": identity, "recipe_sha256": recipe_hash}
+    # Exclusive create is the ownership claim if two processes choose an empty directory.
+    with receipt_path.open("xb") as stream:
+        stream.write(json_bytes(receipt))
+    images_dir, labels_dir = out_dir / "images", out_dir / "labels"
+    images_dir.mkdir()
+    labels_dir.mkdir()
     tasks = [
-        (i, base_seed, str(images_dir), str(labels_dir), augment, max_side, hard, aug_frac, v2)
+        (
+            i,
+            base_seed,
+            str(images_dir),
+            str(labels_dir),
+            augment,
+            max_side,
+            hard,
+            aug_frac,
+            v2,
+            recipe_hash,
+        )
         for i in range(start_index, start_index + n)
     ]
-
+    pending = out_dir / ".manifest.inprogress.jsonl"
     manifest_path = out_dir / "manifest.jsonl"
-    mode = "a" if start_index > 0 and manifest_path.exists() else "w"
-
-    print(f"Generating {n} charts -> {out_dir}  (workers={workers}, augment={augment}, hard={hard})")
-    with open(manifest_path, mode, encoding="utf-8") as mf:
+    print(f"Generating {n} charts -> {out_dir} (contract={TARGET_CONTRACT}, workers={workers})")
+    with pending.open("xb") as stream:
         if workers == 1:
-            for t in tqdm(tasks, total=len(tasks)):
-                mf.write(json.dumps(_make_one(t)) + "\n")
+            for task in tqdm(tasks):
+                stream.write(json_bytes(_make_one(task)))
         else:
             import multiprocessing as mp
 
             with mp.Pool(workers) as pool:
-                # imap (ordered), NOT imap_unordered: the manifest MUST be written in
-                # index order so the dataset — and therefore split_dataset's seeded
-                # shuffle — is reproducible across runs. imap_unordered wrote in
-                # worker-completion order, which silently desynced the local and Modal
-                # test splits (only 494/1000 overlap; see modal_v1_split.json).
                 for entry in tqdm(pool.imap(_make_one, tasks, chunksize=8), total=len(tasks)):
-                    mf.write(json.dumps(entry) + "\n")
-
-    print(f"Done. Manifest: {manifest_path}")
+                    stream.write(json_bytes(entry))
+        stream.flush()
+        os.fsync(stream.fileno())
+    if recipe(**parameters) != identity:
+        raise ValueError("generation source/environment changed; output remains incomplete")
+    pending.rename(manifest_path)
+    receipt.update(status="complete", manifest_sha256=digest(manifest_path.read_bytes()))
+    completed = out_dir / ".generation.complete.json"
+    with completed.open("xb") as stream:
+        stream.write(json_bytes(receipt))
+        stream.flush()
+        os.fsync(stream.fileno())
+    completed.replace(receipt_path)
+    print(f"Done. Manifest: {manifest_path}; images still require visual/recoverability review.")
     return manifest_path
 
 
@@ -123,11 +181,18 @@ def main():
     p.add_argument("--seed", type=int, default=1234, help="base random seed")
     p.add_argument("--workers", type=int, default=None, help="processes (default: cpus-2)")
     p.add_argument("--max-side", type=int, default=1280, help="cap longest image side (px)")
-    p.add_argument("--start-index", type=int, default=0, help="first sample index (for appending)")
+    p.add_argument(
+        "--start-index", type=int, default=0, help="first sample index in a NEW dataset directory"
+    )
     p.add_argument("--no-augment", action="store_true", help="disable image degradations")
-    p.add_argument("--hard", action="store_true", help="eval-v1 hard mode (denser, truncated axes, K/M/B, ...)")
-    p.add_argument("--v2", action="store_true",
-                   help="synthetic_v2 mode (magnitudes to 1e9, real-world axis formats, year axes, themes)")
+    p.add_argument(
+        "--hard", action="store_true", help="eval-v1 hard mode (denser, truncated axes, K/M/B, ...)"
+    )
+    p.add_argument(
+        "--v2",
+        action="store_true",
+        help="synthetic_v2 mode (magnitudes to 1e9, real-world axis formats, year axes, themes)",
+    )
     args = p.parse_args()
 
     generate(

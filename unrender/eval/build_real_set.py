@@ -124,7 +124,7 @@ def build(dirpath: str) -> dict:
             raise ValueError(f"{lf}: source data changed since review")
         rel = f"{root.as_posix()}/images/{img_name}"  # data/real_v0/images/x.png
         vol = f"{VOL_ROOT}/{rel}"  # /vol/data/real_v0/images/x.png (matches the upload target)
-        rows_local.append(_row(rel, label_json, meta))
+        rows_local.append(_row(f"images/{img_name}", label_json, meta))
         rows_modal.append(_row(vol, label_json, meta))
 
     for name, rows in (("test.jsonl", rows_local), ("test.modal.jsonl", rows_modal)):

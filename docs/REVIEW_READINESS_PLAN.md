@@ -67,11 +67,19 @@ verified provider or merge the older branch's product implementation over main.
   have hidden-field or clipping defects. Three distinct-target/identical-pixel
   counterexamples are preserved, and per-cell accounting matches the scorer.
   [Evidence and corrective requirements](../release/model-error-audit/README.md).
-- [ ] Replace the defective generator/target contract before more inference or
-  training: visible-only series identity, unit-only axis text, cumulative stack
-  bounds, immutable versioned generation recipes and paired image/target hashes.
-  Verify counterfactual visibility, geometry bounds and label legibility at the
-  actual model input resolution. Do not regenerate over frozen artifacts.
+- [x] Current generator/target and artifact contract: null invisible single-series
+  identities, unit-only axis text, cumulative stack bounds, source/environment
+  recipes, paired image/target hashes, immutable generation/splits, and verified
+  dataset-relative evaluation/training loading. Frozen artifacts are unchanged.
+  [Current dataset workflow](SYNTHETIC_DATA.md) and
+  [pipeline verification/native visual failures](../release/synthetic-contract-v1/README.md).
+- [ ] Full synthetic recoverability: inspect label/legend overlap, clipping after
+  augmentation, and readable precision at native and the actual deployed
+  512-token processor input. Passing metadata and endpoint checks is insufficient
+  to certify a new benchmark or authorize a model-quality claim.
+- [ ] Geometry data conversion: replace historical seed regeneration/skipped
+  mismatches with complete artifact binding and augmentation-coordinate checks.
+  Do not train on a silently reduced or mismatched geometry dataset.
 - [ ] Dataset: development pool plus at least 300 independent final charts;
   source/table-disjoint groups, multiple renderers, representative real charts,
   all supported families, density/resolution/scale/date slices and unsupported
@@ -98,7 +106,7 @@ verified provider or merge the older branch's product implementation over main.
   paths; keep paid-launch/legal/support gates separate from private code review.
 - [ ] Conditional training: first reproduce the baseline with immutable recipe,
   data, base/processor and environment hashes; validate resume identity; select
-  by generated task quality. Train synthetic_v2/realistic mixtures or one diagnosed
+  by generated task quality. Train reviewed current-contract synthetic/realistic mixtures or one diagnosed
   error intervention only after evaluation identifies the need. Multiple seeds
   for a finalist; no automatic 8B/RL or repetition of unsuccessful geometry work.
 - [ ] Demo and handoff: sharp owned source, source-aligned review order, clear

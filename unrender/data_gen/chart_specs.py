@@ -3,15 +3,17 @@
 A ChartSpec carries BOTH the ground-truth data (chart_type, title, axes,
 categories, exact values) AND the rendering style (palette, dpi, whether value
 labels are printed, ...). render.py draws it; to_chart_data() extracts the
-label. Because both read the same spec, the image and the label can never drift.
+label. Validation rejects known invisible-target configurations. Shared input
+alone does not prove that every label or value is visually recoverable.
 
 The single most important knob is `value_labels_shown`. When False, the model
 must measure bar/point geometry against the axis scale to recover values — the
-exact skill frontier models lack. We keep ~half the dataset label-free.
+geometric recovery task. We keep roughly half the dataset label-free.
 """
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -39,6 +41,17 @@ CHART_TYPE_WEIGHTS = {
 if set(CHART_TYPE_WEIGHTS) != set(CHART_TYPES):  # plain raise, not assert (survives python -O)
     raise RuntimeError("CHART_TYPE_WEIGHTS out of sync with CHART_TYPES")
 _CT_NAMES, _CT_WEIGHTS = zip(*CHART_TYPE_WEIGHTS.items())  # precomputed once for sampling
+
+TARGET_CONTRACT = "chart-visible-v1"
+
+
+def value_extent(chart_type: str, values: list[list[float]]) -> tuple[float, float]:
+    """Value endpoints required in the plot; stacked data needs cumulative bounds."""
+    if chart_type == "stacked_bar":
+        totals = [sum(column) for column in zip(*values, strict=True)]
+        return 0.0, max(totals)
+    flat = [value for row in values for value in row]
+    return min(flat), max(flat)
 
 # --- Word banks (business/finance/science flavored, on-distribution) ---------
 _METRICS = [
@@ -108,8 +121,52 @@ class ChartSpec:
     x_numeric: bool = False              # line charts: continuous numeric x-axis, sparse auto ticks
     theme: Optional[str] = None          # "owid" / "dark" / "news" rendering style
 
+    def validate_visible_target(self) -> None:
+        """Reject specifications whose required target fields are never drawn."""
+        if self.chart_type not in CHART_TYPES or not self.categories or not self.values:
+            raise ValueError("invalid chart family or empty chart")
+        if len(self.values) != len(self.series_names) or any(
+            len(row) != len(self.categories) for row in self.values
+        ):
+            raise ValueError("series/category dimensions do not match")
+        if not all(isinstance(c, str) and c.strip() for c in self.categories) or len(
+            set(self.categories)
+        ) != len(self.categories):
+            raise ValueError("category labels must be unique and nonempty")
+        if self.chart_type not in MULTI_SERIES_TYPES and (
+            len(self.values) != 1 or self.series_names != [None]
+        ):
+            raise ValueError("single-series charts have no legend; their series name must be null")
+        if self.chart_type in MULTI_SERIES_TYPES and (
+            len(self.values) < 2 or not all(self.series_names)
+            or len(set(self.series_names)) != len(self.series_names)
+        ):
+            raise ValueError("multiple visible legend names must be unique and nonempty")
+        if any(not math.isfinite(v) for row in self.values for v in row):
+            raise ValueError("nonfinite chart values")
+        if self.chart_type == "stacked_bar" and any(v < 0 for row in self.values for v in row):
+            raise ValueError("negative stacked segments are not supported")
+        if self.chart_type == "pie":
+            if self.x_label or self.y_label or self.y_unit:
+                raise ValueError("pie charts have no axes; axis labels and units must be null")
+            if any(v < 0 for v in self.values[0]) or sum(self.values[0]) <= 0:
+                raise ValueError("pie values must be nonnegative with a positive total")
+            return
+        lo, hi = value_extent(self.chart_type, self.values)
+        if not math.isfinite(lo) or not math.isfinite(hi):
+            raise ValueError("nonfinite cumulative value extent")
+        if self.y_baseline is not None and (
+            not math.isfinite(self.y_baseline) or self.y_baseline > lo
+        ):
+            raise ValueError("lower plot bound hides required value endpoints")
+        if self.y_top is not None and (not math.isfinite(self.y_top) or self.y_top < hi):
+            raise ValueError("upper plot bound hides required value endpoints")
+        if self.y_baseline is not None and self.y_top is not None and self.y_baseline >= self.y_top:
+            raise ValueError("plot bounds must be increasing")
+
     def to_chart_data(self) -> ChartData:
         """Build the exact ground-truth label from this spec."""
+        self.validate_visible_target()
         series = [
             Series(
                 name=self.series_names[i],
@@ -212,8 +269,8 @@ _V2_SCALES = _SCALES + [10_000_000, 100_000_000, 1_000_000_000]
 
 def _values(rng: random.Random, n_series: int, n_cat: int, allow_negative: bool, decimals: int,
             scales: List[int] = _SCALES):
-    # NOTE: the draw ORDER here (choice, then random per cell) is frozen — v0/v1
-    # regenerate byte-identically because `scales` defaults to the original list.
+    # Sampling order is part of the source-hashed recipe, not a promise that
+    # current code reproduces historical datasets.
     scale = rng.choice(scales)
     out: List[List[float]] = []
     for _ in range(n_series):
@@ -235,8 +292,8 @@ def random_spec(rng: random.Random, hard: bool = False, v2: bool = False) -> Cha
     value axes, K/M/B ticks, similar palettes, smaller figures). v2=True is the
     2026-07 real-transfer escalation (magnitudes to 1e9, real-world axis formats,
     continuous year x-axes, themes). Each mode is a separate function so the
-    frozen paths' RNG sequences stay byte-identical — regenerating v0/v1 from
-    their recipes still reproduces them exactly.
+    sampling profiles are separate, but all use the current visible-target contract.
+    Historical v0/v1/v2 data must be reproduced at its recorded Git revision.
     """
     if v2:
         return _v2_spec(rng)
@@ -265,7 +322,7 @@ def random_spec(rng: random.Random, hard: bool = False, v2: bool = False) -> Cha
     if is_multi:
         series_names = _series_names(rng, n_series)
     else:
-        series_names = [metric if rng.random() < 0.5 else None]
+        series_names = [None]
 
     has_unit = rng.random() < 0.45
     unit = rng.choice(_UNITS) if has_unit else None
@@ -319,7 +376,7 @@ def _hard_spec(rng: random.Random) -> ChartSpec:
     if is_pie:
         values = [[max(abs(v), 1) for v in values[0]]]
 
-    series_names = _series_names(rng, n_series) if is_multi else [metric if rng.random() < 0.5 else None]
+    series_names = _series_names(rng, n_series) if is_multi else [None]
 
     has_unit = rng.random() < 0.45
     unit = rng.choice(_UNITS) if has_unit else None
@@ -327,13 +384,12 @@ def _hard_spec(rng: random.Random) -> ChartSpec:
 
     # Value-axis hardening (truncated baseline, unrounded max, K/M/B ticks).
     y_baseline = y_top = tick_suffix = None
-    flat = [v for row in values for v in row] or [0.0, 1.0]
-    vmin, vmax = min(flat), max(flat)
+    vmin, vmax = value_extent(chart_type, values)
     if not is_pie:
         if vmin > 0 and rng.random() < 0.6:
             y_baseline = round(vmin * rng.uniform(0.5, 0.9), 4)
         if rng.random() < 0.7:
-            y_top = round(vmax * rng.uniform(1.02, 1.12), 4)
+            y_top = vmax + rng.uniform(0.02, 0.12) * max(abs(vmax), vmax - vmin, 1e-6)
         if vmax >= 1e4 and rng.random() < 0.6:
             tick_suffix = "B" if vmax >= 1e9 else "M" if vmax >= 1e6 else "K"
 
@@ -408,7 +464,7 @@ def _v2_spec(rng: random.Random) -> ChartSpec:
         values = [[max(abs(v), 1) for v in values[0]]]
         flat = values[0]
 
-    series_names = _series_names(rng, n_series) if is_multi else [metric if rng.random() < 0.5 else None]
+    series_names = _series_names(rng, n_series) if is_multi else [None]
     has_unit = rng.random() < 0.45
     unit = rng.choice(_UNITS) if has_unit else None
     rotate = rng.choice([0, 30, 45, 90]) if n_cat > 6 else rng.choice([0, 0, 45])
@@ -416,13 +472,13 @@ def _v2_spec(rng: random.Random) -> ChartSpec:
     # Value-axis rendering: spread big numbers across the REAL formats a model
     # must read — suffix ticks (K/M/B), comma grouping, full raw digits, or the
     # matplotlib default (which shows offset "1e8"-style notation when large).
-    vmin, vmax = min(flat), max(flat)
+    vmin, vmax = value_extent(chart_type, values)
     y_baseline = y_top = tick_suffix = tick_format = None
     if not is_pie:
         if vmin > 0 and rng.random() < 0.5:
             y_baseline = round(vmin * rng.uniform(0.5, 0.9), 4)
         if rng.random() < 0.6:
-            y_top = round(vmax * rng.uniform(1.02, 1.12), 4)
+            y_top = vmax + rng.uniform(0.02, 0.12) * max(abs(vmax), vmax - vmin, 1e-6)
         if vmax >= 1e4:
             r = rng.random()
             if r < 0.40:

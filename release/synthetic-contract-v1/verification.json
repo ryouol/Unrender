@@ -1,0 +1,441 @@
+{
+  "contract": "synthetic-contract-verification-v1",
+  "scope": "Local CPU data pipeline, not model-quality or benchmark eligibility approval",
+  "profiles": {
+    "easy": {
+      "generation": {
+        "manifest_sha256": "249fb08282663d292d7a145ef3bc69ede1ac48f2b2977c71f050904546271c8a",
+        "recipe": {
+          "contract": "synthetic-generation-v1",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.85,
+            "base_seed": 47000,
+            "hard": false,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": false
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "75dac1bbbce1f908932e10fe95181ff0e33e34da69a9da5e91fefc05d7964710",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "69e8df2db00081e3176de3b53ee33ec06b1d9de96b5ab39c0d94342a31b08595",
+            "unrender/data_gen/provenance.py": "c65f26a1ffe26ebf3207c805d18c811c86a70d2ee01234c0535789105c6ec086",
+            "unrender/data_gen/render.py": "949c1d1602d968e6531602dff8c9063b4b6e39119470f7289ff6fe1f0902f247",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "9a43d4d7aa25301d82a7e7404726ee247a32118bdf294544b89cf5356dbad3a1",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v1",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "b51ae7b9c6c8947e9aca1cb9939a27c83ba7f50d39c47942529591a9030d7db3"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "b464fa435bb1fd8e8d3d8e63a0ee9cabb3fb45e63b090e92686553827f3b7be8"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "7832e8f20d51063ba241adc7285c3763c5be1132efcc838ec1ac0258b6fedd73"
+          }
+        },
+        "manifest_sha256": "249fb08282663d292d7a145ef3bc69ede1ac48f2b2977c71f050904546271c8a",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "9a43d4d7aa25301d82a7e7404726ee247a32118bdf294544b89cf5356dbad3a1",
+        "seed": 7,
+        "splitter_sha256": "7b3182a86785bd70014af59e643be3c1414e67d1345da1b647eda5437c1a8530",
+        "status": "complete"
+      },
+      "compressed_manifest_sha256": "a2c58a4466249d708c6267047f25aab0f27d2cb107e68ffbc8ccbec45fe25c79",
+      "native_images_generated": 24,
+      "families": {
+        "horizontal_bar": 2,
+        "grouped_bar": 5,
+        "pie": 4,
+        "bar": 6,
+        "stacked_bar": 2,
+        "multi_line": 1,
+        "line": 4
+      },
+      "eval_rows_loaded": 4,
+      "training_records_loaded": 16
+    },
+    "hard": {
+      "generation": {
+        "manifest_sha256": "bb27166f022b9765445d6b5c7aeac05fa6c800f98513452373a2580819a62b41",
+        "recipe": {
+          "contract": "synthetic-generation-v1",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.95,
+            "base_seed": 47000,
+            "hard": true,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": false
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "75dac1bbbce1f908932e10fe95181ff0e33e34da69a9da5e91fefc05d7964710",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "69e8df2db00081e3176de3b53ee33ec06b1d9de96b5ab39c0d94342a31b08595",
+            "unrender/data_gen/provenance.py": "c65f26a1ffe26ebf3207c805d18c811c86a70d2ee01234c0535789105c6ec086",
+            "unrender/data_gen/render.py": "949c1d1602d968e6531602dff8c9063b4b6e39119470f7289ff6fe1f0902f247",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "66bdf9f61e28ab822d87a7fe66e6746fc2e8c118766bca9d956e44e0a9f8ae6c",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v1",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "a5042b1135fffda0ab9f501c4534e90530f702749c6474c020e868ddc7a555e8"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "0e2a69dba26d4f8c8e260de946a0967a7df444e99043d2eb00e8b5faa58108a1"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "80683cd73a3698a671ec423efd9f63b09cb00a624959a0b5ea2a3b469f4b1787"
+          }
+        },
+        "manifest_sha256": "bb27166f022b9765445d6b5c7aeac05fa6c800f98513452373a2580819a62b41",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "66bdf9f61e28ab822d87a7fe66e6746fc2e8c118766bca9d956e44e0a9f8ae6c",
+        "seed": 7,
+        "splitter_sha256": "7b3182a86785bd70014af59e643be3c1414e67d1345da1b647eda5437c1a8530",
+        "status": "complete"
+      },
+      "compressed_manifest_sha256": "72042a8183f1e630195f24f412c0030457ed77abd89bbb5ea38ddb6eaa1ce46b",
+      "native_images_generated": 24,
+      "families": {
+        "horizontal_bar": 2,
+        "grouped_bar": 5,
+        "pie": 4,
+        "bar": 6,
+        "stacked_bar": 2,
+        "multi_line": 1,
+        "line": 4
+      },
+      "eval_rows_loaded": 4,
+      "training_records_loaded": 16
+    },
+    "varied": {
+      "generation": {
+        "manifest_sha256": "3bdd7345b7adac3953f964840ae56da64bdeae1e7031c6441dd3584646749d00",
+        "recipe": {
+          "contract": "synthetic-generation-v1",
+          "environment": {
+            "fonts": {
+              "DejaVu Sans:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "DejaVu Sans:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "DejaVu Serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "DejaVu Serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              },
+              "monospace:bold": {
+                "filename": "DejaVuSansMono-Bold.ttf",
+                "sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96"
+              },
+              "monospace:normal": {
+                "filename": "DejaVuSansMono.ttf",
+                "sha256": "602ec86b8948cfcd956482fe64f94c36c867770149ef2f791d4613f443bcecb3"
+              },
+              "sans-serif:bold": {
+                "filename": "DejaVuSans-Bold.ttf",
+                "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167"
+              },
+              "sans-serif:normal": {
+                "filename": "DejaVuSans.ttf",
+                "sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22"
+              },
+              "serif:bold": {
+                "filename": "DejaVuSerif-Bold.ttf",
+                "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676"
+              },
+              "serif:normal": {
+                "filename": "DejaVuSerif.ttf",
+                "sha256": "107244956e9962b9e96faccdc551825e0ae0898ae13737133e1b921a2fd35ffa"
+              }
+            },
+            "freetype": "2.14.3",
+            "implementation": "CPython",
+            "libraries": {
+              "Pillow": "12.3.0",
+              "matplotlib": "3.11.1",
+              "numpy": "2.4.6"
+            },
+            "machine": "arm64",
+            "matplotlib_style": "library defaults plus per-spec font and theme",
+            "python": "3.11.14",
+            "system": "Darwin"
+          },
+          "parameters": {
+            "augment": true,
+            "augmentation_fraction": 0.95,
+            "base_seed": 47000,
+            "hard": false,
+            "max_side": 1280,
+            "n": 24,
+            "start_index": 0,
+            "v2": true
+          },
+          "sources": {
+            "unrender/data_gen/augment.py": "75dac1bbbce1f908932e10fe95181ff0e33e34da69a9da5e91fefc05d7964710",
+            "unrender/data_gen/chart_specs.py": "a1c219dfe2277b8f56e6eb6f69d7761c9dec3fc3803fcccac7484d68fb57c146",
+            "unrender/data_gen/generate.py": "69e8df2db00081e3176de3b53ee33ec06b1d9de96b5ab39c0d94342a31b08595",
+            "unrender/data_gen/provenance.py": "c65f26a1ffe26ebf3207c805d18c811c86a70d2ee01234c0535789105c6ec086",
+            "unrender/data_gen/render.py": "949c1d1602d968e6531602dff8c9063b4b6e39119470f7289ff6fe1f0902f247",
+            "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4"
+          },
+          "target_contract": "chart-visible-v1"
+        },
+        "recipe_sha256": "d4b17e789d47c0aaae7693edcc0e1fc264ad69b77531e083078512b131de3da8",
+        "status": "complete"
+      },
+      "split": {
+        "contract": "synthetic-split-v1",
+        "files": {
+          "test.jsonl": {
+            "rows": 4,
+            "sha256": "a0beaa4af1053091ab98138cb821bb5bd13469cbb52d8ea2c5c3e7df416d6274"
+          },
+          "train.jsonl": {
+            "rows": 16,
+            "sha256": "f0f928fdad6bbff16b0bf593ee5f78cc5b1d3697684763de0093b1d039faa1a9"
+          },
+          "val.jsonl": {
+            "rows": 4,
+            "sha256": "54542e712329add68dd9dc81f7e4f89b8832197c3191006dba943e0410c78066"
+          }
+        },
+        "manifest_sha256": "3bdd7345b7adac3953f964840ae56da64bdeae1e7031c6441dd3584646749d00",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "recipe_sha256": "d4b17e789d47c0aaae7693edcc0e1fc264ad69b77531e083078512b131de3da8",
+        "seed": 7,
+        "splitter_sha256": "7b3182a86785bd70014af59e643be3c1414e67d1345da1b647eda5437c1a8530",
+        "status": "complete"
+      },
+      "compressed_manifest_sha256": "f93a669900887887630161cf73b89f9f3d128b05c50273304c11dab374a1a833",
+      "native_images_generated": 24,
+      "families": {
+        "horizontal_bar": 2,
+        "grouped_bar": 5,
+        "pie": 4,
+        "bar": 6,
+        "stacked_bar": 2,
+        "multi_line": 1,
+        "line": 4
+      },
+      "eval_rows_loaded": 4,
+      "training_records_loaded": 16
+    }
+  },
+  "native_visual_observations": [
+    {
+      "image": "examples/easy-0000011.png",
+      "image_sha256": "9c4c9c3a618d6d6cbfed6b851b6224b1bd87f35dcabcfabc7972dc9f5dc38c96",
+      "profile": "easy",
+      "id": "0000011",
+      "observation": "Single-series name is null; printed labels and all five category names are visible in this example.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    },
+    {
+      "image": "examples/hard-0000022.png",
+      "image_sha256": "733bb2de5662e95874921324fe15172f0df9874c3b24d1c1cf3954225cc5172e",
+      "profile": "hard",
+      "id": "0000022",
+      "observation": "Unit-only M axis text is present; blur and small text still limit readability.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    },
+    {
+      "image": "examples/varied-0000003.png",
+      "image_sha256": "7831416d53f42f7d47f947adaf5236c25d84ac40582a0da952720c64ceaa9139",
+      "profile": "varied",
+      "id": "0000003",
+      "observation": "Unit-only GB text is visible, but the legend covers part of the final grouped bars.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    },
+    {
+      "image": "examples/varied-0000005.png",
+      "image_sha256": "b9d706645a7d6547378f65c7a185a3f5cbc0b49e2d3b178eaa727048c30721b9",
+      "profile": "varied",
+      "id": "0000005",
+      "observation": "Dense printed values overlap despite the existing large-number heuristic.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    },
+    {
+      "image": "examples/varied-0000006.png",
+      "image_sha256": "a9ae84e2065da38b74fc25e6e1e55969f145a1c1e19a6fce4c1f39672a484919",
+      "profile": "varied",
+      "id": "0000006",
+      "observation": "All cumulative stack endpoints fit, but category labels overlap and the legend covers the final stack.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    },
+    {
+      "image": "examples/varied-0000015.png",
+      "image_sha256": "f4e774adfa2e64d8d39ab38c2dda0f369aa65533b29fd18e117a1b99fe3c3a51",
+      "profile": "varied",
+      "id": "0000015",
+      "observation": "Cumulative bounds contain all segments, but the lower-right legend obscures a printed segment value.",
+      "review_scope": "One agent visual inspection at native image size; no model-input or independent annotation approval"
+    }
+  ],
+  "gpu_runs": 0,
+  "cloud_generation_runs": 0,
+  "deployments": 0,
+  "tests": {
+    "full_suite": {
+      "passed": 522,
+      "skipped": 0,
+      "warnings": 4,
+      "seconds": 139.9
+    },
+    "focused_final": {
+      "passed": 108,
+      "warnings": 2,
+      "seconds": 11.5
+    },
+    "clean_source_archive": {
+      "passed": 108,
+      "warnings": 2,
+      "seconds": 12.31
+    },
+    "lint": "passed",
+    "product_types": "passed: 25 source files"
+  },
+  "historical_evidence_rescore": "All 900 predictions, both training splits and frozen truth verified from clean source; historical scores and paired intervals unchanged.",
+  "packaging_verification": "All six PNGs and all three compressed manifests checked against recorded hashes; generation source hashes match final source."
+}

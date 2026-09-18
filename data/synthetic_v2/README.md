@@ -1,15 +1,16 @@
 # synthetic_v2 — real-transfer training set (2026-07-01)
 
-**Historical generator warning:** the [visibility audit](../../release/model-error-audit/README.md)
-confirmed unobservable target fields and clipped stacked data in the v1 benchmark.
-The shared generator is not approved for new quality claims or training until its
-observable-target contract is fixed. Preserve frozen files; do not regenerate over
-this directory. The recipes below document historical generation.
+**Frozen historical evidence, not a current generation recipe.** The
+[visibility audit](../../release/model-error-audit/README.md) confirmed hidden
+metadata and clipped stacked targets. Current generation intentionally uses a
+new contract and refuses to overwrite these files. Use
+[the current dataset workflow](../../docs/SYNTHETIC_DATA.md) for new data.
+The commands below describe old source revisions only; do not run them here.
 
-Built to close the real-chart gaps measured in the 2026-07-01 sweep
+Originally built to address apparent real-chart gaps in the 2026-07-01 sweep
 (`refine-logs/FRONTIER_PLAN.md` P1; changes in `CHANGELOG.md`): value magnitudes
 to **1e9** (v0/v1 capped below 1e6 — the model scored 0% on real population/CO₂
-charts), real-world value-axis formats (K/M/B suffixes incl. the previously
+charts under the now-rejected real_v0 annotations), real-world value-axis formats (K/M/B suffixes incl. the previously
 unreachable **B**, comma-grouped ticks, full raw digits, mpl offset notation),
 **continuous numeric year x-axes** with sparse ticks on line charts (the
 OWID/FRED look), owid/dark/news **themes**, wired minor ticks, ~55% label-free,
@@ -17,7 +18,7 @@ density mixing easy+hard, heavy augmentation (0.95).
 
 Generated LOCALLY (M4 Pro) and uploaded to the Modal volume — data gen is
 CPU-only, so local is free. Same pinned rendering stack as the Modal image,
-so bytes are identical either way.
+but matching package versions alone does not establish identical image bytes.
 
 ## What's committed vs regenerable
 
@@ -26,17 +27,17 @@ so bytes are identical either way.
 - **Not committed (regenerable):** `images/`, `labels/`, `manifest.jsonl`,
   `train.jsonl` (18,500).
 
-## Reproduce
+## Historical recipe (requires its original source revision)
 
 ```bash
 python -m unrender.data_gen.generate      --n 20000 --out data/synthetic_v2 --seed 9012 --v2 --workers 10
 python -m unrender.data_gen.split_dataset --out data/synthetic_v2 --val-size 500 --test-size 1000   # split seed 7 (default)
 ```
 
-Each chart is fully determined by `seed + index` (indices 0..19999 stable).
+The historical recipe used `seed + index` (indices 0..19999).
 **Recipe code version matters:** this set was regenerated 2026-07-07 after the
 visual audit (dark-theme-safe palettes; huge-magnitude dense charts forced
-label-free — see CHANGELOG). Reproducing it requires that code or later.
+label-free — see CHANGELOG). Reproducing it requires its original source, not arbitrary later code.
 Byte-identical images additionally require the frozen rendering stack:
 
 | tool | version |
@@ -59,5 +60,6 @@ but must only be adopted when ALL compared arms re-run on it together
 modal volume put unrender-vol data/synthetic_v2 data/synthetic_v2
 ```
 
-Training then reads it via `--train-files v2,v1,v0` (paths in the jsonl are
-repo-relative; `sft_lora._resolve_image` resolves them against `--data-root`).
+This upload/training route is historical. The current loader resolves relative
+images from the split directory and requires generation receipts for new data.
+Do not combine historical and current targets without an explicit reviewed recipe.

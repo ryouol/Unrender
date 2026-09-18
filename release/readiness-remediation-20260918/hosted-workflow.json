@@ -1,0 +1,59 @@
+{
+  "scope": "Hosted HTTPS customer workflow with one real Modal inference on an owned synthetic chart",
+  "initial_credits": 3,
+  "job_id": "5230ffb7-be19-4dbc-bf81-3c8bef4fcea1",
+  "idempotent_submission": true,
+  "queue_to_review_seconds": 68.949,
+  "exact_reference_match": true,
+  "receipt": {
+    "contract": "extraction-receipt-v1",
+    "capture": "recorded",
+    "origin": "model",
+    "attempt": 1,
+    "execution_generation": 1,
+    "provider_roundtrip_ms": 67883,
+    "captured_at": "2026-09-18T16:42:03.071905Z",
+    "extractor": "modal",
+    "model_version": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:b0f38e8907a7",
+    "source_sha256": "197d1ca8a73feeb935b99b3d7ca58e89153caf699765c6d057ada87c22942d98",
+    "provider_input_sha256": "2b015d57cb0305e7da4c0470e93de94c6dd659a6e02edb91b8c48c27233d9fa3",
+    "page_index": 0,
+    "crop": null,
+    "raw_sha256": "f687f6c93b5980ca6238959d10e0d1209f52c32c2c8a6f554258636c0d510cd6",
+    "raw_byte_count": 475,
+    "stored_raw_sha256": "f687f6c93b5980ca6238959d10e0d1209f52c32c2c8a6f554258636c0d510cd6",
+    "raw_truncated": false,
+    "diagnostics": {
+      "parser_version": "chart-json-v2",
+      "parse_status": "raw_valid",
+      "finish_reason": "eos",
+      "output_tokens": 188,
+      "max_output_tokens": 4096,
+      "provider_release": "b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886",
+      "model_repository": "modal-volume/unrender-inference-cache",
+      "model_revision": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+      "model_digest": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+      "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+      "schema_sha256": "c319ef67ebf3267e5658e0ac28a075ceb2bea7f94e154fde8903a9083b8566c5"
+    }
+  },
+  "credits_after": 2,
+  "status": "passed",
+  "canary_harness_correction": "The initial script incorrectly expected review-stage export to be blocked. Product intentionally permits it with unapproved provenance. Resumed the same job without another extraction.",
+  "unapproved_export_labeled": true,
+  "versioned_correction_and_approval": true,
+  "exports": {
+    "csv": 2842,
+    "json": 4138,
+    "xlsx": 7171
+  },
+  "new_session_preserved_approval": true,
+  "test_account_deleted": true,
+  "browser": {
+    "approved_version": 3,
+    "download_started": true,
+    "console_errors_or_warnings": 0,
+    "readable_source_and_table": true
+  },
+  "provider_dispatches": 1
+}

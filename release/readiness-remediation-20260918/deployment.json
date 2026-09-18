@@ -1,0 +1,84 @@
+{
+  "runtime_commit": "2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af",
+  "web_deployment": {
+    "commit": {
+      "createdAt": "2026-09-18T16:36:57Z",
+      "id": "2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af",
+      "message": "Merge pull request #11 from ryouol/codex/review-readiness\n\nHarden chart review, evaluation evidence, and training recovery"
+    },
+    "createdAt": "2026-09-18T16:38:39.847674Z",
+    "finishedAt": "2026-09-18T16:39:56.957514Z",
+    "id": "dep-dammi3ou01pc73ar6dgg",
+    "startedAt": "2026-09-18T16:38:39.819306Z",
+    "status": "live",
+    "trigger": "api",
+    "updatedAt": "2026-09-18T16:39:56.957854Z"
+  },
+  "monitor_deployment": {
+    "commit": {
+      "createdAt": "2026-09-18T16:36:57Z",
+      "id": "2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af",
+      "message": "Merge pull request #11 from ryouol/codex/review-readiness\n\nHarden chart review, evaluation evidence, and training recovery"
+    },
+    "createdAt": "2026-09-18T16:38:52.347355Z",
+    "finishedAt": "2026-09-18T16:39:36.736794Z",
+    "id": "dep-dammi75bedkc73cb7g7g",
+    "startedAt": "2026-09-18T16:38:52.347267Z",
+    "status": "live",
+    "trigger": "api",
+    "updatedAt": "2026-09-18T16:39:36.737384Z"
+  },
+  "modal_app": "unrender-production",
+  "modal_tag": "readiness-2bc72d1",
+  "provider_release": "b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886",
+  "schema": 15,
+  "backup": "/data/release-backups/pre-readiness-final-20260918-schema15",
+  "preserved_counts": {
+    "users": 2,
+    "sessions": 1,
+    "api_keys": 0,
+    "uploads": 0,
+    "jobs": 4,
+    "result_versions": 8,
+    "credit_ledger": 11,
+    "provider_attempts": 5,
+    "projects": 3,
+    "google_identities": 2
+  },
+  "all_existing_table_hashes_preserved": true,
+  "source_hashes_preserved": 4,
+  "integrity": "ok",
+  "foreign_key_errors": 0,
+  "live_matches_scanned_image": {
+    "application_files": 118,
+    "python_packages": 71,
+    "debian_package_manifest": true,
+    "scope": "Package/source inventory equality, not a Render image digest attestation"
+  },
+  "worker_concurrency": 1,
+  "maintenance_disabled": true,
+  "monitor": {
+    "schedule": "*/2 * * * *",
+    "command": "timeout --kill-after=5s 55s unrender-operations-check",
+    "failure_only_notifications_preserved": true,
+    "maintenance_check_failed_at": "2026-09-18T16:40:26Z",
+    "recovery_checks_passed_at": [
+      "2026-09-18T16:42:07Z",
+      "2026-09-18T16:44:06Z"
+    ],
+    "new_email_delivery_not_checked": true
+  },
+  "ci": {
+    "branch": "35368944884",
+    "pull_request": "35368948985",
+    "merged_main": "35369525352",
+    "conclusion": "success"
+  },
+  "not_established": [
+    "Independent source annotation approval",
+    "New model training",
+    "General accuracy or inference speedup",
+    "Load capacity above one worker",
+    "Remote GPU cancellation acknowledgement or global dollar cap"
+  ]
+}

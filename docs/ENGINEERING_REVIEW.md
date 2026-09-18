@@ -4,13 +4,13 @@ This guide is the entry point for an independent review of Unrender's controlled
 
 [Live product](https://unrender.onrender.com/) · [Demo video](https://screen.studio/share/4lFdVojh) · [README and screenshots](../README.md) · [CI history](https://github.com/ryouol/Unrender/actions/workflows/ci.yml)
 
-## Current local remediation
+## Current remediation
 
-The September 18 readiness branch changes are tracked in [audit remediation](AUDIT_REMEDIATION.md), with explicit remaining gates and benchmark requirements. [Training reproducibility](TRAINING_REPRODUCIBILITY.md) describes the pinned recipe, weighted objective, processor and resume checks. The 72-chart packet is development material awaiting an independent reviewer. No new quality, speedup or production rollout is established by these edits.
+The September 18 readiness branch changes are tracked in [audit remediation](AUDIT_REMEDIATION.md), with explicit remaining gates and benchmark requirements. [Training reproducibility](TRAINING_REPRODUCIBILITY.md) describes the pinned recipe, weighted objective, processor and resume checks. The 72-chart packet is development material awaiting an independent reviewer. The application/provider/schema-15 rollout is verified in the deployment receipt below. Independent quality and speedup claims remain unestablished.
 
 ## Dated deployment baseline
 
-The September 12, 2026 handoff describes runtime commit [`a14b961`](https://github.com/ryouol/Unrender/commit/a14b961db721004a4ad77d4e2ab5cdac343d1ef9), schema 14. Documentation-only commits may follow without a runtime redeploy. The latest deployment record is in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md).
+The September 18, 2026 deployment runs commit [`2bc72d1`](https://github.com/ryouol/Unrender/commit/2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af), schema 15. Documentation-only commits may follow without a runtime redeploy. The latest deployment record is in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md).
 
 The public beta supports Google and password signup with three welcome credits, personal projects, chart review, approval, exports, and deletion. Email delivery and customer billing are disabled. Local replay intentionally accepts only its bundled fixture. The private production model release is not downloadable from this repository.
 
@@ -52,7 +52,7 @@ Do not use the shared production service for destructive, quota-exhaustion, or l
 
 Run `pytest -q` for the full Python suite. It includes research/evaluation checks and wrappers for several Node browser harnesses. Those harnesses exercise frontend behavior with simulated browser surfaces; they are not a substitute for real-browser interaction or an external accessibility audit. Read [visual QA](../design-qa.md) for the separate captured browser checks.
 
-The runtime baseline passed **320 tests / 1 skipped** locally; [PR #8](https://github.com/ryouol/Unrender/pull/8) records branch/PR CI, production rollout, and a synthetic hosted signup check. Main CI also passed. Known local warnings include the Starlette/httpx deprecation and Modal's notice when its function is invoked locally by tests. These local test invocations are not deployed GPU calls.
+The September 18 local suite passed **651 tests / 3 skipped**, with all **13** actual CPU training contract tests passing separately. Branch, PR and merged-main hosted jobs passed; the live workflow and restore receipts are in [the deployment record](RENDER_MODAL_LAUNCH.md). The earlier runtime baseline passed **320 tests / 1 skipped** locally; [PR #8](https://github.com/ryouol/Unrender/pull/8) records branch/PR CI, production rollout, and a synthetic hosted signup check. Main CI also passed. Known local warnings include the Starlette/httpx deprecation and Modal's notice when its function is invoked locally by tests. These local test invocations are not deployed GPU calls.
 
 For offline model evaluation, use the rescore command in [LAUNCH_EVALUATION.md](LAUNCH_EVALUATION.md). Full research reproduction needs the original model artifacts/datasets and possibly paid provider access; a clean clone does not contain every generated image, training checkpoint, or frontier-provider response.
 

@@ -55,7 +55,7 @@ Alert on:
 - backup age over 48 hours (the daily schedule plus retry grace).
 
 Provider success/failure and latency can be derived from the structured lifecycle
-records. The deployed hourly monitor covers the fixed conditions below;
+records. The deployed two-minute monitor covers the fixed conditions below;
 historical dashboards and the remaining alert types are separate work.
 
 The deployed `/health/operations` endpoint is separate from `/health/ready` and
@@ -69,18 +69,18 @@ Missing current-attempt start evidence also requires attention.
 
 Reads share a one-minute cache, a nonblocking lock and a two-second SQLite VM
 budget. Contention, unavailable storage or a failed scan returns attention.
-The readiness branch configures `unrender-monitor` every two minutes using
+The September 18 deployment configures `unrender-monitor` every two minutes using
 `timeout --kill-after=5s 55s unrender-operations-check`, with two retries ten
 seconds apart. Including the one-minute health cache, the nominal detection
 budget is under four minutes, before scheduler delay and notification delivery.
-This is a proposed configuration, not a measured live guarantee. Deploy it and
-measure failure detection/delivery before claiming the five-minute objective.
+Scheduled checks at 16:42 and 16:44 UTC passed after the maintenance-window
+check failed. This establishes operation of the cadence, not a five-minute
+notification-delivery guarantee; that latency remains to be measured.
 The probe URL remains `https://unrender.onrender.com`; change it with the origin.
-The last measured production monitor below was hourly; these local edits have
-not changed that deployed service. Planned maintenance can cause notifications.
+The older hourly measurements below are historical. Planned maintenance can cause notifications.
 
 The monitor is `crn-dahl5uh594qs73ffkbk0` in UNRENDER's Production environment,
-built from `02597a6`. Its first manual run started at 01:03:00 UTC on September 11,
+now built from `2bc72d1`. Historically, its first manual run started at 01:03:00 UTC on September 11,
 reported failure at 01:04:05 and exited with status 1. The operator inbox received
 Render's cron failure email at 01:04:09. This exercised the real public endpoint,
 retry command and delivery path: the earlier pilot provider attempt took 191.53
@@ -159,7 +159,7 @@ Pause uploads, let housekeeping drain the deletion outbox, expand the volume, an
 
 ## Rollback
 
-Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. The readiness branch uses schema version 15 with crash-atomic, cross-process-serialized forward migrations from versions 1–14 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 added account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Version 8 gives every storage reservation an opaque owner token: resize renews only that live lease, publication must atomically consume the matching unexpired reservation, and deletion holds the exclusive operational lock through reference check and file removal. Version 9 adds verified-email state and expiring, hashed account challenges while preserving existing accounts. Version 10 separates account activation from mailbox verification and records challenge delivery provenance. It preserves legacy account/session access, clears legacy mailbox flags that previously also represented operator activation, and requires fresh password-confirmed email verification before future email recovery. Schema 11 adds Google identities and recent authentication; schema 12 adds private projects and chart names; schema 13 binds Google login completion to its initiating browser; schema 14 indexes owner and chart lookups used by bulk deletion. Schema 15 adds bounded immutable extraction receipts, marking older versions as missing evidence rather than backfilling claims; see [the extraction contract](API.md#export-and-extraction-evidence-contract). Drain workers before this upgrade because old result-capacity reservations lack the new receipt allowance. Existing accounts, credits, charts, and sessions are preserved. Reverting to an image that supports only an earlier schema requires restoring its coordinated recovery set into a fresh data directory; do not run it over the upgraded database. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
+Deploy immutable image tags. Before a schema-changing release, create and verify a coordinated recovery set. The deployed application uses schema version 15 with crash-atomic, cross-process-serialized forward migrations from versions 1–14 and no down migration. Version 6 added worker execution leases/fencing, provider-dispatch state, audit rollups, provider-attempt accounting, and startup coordination. Version 7 added account session generations, attempt-fenced result/retained-byte reservations, and durable staging/upload/job-copy reservations. Version 8 gives every storage reservation an opaque owner token: resize renews only that live lease, publication must atomically consume the matching unexpired reservation, and deletion holds the exclusive operational lock through reference check and file removal. Version 9 adds verified-email state and expiring, hashed account challenges while preserving existing accounts. Version 10 separates account activation from mailbox verification and records challenge delivery provenance. It preserves legacy account/session access, clears legacy mailbox flags that previously also represented operator activation, and requires fresh password-confirmed email verification before future email recovery. Schema 11 adds Google identities and recent authentication; schema 12 adds private projects and chart names; schema 13 binds Google login completion to its initiating browser; schema 14 indexes owner and chart lookups used by bulk deletion. Schema 15 adds bounded immutable extraction receipts, marking older versions as missing evidence rather than backfilling claims; see [the extraction contract](API.md#export-and-extraction-evidence-contract). Drain workers before this upgrade because old result-capacity reservations lack the new receipt allowance. Existing accounts, credits, charts, and sessions are preserved. Reverting to an image that supports only an earlier schema requires restoring its coordinated recovery set into a fresh data directory; do not run it over the upgraded database. Roll back application code only when it supports the on-disk schema; otherwise restore the coordinated recovery set into a new volume.
 
 ## Base-image advisory constraints
 

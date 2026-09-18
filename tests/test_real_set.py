@@ -55,7 +55,9 @@ def test_build_roundtrips_to_eval_sample(tmp_path):
 
     summary = build(str(root))
     assert summary == {"n": 1, "label_free": 1, "labeled": 0, "by_type": {"line": 1}}
-    assert (root / "test.jsonl").exists() and (root / "test.modal.jsonl").exists()
+    root = root / "published"
+    assert (root / "test.jsonl").exists()
+    assert not (root / "test.modal.jsonl").exists()
 
     # The harness loader reads the row back exactly like a synthetic one.
     samples = load_eval_samples(str(root / "test.jsonl"))
@@ -77,11 +79,6 @@ def test_build_roundtrips_to_eval_sample(tmp_path):
         ("2020", 8.1),
         ("2021", 5.3),
     ]
-
-    # The Modal variant carries the same row with a /vol-absolute image path.
-    modal = load_eval_samples(str(root / "test.modal.jsonl"))[0]
-    assert modal.image == f"/vol/{root.as_posix()}/images/chart1.png"
-    assert modal.gt_json == s.gt_json
 
 
 def test_bad_chart_type_raises():
@@ -158,8 +155,9 @@ def test_loader_rechecks_review_after_dataset_build(tmp_path):
     root = tmp_path / "charts"
     _write_set(root, _label())
     build(str(root))
+    root = root / "published"
     (root / "images/chart1.png").write_bytes(b"different chart")
-    with pytest.raises(ValueError, match="image changed since review"):
+    with pytest.raises(ValueError, match="published artifact changed"):
         load_eval_samples(str(root / "test.jsonl"))
 
 
@@ -178,7 +176,7 @@ def test_fetcher_retains_original_source_bytes_for_annotation_review(tmp_path, m
     labels.mkdir()
     csv = b"date,value\r\n2019-01-01,3.70\r\n2020-01-01,8.10\r\n2021-01-01,5.30\r\n"
     monkeypatch.setattr(
-        fetch_real_set, "_curl", lambda url: b"\x89PNG\r\n\x1a\n" if url == "image" else csv
+        fetch_real_set, "_download", lambda url: b"\x89PNG\r\n\x1a\n" if url == "image" else csv
     )
     assert (
         fetch_real_set._fetch_one(
@@ -200,3 +198,80 @@ def test_fetcher_retains_original_source_bytes_for_annotation_review(tmp_path, m
     assert (tmp_path / label["source_data_file"]).read_bytes() == csv
     with pytest.raises(ValueError, match="unverified real-chart ground truth"):
         build(str(tmp_path))
+
+
+def test_collection_never_overwrites_and_accounts_for_all_failures(tmp_path, monkeypatch):
+    from unrender.eval import fetch_real_set
+
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    (existing / "test.jsonl").write_bytes(b"previous published evidence")
+    calls = []
+
+    def fail(url):
+        calls.append(url)
+        raise OSError("injected network failure")
+
+    monkeypatch.setattr(fetch_real_set, "_download", fail)
+    with pytest.raises(FileExistsError):
+        fetch_real_set.fetch(str(existing), sources="owid")
+    assert not calls
+    assert (existing / "test.jsonl").read_bytes() == b"previous published evidence"
+    draft = tmp_path / "failed"
+    assert fetch_real_set.fetch(str(draft), sources="owid") == 0
+    receipt = json.loads((draft / "collection.json").read_bytes())
+    assert len(receipt["attempts"]) == len(fetch_real_set.OWID)
+    assert all(a["state"] == "failed" for a in receipt["attempts"])
+    assert receipt["status"] == "incomplete"
+    assert not (draft / "test.jsonl").exists()
+
+
+def test_interrupted_collection_retains_schedule(tmp_path, monkeypatch):
+    from unrender.eval import fetch_real_set
+
+    def interrupt(url):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(fetch_real_set, "_download", interrupt)
+    draft = tmp_path / "interrupted"
+    with pytest.raises(KeyboardInterrupt):
+        fetch_real_set.fetch(str(draft), sources="owid")
+    receipt = json.loads((draft / "collection.json").read_bytes())
+    assert receipt["attempts"][0]["state"] == "in_flight"
+    assert all(a["state"] == "pending" for a in receipt["attempts"][1:])
+    assert not (draft / "test.jsonl").exists()
+
+
+def test_published_snapshot_is_independent_and_cannot_be_replaced(tmp_path):
+    root = tmp_path / "draft"
+    _write_set(root, _label())
+    build(str(root))
+    published = root / "published"
+    previous = (published / "test.jsonl").read_bytes()
+    (root / "source.csv").write_bytes(b"changed draft")
+    assert len(load_eval_samples(str(published / "test.jsonl"))) == 1
+    with pytest.raises(FileExistsError):
+        build(str(root))
+    assert (published / "test.jsonl").read_bytes() == previous
+    (published / "source.csv").write_bytes(b"changed publication")
+    with pytest.raises(ValueError, match="published artifact changed"):
+        load_eval_samples(str(published / "test.jsonl"))
+
+
+def test_partial_collection_cannot_publish_only_successes(tmp_path):
+    root = tmp_path / "draft"
+    _write_set(root, _label())
+    (root / "collection.json").write_text(
+        json.dumps(
+            {
+                "status": "incomplete",
+                "attempts": [
+                    {"id": "chart1", "state": "collected"},
+                    {"id": "chart2", "state": "failed"},
+                ],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="collection incomplete"):
+        build(str(root))
+    assert not (root / "published").exists()

@@ -8,8 +8,8 @@ curated title/axis/series strings are suggestions, not verified ground truth.
 
     python -m unrender.eval.fetch_real_set --dir data/real_dev_v1
 
-Downloads via curl; rejects responses without a PNG signature. This is not a
-complete image-content or scientific-validity check.
+Downloads through the same local/cloud collector; rejects responses without a
+PNG signature. This is not a complete image-content or scientific-validity check.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import argparse
 import csv
 import io
 import json
-import shutil
-import subprocess
+import os
+import urllib.request
 from pathlib import Path
 
 from unrender.eval.build_real_set import label_to_chartdata  # validate before writing
@@ -141,11 +141,10 @@ def parse_owid_csv(text: str, code: str = _OWID_COUNTRY, lo: int = _OWID_LO, hi:
     return sorted(pts, key=lambda p: int(p[0]))
 
 
-def _curl(url: str) -> bytes:
-    r = subprocess.run(["curl", "-sL", "--max-time", "40", url], capture_output=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"curl failed ({r.returncode}) for {url}: {r.stderr.decode()[:200]}")
-    return r.stdout
+def _download(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "Unrender source review"})
+    with urllib.request.urlopen(request, timeout=40) as response:
+        return response.read()
 
 
 def _is_png(b: bytes) -> bool:
@@ -182,18 +181,20 @@ def _fetch_one(
     images_dir: Path,
     labels_dir: Path,
 ) -> str | None:
-    png = _curl(png_url)
+    for path in (
+        images_dir / f"{out_id}.png",
+        labels_dir / f"{out_id}.json",
+        images_dir.parent / "sources" / f"{out_id}.csv",
+    ):
+        if path.exists():
+            raise FileExistsError(f"refusing to overwrite draft artifact: {path}")
+    png = _download(png_url)
     if not _is_png(png):  # bad slug/param -> an HTML error page; don't write a fake chart
-        print(
-            f"  ! {out_id}: PNG endpoint returned non-PNG ({len(png)} bytes) "
-            f"— skipped. URL: {png_url}"
-        )
-        return None
-    source_bytes = _curl(csv_url)
+        raise ValueError(f"non-PNG response for {out_id}")
+    source_bytes = _download(csv_url)
     points = parse(source_bytes.decode("utf-8", "replace"))
     if len(points) < 3:
-        print(f"  ! {out_id}: only {len(points)} data points parsed — skipped. URL: {csv_url}")
-        return None
+        raise ValueError(f"fewer than three source points for {out_id}")
     label = make_line_label(out_id, title, y_label, y_unit, series_name, points, source)
     source_dir = images_dir.parent / "sources"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -207,73 +208,73 @@ def _fetch_one(
     return out_id
 
 
-def fetch(dirpath: str = "data/real_v0") -> int:
-    if shutil.which("curl") is None:
-        raise SystemExit(
-            "curl not found — install it, or download the charts manually (see README)."
-        )
+def fetch(dirpath: str, *, sources: str = "all") -> int:
+    """Create one exclusive draft attempt, including a durable complete schedule.
+
+    Existing directories are never reused, including interrupted drafts. The
+    pending/in-flight states remain visible after a crash. No test split is
+    created here; independent review and build_real_set publication are required.
+    """
+    from unrender.eval.ledger import atomic_text
+
+    if sources not in {"all", "fred", "owid"}:
+        raise ValueError("sources must be all, fred or owid")
     root = Path(dirpath)
+    root.mkdir(parents=True, exist_ok=False)
     images_dir, labels_dir = root / "images", root / "labels"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    labels_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir()
+    labels_dir.mkdir()
+    jobs = []
+    if sources in {"all", "fred"}:
+        for out_id, series, title, ylab, yunit in FRED:
+            png_url, csv_url = _fred_urls(series)
+            src = (
+                f"FRED series {series} (fred.stlouisfed.org/series/{series}); "
+                f"annual avg {_FRED_RANGE[0][:4]}–{_FRED_RANGE[1][:4]}"
+            )
+            jobs.append((out_id, png_url, csv_url, parse_fred_csv, title, ylab, yunit, series, src))
+    if sources in {"all", "owid"}:
+        for out_id, slug, title, ylab, yunit in OWID:
+            png_url, csv_url = _owid_urls(slug)
+            src = (
+                f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
+                f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}"
+            )
+            jobs.append((out_id, png_url, csv_url, parse_owid_csv, title, ylab, yunit, title, src))
+    receipt = {
+        "contract": "real-source-collection-v1",
+        "status": "collecting",
+        "attempts": [
+            {"id": j[0], "image_url": j[1], "source_url": j[2], "state": "pending"} for j in jobs
+        ],
+    }
 
+    def save():
+        atomic_text(root / "collection.json", json.dumps(receipt, indent=2) + "\n")
+
+    save()
     ok = 0
-    print(f"FRED ({len(FRED)}):")
-    for out_id, series, title, ylab, yunit in FRED:
-        png_url, csv_url = _fred_urls(series)
-        src = (
-            f"FRED series {series} (fred.stlouisfed.org/series/{series}); "
-            f"annual avg {_FRED_RANGE[0][:4]}–{_FRED_RANGE[1][:4]}"
-        )
+    for job, attempt in zip(jobs, receipt["attempts"], strict=True):
+        attempt["state"] = "in_flight"
+        save()
         try:
-            ok += (
-                _fetch_one(
-                    out_id,
-                    png_url,
-                    csv_url,
-                    parse_fred_csv,
-                    title,
-                    ylab,
-                    yunit,
-                    series,
-                    src,
-                    images_dir,
-                    labels_dir,
-                )
-                is not None
-            )
-        except Exception as e:  # one bad source shouldn't abort the batch
-            print(f"  ! {out_id}: {type(e).__name__}: {e}")
-    print(f"OWID ({len(OWID)}):")
-    for out_id, slug, title, ylab, yunit in OWID:
-        png_url, csv_url = _owid_urls(slug)
-        src = (
-            f"Our World in Data: {slug} (ourworldindata.org/grapher/{slug}), "
-            f"{_OWID_COUNTRY} {_OWID_LO}–{_OWID_HI}"
-        )
-        try:
-            ok += (
-                _fetch_one(
-                    out_id,
-                    png_url,
-                    csv_url,
-                    parse_owid_csv,
-                    title,
-                    ylab,
-                    yunit,
-                    title,
-                    src,
-                    images_dir,
-                    labels_dir,
-                )
-                is not None
-            )
-        except Exception as e:
-            print(f"  ! {out_id}: {type(e).__name__}: {e}")
-
-    print(f"\nfetched {ok}/{len(FRED) + len(OWID)} charts -> {root}")
-    print("next: review visible metadata, values, units and recoverability; bind the review")
-    print(f"to image/annotation/source hashes before building {root}/test.jsonl")
+            _fetch_one(*job, images_dir, labels_dir)
+            # Flush downloaded artifacts before recording completion.
+            for path in (
+                images_dir / f"{job[0]}.png",
+                labels_dir / f"{job[0]}.json",
+                root / "sources" / f"{job[0]}.csv",
+            ):
+                with path.open("rb") as stream:
+                    os.fsync(stream.fileno())
+            attempt["state"] = "collected"
+            ok += 1
+        except Exception as exc:
+            attempt.update(state="failed", error=f"{type(exc).__name__}: {exc}")
+        save()
+    receipt["status"] = "complete" if ok == len(jobs) else "incomplete"
+    save()
+    print(f"Collected {ok}/{len(jobs)} draft sources; review required: {root}")
     return ok
 
 
@@ -281,8 +282,10 @@ def main():
     p = argparse.ArgumentParser(
         description="Fetch a real-chart eval set from FRED + OWID (needs internet)."
     )
-    p.add_argument("--dir", default="data/real_v0")
-    fetch(p.parse_args().dir)
+    p.add_argument("--dir", required=True, help="new draft directory; must not exist")
+    p.add_argument("--sources", choices=["all", "fred", "owid"], default="all")
+    args = p.parse_args()
+    fetch(args.dir, sources=args.sources)
 
 
 if __name__ == "__main__":

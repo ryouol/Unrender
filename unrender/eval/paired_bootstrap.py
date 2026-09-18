@@ -3,18 +3,9 @@
 Version 2 compares semantic cell F1 and retains every attempted input.
 Historical preregistration results must be reproduced at their original commit.
 
-The candidate-selection gate uses the following procedure:
-the two models are scored on the identical `common300` charts, paired by id, and
-the difference in pooled semantic cell F1 is bootstrapped by resampling charts (not points)
-with replacement. Reusing `score_sample` keeps the metric identical to the scorer.
-
-    python -m unrender.eval.paired_bootstrap \
-        --a outputs/modal/qwen3vl4b-lora/predictions.jsonl --label-a LoRA \
-        --b outputs/modal/base4b/predictions.jsonl        --label-b base-4B \
-        --subset unrender/eval/subsets/common300.json
-
-Prints pooled cell@5%, the bootstrap mean/95% CI of (A - B), each model's invalid
-rate and median relative error, and a PASS/FAIL against the frozen decision rule.
+This command produces descriptive estimates only. It cannot authorize model
+promotion: a frozen, independently reviewed study and its power/eligibility
+requirements must be assessed separately. Historical Common300 is diagnostic.
 """
 
 from __future__ import annotations
@@ -25,16 +16,11 @@ import random
 import statistics
 from pathlib import Path
 
+from unrender.eval.comparison import require_same_input, source_identity
 from unrender.eval.dataset import require_reviewed_predictions
 from unrender.eval.ledger import load_predictions, require_terminal_attempts
 from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.score import score_prediction, validate_rows
-from unrender.schema.chart_schema import ChartData
-
-# v2 candidate-selection requirements, not the historical preregistration.
-MIN_GAP_PP = 3.0
-CI_MUST_EXCLUDE_ZERO = True
-A_INVALID_NOT_WORSE = True
 
 
 def _percentile(sorted_vals, q: float) -> float:
@@ -65,10 +51,7 @@ def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table"
     invalid_a = invalid_b = 0
     for rid in ids:
         a, b = a_by[rid], b_by[rid]
-        if ChartData.model_validate_json(a["gt"]) != ChartData.model_validate_json(b["gt"]) or (
-            a.get("meta") or {}
-        ).get("labels_shown") != (b.get("meta") or {}).get("labels_shown"):
-            raise ValueError(f"ground truth mismatch for paired id {rid}")
+        require_same_input(a, b)
         sa, oa = score_prediction(a, tol, decode_a)
         sb, ob = score_prediction(b, tol, decode_b)
         for sample, counts in ((sa, counts_a), (sb, counts_b)):
@@ -92,13 +75,30 @@ def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table"
     n = len(ids)
     indices = list(range(n))
     acc_a, acc_b = pooled(counts_a, indices), pooled(counts_b, indices)
+    # A source/table may produce several related charts. Sample the declared
+    # groups together, never treat repeated renders as independent observations.
+    groups = {}
+    declared = [(a_by[rid].get("meta") or {}).get("source_group") for rid in ids]
+    if any(g is not None for g in declared) and any(
+        not isinstance(g, str) or not g.strip() for g in declared
+    ):
+        raise ValueError("source groups must be declared for every paired input")
+    for i, rid in enumerate(ids):
+        group = declared[i] if declared[i] is not None else rid
+        groups.setdefault(group, []).append(i)
+    clusters = list(groups.values())
     rng = random.Random(seed)
     diffs = []
     for _ in range(iters):
-        sample = [rng.randrange(n) for _ in range(n)]
+        sample = [i for _ in clusters for i in rng.choice(clusters)]
         diffs.append(pooled(counts_a, sample) - pooled(counts_b, sample))
     diffs.sort()
     return {
+        "purpose": "descriptive_only",
+        "promotion_eligible": False,
+        "source_identity_complete": all(source_identity(a_by[rid])["image_sha256"] for rid in ids),
+        "resampling_unit": "source_group" if any(g is not None for g in declared) else "chart",
+        "n_groups": len(clusters),
         "metric_version": METRIC_VERSION,
         "metric": "cell_f1",
         "n": n,
@@ -117,17 +117,11 @@ def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table"
 
 
 def verdict(res: dict) -> tuple:
-    gap_ok = res["gap_pp"] >= MIN_GAP_PP
-    ci_ok = (res["ci95_pp"][0] > 0) if CI_MUST_EXCLUDE_ZERO else True
-    inv_ok = (res["invalid_a"] <= res["invalid_b"]) if A_INVALID_NOT_WORSE else True
-    passed = gap_ok and ci_ok and inv_ok
-    reasons = [
-        f"gap>={MIN_GAP_PP}pp: {'yes' if gap_ok else 'NO'} ({res['gap_pp']:+.2f})",
-        f"95% CI excludes 0: {'yes' if ci_ok else 'NO'} (lo={res['ci95_pp'][0]:+.2f})",
-        f"A invalid not worse: {'yes' if inv_ok else 'NO'} "
-        f"({res['invalid_a'] * 100:.1f}% vs {res['invalid_b'] * 100:.1f}%)",
+    """Descriptive scores cannot establish study eligibility or authorize promotion."""
+    return False, [
+        "WITHHELD: descriptive comparison; no validated frozen promotion study",
+        "Review source eligibility, declared interventions and statistical power separately.",
     ]
-    return passed, reasons
 
 
 def main():
@@ -188,7 +182,7 @@ def main():
     print(
         f"  invalid       {la}={res['invalid_a'] * 100:.1f}%   {lb}={res['invalid_b'] * 100:.1f}%"
     )
-    print(f"\n  v2 selection gate: {'PASS' if passed else 'FAIL / inconclusive'}")
+    print("\n  promotion: WITHHELD (descriptive evidence only)")
     for r in reasons:
         print(f"    - {r}")
 

@@ -66,7 +66,7 @@ receipt and detect drift, but cannot prove the review was competent.
 Then build the reviewed dataset:
 
 ```sh
-python -m unrender.eval.build_real_set --dir data/real_dev_v1
+python -m unrender.eval.build_real_set --dir data/real_dev_v1 --out data/real_eval_v1
 ```
 
 The builder rejects missing/incomplete review, changed images/annotations/source
@@ -74,8 +74,16 @@ bytes before writing output. The evaluation loader rechecks the receipt and imag
 when present, so old unreviewed rows cannot start a new evaluation. Missing images
 remain input errors in the scheduled-attempt ledger and never reach a provider.
 A missing image does not invalidate offline inspection of a review receipt.
-The old Modal auto-fetcher still produces unreviewed rows; these are rejected by
-the same loader. It is not an approved shortcut around annotation review.
+Local and Modal collection use the same draft collector. A new directory is
+required for every attempt. `collection.json` retains every scheduled source,
+including failed and interrupted downloads; partial collections cannot silently
+publish only their successful rows. Collection never writes an evaluation split.
+
+Publication copies reviewed source artifacts into a staged snapshot and atomically
+publishes one portable `test.jsonl`. Existing versions cannot be replaced. The
+loader verifies the published inventory, including the source CSV bytes. Upload
+the whole `data/real_eval_v1` bundle to Modal; separate absolute-path splits are
+no longer needed. A changed draft does not change its published snapshot.
 
 Saved historical outputs can still be rescored for diagnostics. Scores expose
 `ground_truth_review.review_gate_passed`; unreviewed external charts block paired

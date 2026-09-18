@@ -288,3 +288,51 @@ def test_live_metadata_is_read_from_the_authoritative_ledger(tmp_path):
     (output / "meta.json").write_text(json.dumps({"model": "incorrect-publication-label"}))
     result = score(str(output / "predictions.jsonl"))
     assert result["model"] == "oracle"
+
+
+def test_persistence_failure_prevents_dispatch_and_keeps_uncertainty(tmp_path, monkeypatch):
+    data = dataset(tmp_path, count=1)
+    output = tmp_path / "run"
+    calls, snapshots = [], []
+
+    def persist():
+        rows, _ = ledger_snapshot(output / LEDGER_NAME)
+        snapshots.append(rows[0]["attempt"]["state"])
+        if snapshots[-1] == "dispatched":
+            raise OSError("remote commit failed")
+
+    monkeypatch.setitem(providers.PROVIDERS, "perfect", lambda *a, **k: calls.append(1))
+    with pytest.raises(OSError, match="remote commit"):
+        run("perfect", "oracle", str(data), str(output), 0, 0, persist=persist)
+    assert calls == []
+    assert snapshots[:2] == ["pending", "dispatched"]
+    # Uncertain persistence is conservatively retained even though this process
+    # knows it did not dispatch. A future process cannot safely infer that.
+    run("perfect", "oracle", str(data), str(output), 0, 0, persist=lambda: None)
+    assert calls == []
+    assert load_predictions(output / "predictions.jsonl")[0]["attempt"]["state"] == "interrupted"
+
+
+def test_persistence_precedes_each_provider_and_follows_outcome(tmp_path, monkeypatch):
+    data = dataset(tmp_path, count=2)
+    output = tmp_path / "run"
+    events = []
+
+    def persist():
+        rows, _ = ledger_snapshot(output / LEDGER_NAME)
+        events.append(tuple(row["attempt"]["state"] for row in rows))
+
+    def provider(*a, gt_json=None, **k):
+        assert events[-1] in [("dispatched", "pending"), ("completed", "dispatched")]
+        return gt_json
+
+    monkeypatch.setitem(providers.PROVIDERS, "perfect", provider)
+    run("perfect", "oracle", str(data), str(output), 0, 0, persist=persist)
+    assert events == [
+        ("pending", "pending"),
+        ("dispatched", "pending"),
+        ("completed", "pending"),
+        ("completed", "dispatched"),
+        ("completed", "completed"),
+        ("completed", "completed"),
+    ]

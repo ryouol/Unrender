@@ -78,16 +78,19 @@ def run(
     gen_config=None,
     revision=None,
     prompt: str = EXTRACTION_PROMPT,
+    persist=None,
 ) -> Path:
     if not _RUN_LOCK.acquire(blocking=False):
         raise SystemExit("another evaluation is active in this process")
     try:
-        return _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt)
+        return _run(
+            provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt, persist
+        )
     finally:
         _RUN_LOCK.release()
 
 
-def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt):
+def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt, persist):
     if provider not in PROVIDERS:
         raise SystemExit(f"Unknown provider '{provider}'. Choices: {sorted(PROVIDERS)}")
     if limit < 0:
@@ -154,7 +157,8 @@ def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision
         "seed": seed,
         "dataset_sha256": _file_sha256(Path(data)),
         "attempt_policy": "durable_dispatch_no_automatic_retry_v1",
-        "sdk_retry_policy": "not_attested",
+        "sdk_retry_policy": "one_sdk_attempt_no_application_retry_v1",
+        "remote_persistence": "per_schedule_dispatch_outcome_v1" if persist else "none",
         "durability_scope": "POSIX local filesystem fsync and host-local writer lock; "
         "remote-volume persistence and distributed ownership not attested",
         "seed_policy": "per_input_python_rng_only; GPU sampling seed not attested",
@@ -182,6 +186,8 @@ def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision
             # Publish all scheduled rows before any inference. Readers use the
             # live ledger for fresh outcomes if a hard crash leaves this snapshot stale.
             ledger.export()
+            if persist:
+                persist()
             _providers.HF_GEN_CONFIG.clear()
             _providers.HF_GEN_CONFIG.update(gen_config or {})
             _providers.HF_MODEL_CONFIG.clear()
@@ -214,15 +220,25 @@ def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision
                             },
                             dispatched=False,
                         )
+                        ledger.export()
+                        if persist:
+                            persist()
                         continue
                 _providers.LAST_USAGE.clear()
                 ledger.dispatch(sample["id"])
+                # A failed persistence acknowledgement MUST prevent provider dispatch.
+                if persist:
+                    persist()
                 started = time.perf_counter()
                 try:
                     input_seed = int.from_bytes(
                         hashlib.sha256(json.dumps([seed, sample["id"]]).encode()).digest(), "big"
                     )
-                    kwargs = {"timings": generation} if provider == "hf" else {}
+                    kwargs = (
+                        {"timings": generation}
+                        if provider in {"hf", "openai", "anthropic", "gemini"}
+                        else {}
+                    )
                     raw = PROVIDERS[provider](
                         sample["image"],
                         prompt,
@@ -251,6 +267,9 @@ def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision
                         "provider_roundtrip_seconds": time.perf_counter() - started,
                     },
                 )
+                if persist:
+                    ledger.export()
+                    persist()
         finally:
             # KeyboardInterrupt/SystemExit get a portable full-schedule snapshot;
             # SIGKILL still leaves the committed SQLite ledger authoritative.
@@ -258,6 +277,8 @@ def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision
                 ledger.export()
             finally:
                 ledger.close()
+            if persist:
+                persist()
     print(f"Wrote {directory / 'predictions.jsonl'}; durable schedule: {directory / 'run.sqlite3'}")
     return directory / "predictions.jsonl"
 

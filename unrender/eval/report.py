@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
+from unrender.eval.comparison import require_same_input
 from unrender.eval.dataset import require_reviewed_predictions
 from unrender.eval.ledger import (
     LEDGER_NAME,
@@ -69,17 +70,16 @@ def build(
     for provider in providers:
         selected = validate_rows(provider["rows"], ids)
         require_reviewed_predictions(selected)
-        ground_truth = {
-            str(r["id"]): (json.loads(r["gt"]), (r.get("meta") or {}).get("labels_shown"))
-            for r in selected
-        }
-        if reference is not None and ground_truth != reference:
-            raise ValueError("ground truth differs across providers")
-        reference = ground_truth
+        current = {str(row["id"]): row for row in selected}
+        if reference is not None:
+            for rid in current:
+                require_same_input(reference[rid], current[rid])
+        reference = current
     lines = [
         f"# {title}",
         "",
         f"Scorer: `{METRIC_VERSION}`. Fixed input set: **N={len(ids)}**.",
+        "Descriptive comparison only; this report does not authorize model promotion.",
         "All recorded failures stay in the primary denominator. Repaired table outputs",
         "earn no primary credit; recovery is diagnostic only. Exact-numeric cell F1",
         "requires matching series, category/date, chart type, units, and value tolerance.",

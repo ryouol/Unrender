@@ -129,6 +129,27 @@ def read_split(path: str | Path) -> list[dict]:
     path = Path(path)
     rows = read_jsonl(path)
     root = path.parent
+    if (root / "publication.json").exists():
+        publication = json.loads((root / "publication.json").read_bytes())
+        if (
+            publication.get("contract") != "reviewed-real-dataset-v1"
+            or publication.get("status") != "complete"
+            or path.name != "test.jsonl"
+            or publication.get("n") != len(rows)
+        ):
+            raise ValueError("invalid reviewed publication receipt")
+        files = publication.get("files", {})
+        actual = {
+            p.relative_to(root).as_posix()
+            for p in root.rglob("*")
+            if p.is_file() and p != root / "publication.json"
+        }
+        if set(files) != actual or "test.jsonl" not in files:
+            raise ValueError("published artifact inventory changed")
+        for relative, expected in files.items():
+            artifact = artifact_path(root, relative)
+            if artifact.is_symlink() or digest(artifact.read_bytes()) != expected:
+                raise ValueError(f"published artifact changed: {relative}")
     generated = any("generation" in (row.get("meta") or {}) for row in rows)
     if (
         not generated

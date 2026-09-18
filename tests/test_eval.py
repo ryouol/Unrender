@@ -92,16 +92,16 @@ def test_mock_providers_bracket_the_metric():
     assert 0.0 < noisy_acc < 1.0, noisy_acc
 
 
-def test_series_alignment_survives_unnamed_predicted_series():
-    """Reordered prediction with one missing series name must still align by
-    name where it can and positionally for the rest (regression guard)."""
+def test_unnamed_prediction_does_not_receive_positional_credit():
+    """Only the explicitly identified series earns credit; missing names fail."""
     gt = ChartData(chart_type="multi_line", series=[
         Series(name="North", points=[Point(x="Q1", y=10.0), Point(x="Q2", y=20.0)]),
         Series(name="South", points=[Point(x="Q1", y=30.0), Point(x="Q2", y=40.0)])])
     pred = ChartData(chart_type="multi_line", series=[
         Series(name="South", points=[Point(x="Q2", y=40.0), Point(x="Q1", y=30.0)]),
         Series(name=None, points=[Point(x="Q1", y=10.0), Point(x="Q2", y=20.0)])])
-    assert score_sample(pred, gt)["n_correct_points"] == 4
+    assert score_sample(pred, gt)["n_correct_points"] == 2
+    assert score_sample(pred, gt)["semantic_valid"] == 0
 
 
 def test_nonfinite_prediction_is_miss_not_poison():
@@ -208,7 +208,9 @@ def test_geometry_target_roundtrip_recovers_values():
         assert dec is not None
         scores.append(score_sample(dec, gt, tol=0.05, labels_shown=spec.value_labels_shown))
     # exact-numeric recovery should be near-perfect at 3dp on clean GT geometry
-    assert aggregate(scores)["cell_accuracy_exact"] >= 0.9
+    assert aggregate(scores)["numeric_recall"] >= 0.9
+    # Geometry targets omit units/axes; recovering values is not a complete table.
+    assert aggregate(scores)["cell_f1"] < aggregate(scores)["numeric_recall"]
 
     # parser tolerates fences + prose (model output is rarely bare JSON)
     spec = random_spec(_random.Random(5678), hard=True)

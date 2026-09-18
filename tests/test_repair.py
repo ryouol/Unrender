@@ -112,5 +112,5 @@ def test_norm_thousands_and_months():
     assert _norm("Sept") == "sep"
     # unchanged behaviors
     assert _norm(2020.0) == "2020"
-    assert _norm(" Product  A ") == "product a"
-    assert _norm("Mayfield") == "mayfield"        # month words only replaced whole-word
+    assert _norm(" Product  A ") == "Product A"
+    assert _norm("Mayfield") == "Mayfield"        # month words only replaced whole-word

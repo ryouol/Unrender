@@ -228,7 +228,7 @@ def test_common300_no_data_table_leak_into_train():
 def test_geometry_data_builder_and_decode_scoring(tmp_path):
     """End-to-end geometry arm: build geometry-target training rows from a seeded
     split, then score a 'perfect' geometry prediction file via --decode geometry.
-    Both must round-trip to high cell@5_exact (the train target == what the eval
+    Both must round-trip to high numeric recovery (the train target == what the eval
     decodes)."""
     import random as _random
 
@@ -272,7 +272,7 @@ def test_geometry_data_builder_and_decode_scoring(tmp_path):
                 "status": "ok", "meta": {"labels_shown": spec.value_labels_shown},
             }) + "\n")
     rep = score(str(preds), out=str(tmp_path / "r.json"), decode="geometry")
-    assert rep["tracks"]["0.05"]["metrics"]["cell_accuracy_exact"] >= 0.9
+    assert rep["tracks"]["0.05"]["metrics"]["numeric_recall"] >= 0.9
 
 
 # --- precision levers (numeric-token loss + oversampling) -------------------

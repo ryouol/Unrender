@@ -281,12 +281,13 @@ The user's current budget is approximately US$20/month, with modest overages
 accepted. Keep Render and Modal. The earlier absolute ceiling is superseded.
 The Render baseline is US$7/month web compute, US$0.25/month for the disk and
 the monitor's US$1/month minimum: approximately US$8.25/month before Modal
-compute/storage, taxes and any Render usage overages. The bounded hourly monitor
-normally stays within its minimum. This is not a provider-enforced dollar cap.
+compute/storage, taxes and any Render usage overages. The two-minute monitor
+is billed for active execution time; its full-month cost has not been measured.
+This is not a provider-enforced dollar cap.
 [Render cron billing](https://render.com/docs/cronjobs) charges for active time
 with a minimum of US$1/month per cron service.
 
-Public password registration is enabled with zero welcome credits. Customer
+Public Google and password registration include three welcome credits. Customer
 billing and email delivery remain off. Account activation is separate from
 mailbox verification; see PUBLIC_ACCOUNTS.md. The invitation commands remain
 available for operator-provisioned access without email sending.

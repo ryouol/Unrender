@@ -1,0 +1,97 @@
+{
+  "contract": "augmentation-replay-v1",
+  "recipe_sha256": "fa142a4e807b7e710c5a74c63784196323855102a425829699c147abad72c11a",
+  "id": "0000013",
+  "source_image_sha256": "d826fcec0d6f28fc17bdc602b0d2a34a43d0850ede5a2b609c9dc8c2dd176083",
+  "auditor_sha256": "ff21e0239baea06b69cc46e66ec4ac00dac40fbcabead8bc1dd323db094618d2",
+  "stages": [
+    {
+      "name": "native",
+      "image": "00-native.png",
+      "sha256": "85b84f17ee29b4e4cccacf54720cd4c6eccd4a942ac7ad1a8f648501fa40336b",
+      "size": [
+        396,
+        259
+      ],
+      "parameter_draws": []
+    },
+    {
+      "name": "lambda",
+      "image": "01-lambda.png",
+      "sha256": "f66272b9a99dad8d5be55280862ebc1b6a539cd9c6771c168d279d577ab1d97a",
+      "size": [
+        396,
+        259
+      ],
+      "parameter_draws": [
+        {
+          "method": "uniform",
+          "range": [
+            0.4,
+            1.4
+          ],
+          "value": 1.2297374086598771
+        }
+      ]
+    },
+    {
+      "name": "jpeg",
+      "image": "02-jpeg.png",
+      "sha256": "80e2260f02171b3955b9b9e775fdfa0ed221d8921d2e90b9c90103dacbc8c29e",
+      "size": [
+        396,
+        259
+      ],
+      "parameter_draws": [
+        {
+          "method": "randint",
+          "range": [
+            30,
+            90
+          ],
+          "value": 59
+        }
+      ]
+    },
+    {
+      "name": "noise",
+      "image": "03-noise.png",
+      "sha256": "d826fcec0d6f28fc17bdc602b0d2a34a43d0850ede5a2b609c9dc8c2dd176083",
+      "size": [
+        396,
+        259
+      ],
+      "parameter_draws": [
+        {
+          "method": "uniform",
+          "range": [
+            4,
+            18
+          ],
+          "value": 11.486945726432024
+        },
+        {
+          "method": "randint",
+          "range": [
+            0,
+            2147483647
+          ],
+          "value": 1733712015
+        }
+      ]
+    },
+    {
+      "name": "final",
+      "image": "04-final.png",
+      "sha256": "d826fcec0d6f28fc17bdc602b0d2a34a43d0850ede5a2b609c9dc8c2dd176083",
+      "size": [
+        396,
+        259
+      ],
+      "parameter_draws": []
+    }
+  ],
+  "limits": "Development diagnostics only; no independent human readability approval.",
+  "augmentation_selected": true,
+  "final_image_matches_recorded_bytes": true
+}

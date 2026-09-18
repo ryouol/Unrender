@@ -24,7 +24,7 @@ from tqdm import tqdm
 from unrender.data_gen.augment import augment_image
 from unrender.data_gen.chart_specs import TARGET_CONTRACT, random_spec
 from unrender.data_gen.provenance import digest, json_bytes, recipe
-from unrender.data_gen.render import render_chart
+from unrender.data_gen.render import render_with_diagnostics
 from unrender.schema.chart_schema import canonical_json
 
 # Fraction of samples that get degraded when augmentation is enabled. The rest
@@ -48,11 +48,12 @@ def _make_one(args_tuple):
     rng = random.Random(base_seed + index)
 
     spec = random_spec(rng, hard=hard, v2=v2)
-    img = render_chart(spec)
+    img, layout = render_with_diagnostics(spec)
     native_size = list(img.size)
     did_augment = augment and rng.random() < aug_frac
     if did_augment:
         img = augment_image(img, rng)
+    augmented_size = list(img.size)
     img = _cap_long_side(img, max_side)
 
     stem = f"{index:07d}"
@@ -81,6 +82,14 @@ def _make_one(args_tuple):
         "native_size": native_size,
         "image_size": list(img.size),
         "visual_review": "not_reviewed",
+        "layout": layout,
+        "layout_status": layout["status"],
+        "augmented_size": augmented_size,
+        "final_font_pixels_estimate": round(
+            min((item["font_pixels"] for item in layout["text"]), default=0)
+            * min(img.width / augmented_size[0], img.height / augmented_size[1]),
+            3,
+        ),
     }
 
 

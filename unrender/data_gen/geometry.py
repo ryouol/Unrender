@@ -27,7 +27,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 from unrender.data_gen.chart_specs import ChartSpec
-from unrender.data_gen.render import _build_figure
+from unrender.data_gen.render import _build_figure, render_style
 
 
 def _frac(fig, ax, xy) -> tuple:
@@ -52,7 +52,7 @@ def _value_axis_ticks(fig, ax, horizontal: bool) -> List[list]:
 
 def capture_geometry(spec: ChartSpec) -> Dict:
     """Render `spec` and read back its exact geometry program (figure-fraction)."""
-    with plt.rc_context({"font.family": spec.font_family}):
+    with plt.rc_context(render_style(spec)):
         fig, ax = _build_figure(spec)
         try:
             fig.canvas.draw()  # finalize transforms after tight_layout
@@ -64,7 +64,7 @@ def capture_geometry(spec: ChartSpec) -> Dict:
 def render_with_geometry(spec: ChartSpec):
     """Return (PIL image, geometry dict) from a single render — for the training
     serializer, so image and geometry can never drift."""
-    with plt.rc_context({"font.family": spec.font_family}):
+    with plt.rc_context(render_style(spec)):
         fig, ax = _build_figure(spec)
         try:
             fig.canvas.draw()
@@ -132,7 +132,7 @@ def _read_geometry(fig, ax, spec: ChartSpec) -> Dict:
             bottom += np.array(vrow, dtype=float)
     elif ct in ("line", "multi_line"):
         for i, vrow in enumerate(spec.values):
-            marks = [{"x": cats[j], "kind": "point", "f": vfrac((x[j], vrow[j]))}
+            marks = [{"x": cats[j], "kind": "point", "f": vfrac((float(cats[j]) if spec.x_numeric else x[j], vrow[j]))}
                      for j in range(len(cats))]
             series.append({"name": spec.series_names[i], "marks": marks})
     else:

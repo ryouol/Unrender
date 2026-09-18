@@ -14,8 +14,8 @@ from unrender.data_gen.chart_specs import _FONTS, TARGET_CONTRACT, ChartSpec
 from unrender.io_utils import read_jsonl
 from unrender.schema.chart_schema import canonical_json
 
-GENERATION_CONTRACT = "synthetic-generation-v1"
-SPLIT_CONTRACT = "synthetic-split-v1"
+GENERATION_CONTRACT = "synthetic-generation-v2"
+SPLIT_CONTRACT = "synthetic-split-v2"
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -49,6 +49,7 @@ def recipe(**parameters) -> dict:
             for name in (
                 "unrender/data_gen/chart_specs.py",
                 "unrender/data_gen/render.py",
+                "unrender/data_gen/layout.py",
                 "unrender/data_gen/augment.py",
                 "unrender/data_gen/generate.py",
                 "unrender/data_gen/provenance.py",
@@ -165,7 +166,14 @@ def read_split(path: str | Path) -> list[dict]:
             seen.add(entry["id"])
             expected_meta = {
                 key: entry[key]
-                for key in ("labels_shown", "chart_type", "augmented", "visual_review")
+                for key in (
+                    "labels_shown",
+                    "chart_type",
+                    "augmented",
+                    "visual_review",
+                    "layout_status",
+                    "final_font_pixels_estimate",
+                )
             }
             expected_meta["generation"] = {
                 key: entry[key]

@@ -18,6 +18,7 @@ import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from unrender.data_gen.chart_specs import ChartSpec  # noqa: E402
+from unrender.data_gen.layout import fit_layout  # noqa: E402
 
 
 def _fmt(v: float, decimals: int, thousands_sep: bool) -> str:
@@ -78,25 +79,54 @@ _THEME_RC = {
 }
 
 
-def render_chart(spec: ChartSpec) -> Image.Image:
-    """Draw the chart described by `spec` and return it as a PIL RGB image."""
-    # Use the versioned library defaults, not ambient caller styles (which also
-    # differ between spawn workers and their parent). Preserve the caller's state.
+def render_style(spec: ChartSpec) -> dict:
     rc = {**matplotlib.rcParamsDefault,
           "font.family": spec.font_family, **_THEME_RC.get(spec.theme or "", {})}
-    rc.pop("backend", None)  # retain the explicitly selected headless backend
-    with plt.rc_context(rc):
-        return _draw_chart(spec)
+    rc.pop("backend", None)
+    return rc
 
 
-def _draw_chart(spec: ChartSpec) -> Image.Image:
-    """Build the figure and rasterize it to a PIL image at spec.dpi."""
-    fig, ax = _build_figure(spec)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=spec.dpi)
-    plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).convert("RGB")
+def render_chart(spec: ChartSpec) -> Image.Image:
+    return render_with_diagnostics(spec)[0]
+
+
+def render_with_diagnostics(spec: ChartSpec) -> tuple[Image.Image, dict]:
+    """Raster and measured native layout from the same final figure."""
+    with plt.rc_context(render_style(spec)):
+        fig, ax = _build_figure(spec)
+        try:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=spec.dpi)
+            buf.seek(0)
+            return Image.open(buf).convert("RGB"), fig._unrender_layout
+        finally:
+            plt.close(fig)
+
+
+def _value_label(ax, xy, text, identity, *, offset=(0, 3), ha="center", va="bottom",
+                 rotation=0, color=None):
+    label = ax.annotate(
+        text, xy, textcoords="offset points", xytext=offset,
+        ha=ha, va=va, fontsize=8, rotation=rotation,
+        color=color or plt.rcParams["text.color"],
+        arrowprops={"arrowstyle": "-", "lw": 0.5,
+                    "color": plt.rcParams["text.color"], "shrinkA": 2, "shrinkB": 2},
+        annotation_clip=False,
+    )
+    label.set_gid(f"value:{identity}")
+    label.arrow_patch.set_visible(False)
+    return label
+
+
+def _legend(ax, spec):
+    lower = "lower" in spec.legend_loc
+    ax.legend(loc="lower left" if lower else "upper left",
+              bbox_to_anchor=(1.03, 0 if lower else 1), borderaxespad=0, fontsize=9)
+
+
+def _contrast(color):
+    r, g, b = matplotlib.colors.to_rgb(color)
+    return "white" if 0.2126*r + 0.7152*g + 0.0722*b < 0.45 else "black"
 
 
 def _build_figure(spec: ChartSpec):
@@ -105,7 +135,7 @@ def _build_figure(spec: ChartSpec):
     capture in geometry.py (which reads back artist transforms), so the captured
     geometry is guaranteed to match the rendered pixels. Caller owns plt.close."""
     spec.validate_visible_target()
-    fig, ax = plt.subplots(figsize=spec.figsize)
+    fig, ax = plt.subplots(figsize=spec.figsize, dpi=spec.dpi)
 
     n_cat = len(spec.categories)
     x = np.arange(n_cat)
@@ -117,16 +147,25 @@ def _build_figure(spec: ChartSpec):
     if ct in ("bar", "horizontal_bar"):
         row = spec.values[0]
         if ct == "bar":
-            bars = ax.bar(x, row, color=colors[0])
+            ax.bar(x, row, color=colors[0])
             ax.set_xticks(x)
             ax.set_xticklabels(spec.categories, rotation=spec.rotate_xticks,
                                ha="right" if spec.rotate_xticks else "center")
         else:
-            bars = ax.barh(x, row, color=colors[0])
+            ax.barh(x, row, color=colors[0])
             ax.set_yticks(x)
             ax.set_yticklabels(spec.categories)
         if spec.value_labels_shown:
-            ax.bar_label(bars, labels=[fmt(v) for v in row], padding=2, fontsize=8)
+            for j, v in enumerate(row):
+                if ct == "horizontal_bar":
+                    _value_label(ax, (v, j), fmt(v), f"0:{j}",
+                                 offset=(3 if v >= 0 else -3, 0),
+                                 ha="left" if v >= 0 else "right", va="center")
+                else:
+                    _value_label(ax, (j, v), fmt(v), f"0:{j}",
+                                 offset=(0, 3 if v >= 0 else -3),
+                                 va="bottom" if v >= 0 else "top",
+                                 rotation=90 if n_cat > 12 else 0)
 
     elif ct in ("grouped_bar", "stacked_bar"):
         n_series = len(spec.values)
@@ -134,20 +173,26 @@ def _build_figure(spec: ChartSpec):
             width = 0.8 / n_series
             for i, row in enumerate(spec.values):
                 offset = (i - (n_series - 1) / 2) * width
-                bars = ax.bar(x + offset, row, width, label=spec.series_names[i], color=colors[i % len(colors)])
+                ax.bar(x + offset, row, width, label=spec.series_names[i], color=colors[i % len(colors)])
                 if spec.value_labels_shown:
-                    ax.bar_label(bars, labels=[fmt(v) for v in row], padding=2, fontsize=7, rotation=90)
+                    for j, v in enumerate(row):
+                        _value_label(ax, (j + offset, v), fmt(v), f"{i}:{j}", rotation=90,
+                                     offset=(0, 3 if v >= 0 else -3),
+                                     va="bottom" if v >= 0 else "top")
         else:  # stacked
             bottom = np.zeros(n_cat)
             for i, row in enumerate(spec.values):
-                bars = ax.bar(x, row, bottom=bottom, label=spec.series_names[i], color=colors[i % len(colors)])
+                ax.bar(x, row, bottom=bottom, label=spec.series_names[i], color=colors[i % len(colors)])
                 if spec.value_labels_shown:
-                    ax.bar_label(bars, labels=[fmt(v) for v in row], label_type="center", fontsize=7)
+                    for j, v in enumerate(row):
+                        _value_label(ax, (j, bottom[j] + v / 2), fmt(v), f"{i}:{j}",
+                                     offset=(0, 0), va="center",
+                                     color=_contrast(colors[i % len(colors)]))
                 bottom += np.array(row)
         ax.set_xticks(x)
         ax.set_xticklabels(spec.categories, rotation=spec.rotate_xticks,
                            ha="right" if spec.rotate_xticks else "center")
-        ax.legend(loc=spec.legend_loc, fontsize=8)
+        _legend(ax, spec)
 
     elif ct in ("line", "multi_line"):
         # v2 continuous mode: numeric years on a real axis with sparse auto ticks
@@ -156,9 +201,8 @@ def _build_figure(spec: ChartSpec):
         for i, row in enumerate(spec.values):
             ax.plot(xs, row, marker="o", label=spec.series_names[i], color=colors[i % len(colors)])
             if spec.value_labels_shown:
-                for xi, v in zip(xs, row):
-                    ax.annotate(fmt(v), (xi, v), textcoords="offset points", xytext=(0, 6),
-                                ha="center", fontsize=7)
+                for j, (xi, v) in enumerate(zip(xs, row, strict=True)):
+                    _value_label(ax, (xi, v), fmt(v), f"{i}:{j}", offset=(0, 6))
         if spec.x_numeric:
             from matplotlib.ticker import MaxNLocator
             ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins="auto"))
@@ -170,15 +214,16 @@ def _build_figure(spec: ChartSpec):
             ax.set_xticklabels(spec.categories, rotation=spec.rotate_xticks,
                                ha="right" if spec.rotate_xticks else "center")
         if len(spec.values) > 1:
-            ax.legend(loc=spec.legend_loc, fontsize=8)
+            _legend(ax, spec)
 
     elif ct == "pie":
         row = spec.values[0]
         wedges, _ = ax.pie(row, labels=spec.categories, colors=colors[: len(row)] * (len(row) // len(colors) + 1))
         if spec.value_labels_shown:
-            for w, v in zip(wedges, row):
+            for j, (w, v) in enumerate(zip(wedges, row, strict=True)):
                 ang = np.deg2rad((w.theta1 + w.theta2) / 2)
-                ax.text(0.6 * np.cos(ang), 0.6 * np.sin(ang), fmt(v), ha="center", va="center", fontsize=8)
+                _value_label(ax, (0.6 * np.cos(ang), 0.6 * np.sin(ang)), fmt(v), f"0:{j}",
+                             offset=(0, 0), va="center", color=_contrast(w.get_facecolor()[:3]))
         ax.set_aspect("equal")
 
     else:
@@ -206,5 +251,9 @@ def _build_figure(spec: ChartSpec):
                 ax.grid(axis=g_axis, linestyle="--", alpha=0.5)
         _apply_value_axis(ax, spec, horizontal=(ct == "horizontal_bar"))
 
-    fig.tight_layout()
+    try:
+        fig._unrender_layout = fit_layout(fig, ax, spec)
+    except Exception:
+        plt.close(fig)
+        raise
     return fig, ax

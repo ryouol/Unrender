@@ -73,10 +73,19 @@ verified provider or merge the older branch's product implementation over main.
   dataset-relative evaluation/training loading. Frozen artifacts are unchanged.
   [Current dataset workflow](SYNTHETIC_DATA.md) and
   [pipeline verification/native visual failures](../release/synthetic-contract-v1/README.md).
-- [ ] Full synthetic recoverability: inspect label/legend overlap, clipping after
-  augmentation, and readable precision at native and the actual deployed
-  512-token processor input. Passing metadata and endpoint checks is insufficient
-  to certify a new benchmark or authorize a model-quality claim.
+- [x] Native layout repair and CPU processor diagnostics: retained all labels and
+  targets in four saved failures; 252 development renders have no measured native
+  text collisions, clipping or legend/plot overlap. Actual full/512-budget encoded
+  pixels were inspected for 72 charts, with exact raster reconstruction. Two
+  retained blurred examples have identical full/512 inputs, isolating damage
+  before the budget reduction. [Evidence and limitations](../release/chart-layout-v1/README.md).
+- [ ] Full synthetic recoverability: freeze readable-precision and independent
+  review requirements after inspecting augmentation stages, glyph/mark contrast,
+  leader association, numerical ambiguity and actual deployed inputs. Native
+  rectangle checks and geometric font estimates do not certify a benchmark.
+  Preserve unsuitable examples in a declared stress/abstention slice; never
+  silently filter failed examples from a quality denominator or train exact
+  numeric targets whose precision the raster cannot support.
 - [ ] Geometry data conversion: replace historical seed regeneration/skipped
   mismatches with complete artifact binding and augmentation-coordinate checks.
   Do not train on a silently reduced or mismatched geometry dataset.

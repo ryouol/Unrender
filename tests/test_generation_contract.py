@@ -234,7 +234,7 @@ def test_generation_and_split_never_overwrite_frozen_files(dataset):
 def test_partial_generation_is_rejected(tmp_path, monkeypatch):
     from unrender.data_gen import generate as module
 
-    original = module.render_chart
+    original = module.render_with_diagnostics
     count = 0
 
     def broken(spec):
@@ -244,7 +244,7 @@ def test_partial_generation_is_rejected(tmp_path, monkeypatch):
             raise RuntimeError("injected rendering failure")
         return original(spec)
 
-    monkeypatch.setattr(module, "render_chart", broken)
+    monkeypatch.setattr(module, "render_with_diagnostics", broken)
     with pytest.raises(RuntimeError, match="injected"):
         generate(3, str(tmp_path), workers=1)
     with pytest.raises(ValueError, match="incomplete"):

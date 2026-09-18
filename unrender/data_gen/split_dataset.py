@@ -68,7 +68,17 @@ def split(
             label_bytes = artifact_path(out_dir, e["label"]).read_bytes()
             if digest(label_bytes) != e["label_sha256"]:
                 raise ValueError("target changed while splitting")
-            meta = {k: e[k] for k in ("labels_shown", "chart_type", "augmented", "visual_review")}
+            meta = {
+                k: e[k]
+                for k in (
+                    "labels_shown",
+                    "chart_type",
+                    "augmented",
+                    "visual_review",
+                    "layout_status",
+                    "final_font_pixels_estimate",
+                )
+            }
             meta["generation"] = {
                 key: e[key]
                 for key in ("target_contract", "recipe_sha256", "image_sha256", "label_sha256")

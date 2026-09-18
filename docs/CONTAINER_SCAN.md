@@ -198,3 +198,18 @@ This is permission hardening, not a vendor patch or a new full-image scan.
 The recorded advisories and their limits remain applicable. The hourly monitor
 still uses its earlier `02597a6` image; this rollout concerns the web service.
 Evidence: `release/launch-eval-results/runtime-hardening-v1.json`.
+
+## September 18 readiness release
+
+A fresh Trivy 0.74.0 database scan found fixes now available for gzip, PCRE2,
+SQLite and Perl. The runtime stage installs exact Debian Trixie package versions
+from the vendor repository before removing privilege bits. The official Python
+base's AMD64 image remains unchanged, so a tag refresh alone would not apply them.
+
+The rebuilt AMD64 image has **zero critical findings, 44 high, 53 medium,
+57 low and one unknown**, with zero Python findings. None of the remaining high
+findings has a fixed version in this scan. This removes all three critical and
+thirteen high package/advisory pairs from the September 18 pre-update scan.
+Remaining package risks are visible; the historical reachability assessments
+above still require their stated operational boundaries and are not a clean
+security certification. See the [scan receipt](../release/readiness-remediation-20260918/container-scan-summary.json) and compressed full report beside it.

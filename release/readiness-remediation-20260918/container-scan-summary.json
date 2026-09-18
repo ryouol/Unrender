@@ -1,0 +1,23 @@
+{
+  "scanner": "Trivy 0.74.0",
+  "image_digest": "sha256:8ed1f81222dc19363397f67f624a9466f58489d0987986bfa9991a8dcd3b49db",
+  "scan_sha256": "16d7d6e8b1950194f4e35a3a5647a7430584b62907b138958274a4b871fab9c7",
+  "results": [
+    {
+      "type": "debian",
+      "counts": {
+        "LOW": 57,
+        "HIGH": 44,
+        "MEDIUM": 53,
+        "UNKNOWN": 1
+      },
+      "fixable_high_critical": 0
+    },
+    {
+      "type": "python-pkg",
+      "counts": {},
+      "fixable_high_critical": 0
+    }
+  ],
+  "scope": "Local AMD64 release image; compare installed packages after Render rollout. Remaining findings are not suppressed."
+}

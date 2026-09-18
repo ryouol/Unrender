@@ -1,14 +1,12 @@
 # September 18 audit remediation
 
-Implementation is on `codex/review-readiness`. The separate serving checkout and
-its existing user changes are preserved. This document describes local changes;
-it is not a deployment receipt or a claim that the model is ready for promotion.
+Implementation merged through PR #11 and deployed on September 18 as `2bc72d1`, schema 15. The separate serving checkout and its existing user changes are preserved. See [deployment evidence](RENDER_MODAL_LAUNCH.md); deployment success does not establish model promotion.
 
 ## Findings, implementation and acceptance
 
 | Findings | Current implementation | Remaining acceptance evidence |
 |---|---|---|
-| F03, F04: incomplete output and approval drift | Complete-table parsing, observed completion and exact-version review/export | Coordinated provider/browser/schema-15 deployment canary |
+| F03, F04: incomplete output and approval drift | Complete-table parsing, observed completion and exact-version review/export | Passed on September 18: real provider/browser/schema-15 workflow; broader user pilot remains |
 | F05: invalid comparison and promotion | Shared source/truth/review identity, source-group bootstrap, all generic comparisons explicitly descriptive; historical/tiny studies cannot promote | Independent frozen study and prespecified power analysis; promotion automation remains withheld |
 | F06: destructive collection and publication | One local/cloud draft collector; exclusive attempt directories, full failure schedule, reviewed immutable portable publication with byte inventory | Cloud interruption/concurrent publication drill |
 | F07: wrong accumulated numeric objective | One weighted-token objective normalized over the complete optimizer batch, including tail batches | Actual Qwen/CUDA integration and meaningful training comparison |
@@ -18,10 +16,10 @@ it is not a deployment receipt or a claim that the model is ready for promotion.
 | F11: implicit resize and truncation | Explicit Qwen collator, complete target/grid/padding checks, no truncation; actual pinned processor tested at full and 512 budgets | Same-input full/512 inference quality and readable-precision crossover |
 | F12, F13: misleading serving evidence | Isolated serving harness uses strict JSON/schema/semantics AND completed stream; failures receive no throughput/quality credit; complete durable attempt schedule | Competent same-GPU baseline, three repeats, full workload/cost/trace evidence; runtime version must be explicitly selected and validated |
 | F14: lost/duplicate cloud evaluation | Distributed output claim; schedule/dispatch/outcome persistence hooks; SDK retries disabled and observed API finish reason recorded; failure retains ownership | Real container-loss/Volume drill and transport request-count evidence; local mocks do not prove cloud behavior |
-| F15: serial worker and slow monitoring | Bounded worker pool (1–4, default 1); concurrent claim/charge/shutdown tests; proposed two-minute monitor with bounded retries | Capacity/load measurement before increasing production slots; remote cancellation acknowledgement and durable global provider dollar cap are still open |
+| F15: serial worker and slow monitoring | Bounded worker pool (1–4, default 1); concurrent claim/charge/shutdown tests; deployed two-minute monitor with bounded retries | Capacity/load measurement before increasing production slots; remote cancellation acknowledgement and durable global provider dollar cap are still open |
 | F16: recovery/auth/container risk | Existing recovery, access controls and release checks retained | Timed production-like restore, external auth/security review and current container advisory disposition |
 | F17: blurry demo | Sharp owned synthetic reference chart; readable values, explicit units, source order matches table | Local browser correction/versioned approval/download passed; independent 30-chart user workflow pilot remains |
-| F18: unclear handoff | Current plan, training contract, CI contract tests and reviewer reading order | Clean committed reviewer release, hosted CI/container evidence and deployed revision manifest |
+| F18: unclear handoff | Current plan, training contract, CI contract tests and reviewer reading order | PR #11 merged, all hosted jobs passed, deployed revision manifest retained; independent engineer review remains |
 
 ## Execution order and stop conditions
 
@@ -102,4 +100,4 @@ and rejection of recipe drift/partial checkpoints. It is not a Qwen/CUDA/Modal
 result. Cloud tests use test doubles. No new model quality, speedup, GPU cost,
 independent review, production cancellation or recovery claim follows from them.
 
-Local validation counts and boundaries are recorded in [the dated validation receipt](../release/readiness-remediation-20260918/local-validation.json). The updated training lock has no known advisories in the recorded scan; the CUDA/runtime rollout remains unverified.
+Local validation counts and boundaries are recorded in [the dated validation receipt](../release/readiness-remediation-20260918/local-validation.json). The updated training lock has no known advisories in the recorded scan; the production inference CUDA/runtime rollout passed a one-chart canary. Qwen training and Modal recovery remain unverified.

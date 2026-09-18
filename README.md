@@ -96,7 +96,7 @@ flowchart TD
 
 ## Engineering evaluation
 
-For the September 18 local changes, start with the [audit remediation and benchmark plan](docs/AUDIT_REMEDIATION.md) and [training/recovery contract](docs/TRAINING_REPRODUCIBILITY.md). These changes are not a hosted deployment or a new model benchmark.
+The September 18 readiness release is deployed at runtime `2bc72d1`, schema 15. [GPU, restore and hosted workflow receipts](docs/RENDER_MODAL_LAUNCH.md) document the rollout. Start with the [audit remediation and benchmark plan](docs/AUDIT_REMEDIATION.md) and [training/recovery contract](docs/TRAINING_REPRODUCIBILITY.md) for remaining gates. The deployment canaries do not establish a new model-quality benchmark.
 
 Start with the [review guide](docs/ENGINEERING_REVIEW.md) for a reading order, test map, failure cases, and evidence boundaries.
 

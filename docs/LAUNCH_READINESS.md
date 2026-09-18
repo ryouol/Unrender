@@ -1,5 +1,22 @@
 # Launch readiness
 
+## September 18 deployment update
+
+Runtime `2bc72d1` is live with schema 15 and the GPU-verified provider. The
+restore drill, exact preservation of existing customer data, hosted extraction,
+versioned correction/approval, all exports and browser checks passed. The
+operations monitor now runs every two minutes. [Deployment receipt and limits](RENDER_MODAL_LAUNCH.md).
+
+The current scan has zero critical and zero Python findings, with 44 high Debian
+findings without listed fixes. Independent label review, new Qwen training and
+recovery, prospective accuracy/serving benchmarks, broader capacity testing and
+the remaining external review gates are still open. See [the current plan](AUDIT_REMEDIATION.md).
+
+## Historical September 12 scorecard
+
+The dated scorecard below preserves earlier evidence. Use the September 18
+receipt and remediation plan for current runtime, test counts and open gates.
+
 September 12 handoff: the controlled beta runs on Render at
 `a14b961db721004a4ad77d4e2ab5cdac343d1ef9`, schema 14. Google and password
 signup are available with **three testing credits per new account**. Existing

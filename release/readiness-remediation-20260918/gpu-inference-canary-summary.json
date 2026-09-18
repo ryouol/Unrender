@@ -1,0 +1,11 @@
+{
+  "scope": "One owned synthetic chart, isolated L4 cold/warm inference; not a quality benchmark or training run",
+  "provider_source_commit": "13333da55187cd28de44b813d59f67701cc1903b",
+  "modal_run": "https://modal.com/apps/royluo05/main/ap-LPdSDeaO6oaNpKZkpE42Ib",
+  "provider_release": "b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886",
+  "exact_reference_matches": 2,
+  "reference_numeric_values": 12,
+  "initial_attempt": "Inference completed successfully; diagnostic collection failed on optional hf_device_map. Reporting was corrected and a fresh cold/warm run completed.",
+  "independent_source_review": "pending",
+  "training_run": "not run; approved source annotations remain required"
+}

@@ -1,0 +1,270 @@
+[
+  {
+    "phase": "cold",
+    "elapsed_seconds": 51.051079726000005,
+    "diagnostics": {
+      "generated_tokens": 188,
+      "tail_tokens": [
+        "0",
+        "},{\"",
+        "x",
+        "\":\"",
+        "Jun",
+        "\",\"",
+        "y",
+        "\":",
+        "6",
+        "1",
+        ".",
+        "0",
+        "}",
+        "]}",
+        "]}",
+        "<|im_end|>"
+      ],
+      "stages": {
+        "snapshot_cache_hit": false,
+        "snapshot_verification_seconds": 30.012747849999997,
+        "imports_seconds": 7.699400000404921e-05,
+        "model_load_seconds": 3.989979925,
+        "preprocess_seconds": 0.1362357679999988,
+        "generate_decode_seconds": 16.759251812000002,
+        "input_tokens": 722,
+        "output_tokens": 188,
+        "max_output_tokens": 4096,
+        "finish_reason": "eos"
+      },
+      "original_cpu_threads": 4,
+      "cpu_threads": 4,
+      "device_map": {
+        "": "cuda:0"
+      },
+      "dtype": "torch.bfloat16",
+      "flash_sdp": false,
+      "image_size": {
+        "shortest_edge": 65536,
+        "longest_edge": 16777216
+      },
+      "peak_cuda_allocated_bytes": 9100339200,
+      "peak_cuda_reserved_bytes": 9145679872,
+      "gpu": "NVIDIA L4",
+      "attention": "sdpa",
+      "use_cache": true,
+      "output_tokens": 187
+    },
+    "raw": "{\"chart_type\":\"grouped_bar\",\"title\":\"Cloud infrastructure spend\",\"x_axis\":{\"label\":\"Month\",\"unit\":null},\"y_axis\":{\"label\":\"Spend\",\"unit\":\"USD thousands\"},\"series\":[{\"name\":\"Budget\",\"points\":[{\"x\":\"Jan\",\"y\":40.0},{\"x\":\"Feb\",\"y\":44.0},{\"x\":\"Mar\",\"y\":48.0},{\"x\":\"Apr\",\"y\":48.0},{\"x\":\"May\",\"y\":52.0},{\"x\":\"Jun\",\"y\":56.0}]},{\"name\":\"Actual\",\"points\":[{\"x\":\"Jan\",\"y\":38.0},{\"x\":\"Feb\",\"y\":47.0},{\"x\":\"Mar\",\"y\":46.0},{\"x\":\"Apr\",\"y\":55.0},{\"x\":\"May\",\"y\":51.0},{\"x\":\"Jun\",\"y\":61.0}]}]}",
+    "json": {
+      "chart_type": "grouped_bar",
+      "title": "Cloud infrastructure spend",
+      "x_axis": {
+        "label": "Month",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Spend",
+        "unit": "USD thousands"
+      },
+      "series": [
+        {
+          "name": "Budget",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 40.0
+            },
+            {
+              "x": "Feb",
+              "y": 44.0
+            },
+            {
+              "x": "Mar",
+              "y": 48.0
+            },
+            {
+              "x": "Apr",
+              "y": 48.0
+            },
+            {
+              "x": "May",
+              "y": 52.0
+            },
+            {
+              "x": "Jun",
+              "y": 56.0
+            }
+          ]
+        },
+        {
+          "name": "Actual",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 38.0
+            },
+            {
+              "x": "Feb",
+              "y": 47.0
+            },
+            {
+              "x": "Mar",
+              "y": 46.0
+            },
+            {
+              "x": "Apr",
+              "y": 55.0
+            },
+            {
+              "x": "May",
+              "y": 51.0
+            },
+            {
+              "x": "Jun",
+              "y": 61.0
+            }
+          ]
+        }
+      ]
+    },
+    "csv": "Month,Budget,Actual\r\nJan,40.0,38.0\r\nFeb,44.0,47.0\r\nMar,48.0,46.0\r\nApr,48.0,55.0\r\nMay,52.0,51.0\r\nJun,56.0,61.0\r\n",
+    "parse_errors": [],
+    "parser_version": "chart-json-v2",
+    "finish_reason": "eos",
+    "output_tokens": 188,
+    "max_output_tokens": 4096,
+    "provider_release": "b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886"
+  },
+  {
+    "phase": "warm",
+    "elapsed_seconds": 11.05574642100001,
+    "diagnostics": {
+      "generated_tokens": 188,
+      "tail_tokens": [
+        "0",
+        "},{\"",
+        "x",
+        "\":\"",
+        "Jun",
+        "\",\"",
+        "y",
+        "\":",
+        "6",
+        "1",
+        ".",
+        "0",
+        "}",
+        "]}",
+        "]}",
+        "<|im_end|>"
+      ],
+      "stages": {
+        "snapshot_cache_hit": true,
+        "snapshot_verification_seconds": 7.027999998854284e-06,
+        "imports_seconds": 2.112800000020343e-05,
+        "model_load_seconds": 3.54499999843938e-06,
+        "preprocess_seconds": 0.07252416800000105,
+        "generate_decode_seconds": 10.965858698000005,
+        "input_tokens": 722,
+        "output_tokens": 188,
+        "max_output_tokens": 4096,
+        "finish_reason": "eos"
+      },
+      "original_cpu_threads": 4,
+      "cpu_threads": 4,
+      "device_map": {
+        "": "cuda:0"
+      },
+      "dtype": "torch.bfloat16",
+      "flash_sdp": false,
+      "image_size": {
+        "shortest_edge": 65536,
+        "longest_edge": 16777216
+      },
+      "peak_cuda_allocated_bytes": 9100339200,
+      "peak_cuda_reserved_bytes": 9179234304,
+      "gpu": "NVIDIA L4",
+      "attention": "sdpa",
+      "use_cache": true,
+      "output_tokens": 187
+    },
+    "raw": "{\"chart_type\":\"grouped_bar\",\"title\":\"Cloud infrastructure spend\",\"x_axis\":{\"label\":\"Month\",\"unit\":null},\"y_axis\":{\"label\":\"Spend\",\"unit\":\"USD thousands\"},\"series\":[{\"name\":\"Budget\",\"points\":[{\"x\":\"Jan\",\"y\":40.0},{\"x\":\"Feb\",\"y\":44.0},{\"x\":\"Mar\",\"y\":48.0},{\"x\":\"Apr\",\"y\":48.0},{\"x\":\"May\",\"y\":52.0},{\"x\":\"Jun\",\"y\":56.0}]},{\"name\":\"Actual\",\"points\":[{\"x\":\"Jan\",\"y\":38.0},{\"x\":\"Feb\",\"y\":47.0},{\"x\":\"Mar\",\"y\":46.0},{\"x\":\"Apr\",\"y\":55.0},{\"x\":\"May\",\"y\":51.0},{\"x\":\"Jun\",\"y\":61.0}]}]}",
+    "json": {
+      "chart_type": "grouped_bar",
+      "title": "Cloud infrastructure spend",
+      "x_axis": {
+        "label": "Month",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Spend",
+        "unit": "USD thousands"
+      },
+      "series": [
+        {
+          "name": "Budget",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 40.0
+            },
+            {
+              "x": "Feb",
+              "y": 44.0
+            },
+            {
+              "x": "Mar",
+              "y": 48.0
+            },
+            {
+              "x": "Apr",
+              "y": 48.0
+            },
+            {
+              "x": "May",
+              "y": 52.0
+            },
+            {
+              "x": "Jun",
+              "y": 56.0
+            }
+          ]
+        },
+        {
+          "name": "Actual",
+          "points": [
+            {
+              "x": "Jan",
+              "y": 38.0
+            },
+            {
+              "x": "Feb",
+              "y": 47.0
+            },
+            {
+              "x": "Mar",
+              "y": 46.0
+            },
+            {
+              "x": "Apr",
+              "y": 55.0
+            },
+            {
+              "x": "May",
+              "y": 51.0
+            },
+            {
+              "x": "Jun",
+              "y": 61.0
+            }
+          ]
+        }
+      ]
+    },
+    "csv": "Month,Budget,Actual\r\nJan,40.0,38.0\r\nFeb,44.0,47.0\r\nMar,48.0,46.0\r\nApr,48.0,55.0\r\nMay,52.0,51.0\r\nJun,56.0,61.0\r\n",
+    "parse_errors": [],
+    "parser_version": "chart-json-v2",
+    "finish_reason": "eos",
+    "output_tokens": 188,
+    "max_output_tokens": 4096,
+    "provider_release": "b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886"
+  }
+]

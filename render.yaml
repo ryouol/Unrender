@@ -78,6 +78,6 @@ services:
     name: unrender-monitor
     runtime: docker
     plan: starter
-    schedule: "17 * * * *"
+    schedule: "*/2 * * * *"
     autoDeployTrigger: off
-    dockerCommand: timeout --kill-after=5s 100s unrender-operations-check
+    dockerCommand: timeout --kill-after=5s 55s unrender-operations-check

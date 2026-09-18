@@ -861,7 +861,7 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
 
     job = service.get_job(user_id=user_id, job_id=job["id"])
     assert job["status"] == "review"
-    assert job["model_version"] == "verified-fixture/synthetic-v1-0002906"
+    assert job["model_version"] == "reference-fixture/budget-quarter-v2"
     corrected = job["result"]
     corrected["title"] = "Budget by quarter — reviewed"
     job = service.save_correction(
@@ -1195,7 +1195,7 @@ def test_spreadsheet_exports_neutralize_formula_cells(tmp_path: Path) -> None:
         expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
     )
     rows = list(csv.reader(io.StringIO(csv_payload.decode("utf-8"))))
-    assert rows[0] == ["'=SUM(A1:A2)", "'@external", "export_metadata_json"]
+    assert rows[0] == ["'=SUM(A1:A2)", "'@external [USD millions]", "export_metadata_json"]
     assert rows[1][:2] == ["'+cmd|' /C calc'!A0", "-9.2"]
 
     xlsx_payload, _ = service.export(
@@ -4548,9 +4548,9 @@ def test_operation_check_retries_then_exits_for_platform_notification(
         with pytest.raises(SystemExit) as error:
             operations_check.main()
         assert error.value.code == 1
-        assert len(calls) == 3 and sleeps == [30, 30]
+        assert len(calls) == 3 and sleeps == [10, 10]
         assert "failed" in capsys.readouterr().err
     else:
         operations_check.main()
-        assert len(calls) == failures + 1 and sleeps == [30] * failures
+        assert len(calls) == failures + 1 and sleeps == [10] * failures
         assert "passed" in capsys.readouterr().out

@@ -22,6 +22,13 @@ verified provider or merge the older branch's product implementation over main.
   hashes, train-overlap verification and a complete scheduled/in-flight attempt
   ledger for future runs, including generation stop reasons and the actual product
   validation outcome. The private saved model artifacts remain external.
+- [x] Local evaluation attempt ledger: complete scheduled denominator, durable
+  pre-dispatch record, no automatic retry of uncertain calls, safe resume and
+  source/input hashes. Actual SIGKILL and cross-process ownership checks pass.
+  See [verification](../release/evaluation-ledger/README.md).
+- [ ] Cloud evaluation dispatch integrity: explicit Modal Volume checkpoints and
+  distributed ownership; SDK retry/stop-reason accounting and actual production
+  validation outcomes. Local SQLite fsync/flock alone is not a cloud guarantee.
 - [x] Approval integrity for new operations: required revision on correction,
   restoration, approval and export; atomic checks; conflict UI preserving drafts;
   exact snapshot responses/audit; concurrent-connection and real two-tab checks.

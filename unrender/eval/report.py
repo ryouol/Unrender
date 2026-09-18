@@ -10,9 +10,14 @@ import argparse
 import json
 from pathlib import Path
 
+from unrender.eval.ledger import (
+    LEDGER_NAME,
+    load_predictions,
+    prediction_metadata,
+    require_terminal_attempts,
+)
 from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.score import TRACKS, score_rows, validate_rows
-from unrender.io_utils import read_jsonl
 
 
 def _load_providers(report_paths: list[str]) -> list[dict]:
@@ -21,17 +26,16 @@ def _load_providers(report_paths: list[str]) -> list[dict]:
         path = Path(name)
         if path.is_dir():
             files.update(path.rglob("predictions.jsonl"))
-        elif path.name == "predictions.jsonl":
-            files.add(path)
+            files.update(ledger.parent / "predictions.jsonl" for ledger in path.rglob(LEDGER_NAME))
         else:
             files.add(path.parent / "predictions.jsonl")
     providers = []
     for path in sorted(files):
-        rows = validate_rows(read_jsonl(path))
+        rows = validate_rows(load_predictions(path))
+        require_terminal_attempts(rows)
         if not rows:
             raise ValueError(f"empty predictions: {path}")
-        meta_path = path.parent / "meta.json"
-        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        meta = prediction_metadata(path)
         name = f"{meta.get('provider') or '?'}:{meta.get('model') or path.parent.name}"
         providers.append({"name": name, "rows": rows, "ids": {str(r["id"]) for r in rows}})
     if not providers:

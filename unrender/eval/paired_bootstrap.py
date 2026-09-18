@@ -25,9 +25,9 @@ import random
 import statistics
 from pathlib import Path
 
+from unrender.eval.ledger import load_predictions, require_terminal_attempts
 from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.score import score_prediction, validate_rows
-from unrender.io_utils import read_jsonl
 from unrender.schema.chart_schema import ChartData
 
 # v2 candidate-selection requirements, not the historical preregistration.
@@ -50,6 +50,9 @@ def _percentile(sorted_vals, q: float) -> float:
 
 def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table", decode_b="table"):
     """Paired chart bootstrap of exact-numeric cell F1, including failed attempts."""
+    a_rows, b_rows = list(a_rows), list(b_rows)
+    require_terminal_attempts(a_rows)
+    require_terminal_attempts(b_rows)
     ids = [str(i) for i in ids]
     if iters < 1:
         raise ValueError("bootstrap iterations must be positive")
@@ -157,8 +160,8 @@ def main():
 
     ids = json.loads(Path(args.subset).read_text())["ids"]
     res = compare(
-        read_jsonl(args.a),
-        read_jsonl(args.b),
+        load_predictions(args.a),
+        load_predictions(args.b),
         ids,
         tol=args.tol,
         iters=args.iters,

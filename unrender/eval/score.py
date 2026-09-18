@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
+from unrender.eval.ledger import attempt_coverage, load_predictions, prediction_metadata
 from unrender.eval.metrics import (
     METRIC_VERSION,
     aggregate,
@@ -26,7 +27,7 @@ from unrender.eval.metrics import (
     score_sample,
     semantic_errors,
 )
-from unrender.io_utils import fingerprint_ids, read_jsonl
+from unrender.io_utils import fingerprint_ids
 from unrender.schema.chart_schema import ChartData
 from unrender.schema.validate import PARSER_VERSION, parse_chart_json, strict_json
 
@@ -182,6 +183,14 @@ def score_rows(
             else None
             for key in ("raw_json_valid", "raw_schema_valid", "raw_semantic_valid")
         },
+        "attempt_coverage": attempt_coverage(rows),
+        "generation_finish_reasons": dict(
+            sorted(
+                Counter(
+                    (row.get("generation") or {}).get("finish_reason", "unrecorded") for row in rows
+                ).items()
+            )
+        ),
         "n_repaired": sum(bool(o["repaired"]) for o in outcomes),
         "outcomes": outcomes,
     }
@@ -191,7 +200,7 @@ def score(
     predictions: str, out: str = "", tols=TRACKS, only_ids=None, decode: str = "table"
 ) -> dict:
     pred_path = Path(predictions)
-    rows = read_jsonl(pred_path)
+    rows = load_predictions(pred_path)
     try:
         validate_rows(rows, only_ids)
     except ValueError as exc:
@@ -199,8 +208,7 @@ def score(
     subset_fp = fingerprint_ids(only_ids) if only_ids is not None else None
     tracks = {f"{t}": score_rows(rows, t, only_ids=only_ids, decode=decode) for t in tols}
 
-    meta_path = pred_path.parent / "meta.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = prediction_metadata(pred_path)
     report = {
         "metric_version": METRIC_VERSION,
         "parser_version": PARSER_VERSION,

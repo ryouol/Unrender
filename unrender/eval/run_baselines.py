@@ -1,8 +1,8 @@
 """Run one model over an eval set and save predictions (with raw responses).
 
-Resumable: if predictions.jsonl already has a sample's id, it's skipped — so an
-interrupted/expensive API run resumes instead of re-paying. Every raw response
-is saved, so you can re-score later for free with score.py.
+The durable schedule precedes provider dispatch. Resume preserves completed and
+uncertain attempts without retrying them; only never-dispatched inputs can run.
+Raw responses and failures remain available for offline scoring.
 
 CPU harness smoke test (no API cost):
     python -m unrender.eval.run_baselines --provider perfect \
@@ -18,36 +18,53 @@ import hashlib
 import json
 import random
 import re
+import threading
+import time
 from pathlib import Path
 
 from tqdm import tqdm
 
 from unrender.eval import providers as _providers
 from unrender.eval.dataset import load_eval_samples
-from unrender.eval.metrics import classify_status
+from unrender.eval.ledger import RUN_CONTRACT, RunLedger, atomic_text, run_owner, schedule_hash
+from unrender.eval.metrics import classify_status, semantic_errors
 from unrender.eval.providers import DEFAULT_MODELS, PROVIDERS, STALE_DEFAULT
-from unrender.io_utils import fingerprint_ids, read_jsonl
+from unrender.io_utils import fingerprint_ids
 from unrender.prompts import EXTRACTION_PROMPT
-from unrender.schema.validate import parse_chart_json
+from unrender.schema.chart_schema import ChartData
+from unrender.schema.validate import PARSER_VERSION, parse_chart_json, strict_json
 
 
 def _slug(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", s).strip("-")
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _model_revision(model: str, revision=None):
-    """Best-effort revision tag so a report records WHICH weights produced it. For
-    a local dir (merged model / adapter) a fingerprint of its top-level files'
-    (name, size, mtime); for an HF hub id, the explicitly pinned ``revision`` —
-    None means UNPINNED, which a base-model control must never be (an unpinned Hub
-    HEAD can drift from the exact weights the LoRA was trained on)."""
-    p = Path(model)
-    if not p.exists():
+    """Fingerprint local model bytes recursively; never call mtimes content hashes."""
+    root = Path(model)
+    if not root.exists():
         return revision
-    sig = sorted(
-        (f.name, f.stat().st_size, int(f.stat().st_mtime)) for f in p.iterdir() if f.is_file()
-    )
-    return fingerprint_ids([repr(sig)])
+    if not root.is_dir():
+        raise SystemExit("local model must be a directory")
+    paths = list(root.rglob("*"))
+    if any(path.is_symlink() and path.is_dir() for path in paths):
+        raise SystemExit("local model contains an untracked directory symlink")
+    files = sorted(path for path in paths if path.is_file())
+    if not files:
+        raise SystemExit("local model directory is empty")
+    manifest = [(path.relative_to(root).as_posix(), _file_sha256(path)) for path in files]
+    return hashlib.sha256(json.dumps(manifest).encode()).hexdigest()
+
+
+_RUN_LOCK = threading.Lock()  # Providers share mutable decoder/cache state in this process.
 
 
 def run(
@@ -62,58 +79,85 @@ def run(
     revision=None,
     prompt: str = EXTRACTION_PROMPT,
 ) -> Path:
+    if not _RUN_LOCK.acquire(blocking=False):
+        raise SystemExit("another evaluation is active in this process")
+    try:
+        return _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt)
+    finally:
+        _RUN_LOCK.release()
+
+
+def _run(provider, model, data, out, limit, seed, only_ids, gen_config, revision, prompt):
     if provider not in PROVIDERS:
         raise SystemExit(f"Unknown provider '{provider}'. Choices: {sorted(PROVIDERS)}")
-    fn = PROVIDERS[provider]
-    # A base-model control loaded from the Hub MUST be revision-pinned: an unpinned
-    # HEAD can drift from the exact weights/processor the merged model carries
-    # (sft_lora.py CAUTION) — a silent base-vs-LoRA confound (audit finding I). A
-    # local merged/adapter dir is exempt: _model_revision fingerprints it by content.
-    if provider == "hf" and revision is None and not Path(model).exists():
-        raise SystemExit(
-            f"unpinned hf model '{model}': pass --revision <commit-sha> to pin a Hub model so "
-            f"the base control matches the merged model's processor. Local model dirs are exempt "
-            f"(fingerprinted by content)."
-        )
+    if limit < 0:
+        raise SystemExit("limit must be nonnegative")
+    if (
+        provider == "hf"
+        and not Path(model).exists()
+        and not re.fullmatch(r"[0-9a-f]{40}", revision or "")
+    ):
+        raise SystemExit("unpinned hf model: pass --revision <40-character commit-sha>")
     samples = load_eval_samples(data, limit=limit)
-    dataset_fp = fingerprint_ids(s.id for s in samples)  # identity of the split actually loaded
+    dataset_fp = fingerprint_ids(s.id for s in samples)
+    if len({sample.id for sample in samples}) != len(samples):
+        raise SystemExit("duplicate input ids; each scheduled chart needs a unique identity")
     subset_fp = None
-    if only_ids is not None:  # fixed stratified subset / decoder-sweep set (A6-style)
-        only_ids = set(only_ids)
+    if only_ids is not None:
+        requested = list(only_ids)
+        if not requested or len(set(requested)) != len(requested):
+            raise SystemExit("subset must contain unique, nonempty ids")
+        only_ids = set(requested)
         subset_fp = fingerprint_ids(only_ids)
-        samples = [s for s in samples if s.id in only_ids]
-        # STRICT subset-coverage: never silently score fewer charts than requested.
-        # A missing id means the subset was built against a different split (the
-        # dev300/Modal-test desync), so the reported N would be smaller and no longer
-        # stratified — fail loudly instead.
-        missing = only_ids - {s.id for s in samples}
-        if missing:
-            raise SystemExit(
-                f"subset-coverage failure: {len(missing)}/{len(only_ids)} requested ids are absent "
-                f"from {data} (e.g. {sorted(missing)[:5]}). The subset and the data split do not "
-                f"match — refusing to silently score N={len(samples)}."
-            )
-
-    # Decoder config for the hf provider's sweep (repetition_penalty, etc.); other
-    # providers ignore it. Set once before the loop so every call uses it.
-    _providers.HF_GEN_CONFIG.clear()
-    if gen_config:
-        _providers.HF_GEN_CONFIG.update(gen_config)
-    # Pinned Hub revision for the hf provider (base-model control); empty => default.
-    _providers.HF_MODEL_CONFIG.clear()
-    if revision:
-        _providers.HF_MODEL_CONFIG["revision"] = revision
-
-    out_dir = Path(out) if out else Path("outputs/eval_reports") / f"{provider}__{_slug(model)}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    pred_path = out_dir / "predictions.jsonl"
-
-    # Integrity record for this run; also the source of the resume-config guard below.
-    meta_new = {
+        samples = [sample for sample in samples if sample.id in only_ids]
+        if missing := only_ids - {sample.id for sample in samples}:
+            raise SystemExit(f"subset-coverage failure: {len(missing)} requested ids are absent")
+    if not samples:
+        raise SystemExit("evaluation schedule is empty")
+    schedule = []
+    for sample in samples:
+        try:
+            gt = ChartData.model_validate(strict_json(sample.gt_json), strict=True)
+            if errors := semantic_errors(gt):
+                raise ValueError(", ".join(errors))
+        except ValueError as exc:
+            raise SystemExit(f"invalid ground truth for {sample.id}: {exc}") from exc
+        image = Path(sample.image)
+        try:
+            image_sha256 = _file_sha256(image)
+        except OSError:
+            image_sha256 = None
+        schedule.append(
+            {
+                "id": sample.id,
+                "image": sample.image,
+                "image_sha256": image_sha256,
+                "gt": sample.gt_json,
+                "meta": sample.meta,
+            }
+        )
+    root = Path(__file__).resolve().parents[2]
+    source_files = [
+        "unrender/eval/run_baselines.py",
+        "unrender/eval/ledger.py",
+        "unrender/eval/providers.py",
+        "unrender/eval/dataset.py",
+        "unrender/eval/metrics.py",
+        "unrender/io_utils.py",
+        "unrender/prompts.py",
+        "unrender/schema/validate.py",
+        "unrender/schema/chart_schema.py",
+    ]
+    metadata = {
+        "run_contract": RUN_CONTRACT,
         "provider": provider,
         "seed": seed,
-        "dataset_sha256": hashlib.sha256(Path(data).read_bytes()).hexdigest(),
-        "attempt_policy": "one_provider_invocation_no_retry_v1",
+        "dataset_sha256": _file_sha256(Path(data)),
+        "attempt_policy": "durable_dispatch_no_automatic_retry_v1",
+        "sdk_retry_policy": "not_attested",
+        "durability_scope": "POSIX local filesystem fsync and host-local writer lock; "
+        "remote-volume persistence and distributed ownership not attested",
+        "seed_policy": "per_input_python_rng_only; GPU sampling seed not attested",
         "model": model,
         "model_revision": _model_revision(model, revision),
         "data": data,
@@ -121,86 +165,101 @@ def run(
         "dataset_fp": dataset_fp,
         "gen_config": gen_config or {},
         "subset_fp": subset_fp,
-        "n_subset": (len(only_ids) if only_ids is not None else None),
-        # provenance: which prompt produced these predictions (table vs geometry arm)
+        "n_subset": len(only_ids) if only_ids is not None else None,
+        "n_scheduled": len(schedule),
+        "schedule_sha256": schedule_hash(schedule),
         "prompt_fp": fingerprint_ids([prompt]),
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "parser_version": PARSER_VERSION,
+        "source_sha256": {name: _file_sha256(root / name) for name in source_files},
     }
-
-    # One provider invocation per input. Resume never erases failures; a retry
-    # experiment needs a fresh output directory and its own complete denominator.
-    done = set()
-    if pred_path.exists():
-        # resume-config guard: refuse to append onto predictions written under a
-        # different model/decoder/subset/split — mixing incomparable rows silently
-        # corrupts the report. Force a fresh --out dir instead.
-        meta_old_path = out_dir / "meta.json"
-        if not meta_old_path.exists():
-            raise SystemExit("resume-config missing metadata; use a fresh output directory")
-        old = json.loads(meta_old_path.read_text())
-        for k in (
-            "provider",
-            "seed",
-            "dataset_sha256",
-            "attempt_policy",
-            "model",
-            "model_revision",
-            "gen_config",
-            "subset_fp",
-            "dataset_fp",
-            "prompt_fp",
-        ):
-            if k not in old or old[k] != meta_new[k]:
-                raise SystemExit(
-                    f"resume-config mismatch on '{k}': existing predictions in {out_dir} were "
-                    f"written with {k}={old.get(k)!r}, but this run uses {meta_new[k]!r}. "
-                    f"Use a fresh --out dir rather than appending incomparable rows."
-                )
-        existing = read_jsonl(pred_path)
-        from unrender.eval.score import validate_rows
-
-        validate_rows(existing)
-        done = {str(r["id"]) for r in existing}
-        if done:
-            print(f"Resuming: preserving all {len(done)} recorded outcomes, including failures.")
-
-    (out_dir / "meta.json").write_text(json.dumps(meta_new, indent=2))
-
-    rng = random.Random(seed)
-    n_ok = n_err = 0
-    with open(pred_path, "a", encoding="utf-8") as f:
-        for s in tqdm([x for x in samples if x.id not in done], desc=f"{provider}:{model}"):
-            error, raw = None, ""
-            _providers.LAST_USAGE.clear()  # observability only; reset before each call
-            try:
-                raw = fn(s.image, prompt, model, gt_json=s.gt_json, rng=rng)
-            except Exception as e:  # persist every failure, without another paid invocation
-                error = f"{type(e).__name__}: {e}"
-                raw = ""
-            parsed, perrs = parse_chart_json(raw) if raw else (None, ["empty"])
-            status = classify_status(error, parsed)
-            f.write(
-                json.dumps(
+    directory = Path(out) if out else Path("outputs/eval_reports") / f"{provider}__{_slug(model)}"
+    with run_owner(directory):
+        ledger = RunLedger(directory, metadata, schedule)
+        try:
+            atomic_text(directory / "meta.json", json.dumps(metadata, indent=2))
+            ledger.recover()
+            # Publish all scheduled rows before any inference. Readers use the
+            # live ledger for fresh outcomes if a hard crash leaves this snapshot stale.
+            ledger.export()
+            _providers.HF_GEN_CONFIG.clear()
+            _providers.HF_GEN_CONFIG.update(gen_config or {})
+            _providers.HF_MODEL_CONFIG.clear()
+            if revision:
+                _providers.HF_MODEL_CONFIG["revision"] = revision
+            if provider == "hf":
+                _providers._HF_CACHE.clear()  # never reuse weights from a previous recipe
+            for sample in tqdm(ledger.pending(), desc=f"{provider}:{model}"):
+                error, raw = None, ""
+                generation = {"finish_reason": "unrecorded"}
+                if provider in {"perfect", "noisy"}:
+                    generation["finish_reason"] = "not_applicable_reference"
+                if provider not in {"perfect", "noisy"}:
+                    try:
+                        if sample["image_sha256"] is None or (
+                            _file_sha256(Path(sample["image"])) != sample["image_sha256"]
+                        ):
+                            raise ValueError("input image missing or changed")
+                    except (OSError, ValueError):
+                        ledger.complete(
+                            sample["id"],
+                            {
+                                "raw": "",
+                                "pred": None,
+                                "usage": {},
+                                "status": "infra_error",
+                                "parse_errors": [],
+                                "error": "input_image_unavailable_or_changed",
+                                "generation": generation,
+                            },
+                            dispatched=False,
+                        )
+                        continue
+                _providers.LAST_USAGE.clear()
+                ledger.dispatch(sample["id"])
+                started = time.perf_counter()
+                try:
+                    input_seed = int.from_bytes(
+                        hashlib.sha256(json.dumps([seed, sample["id"]]).encode()).digest(), "big"
+                    )
+                    kwargs = {"timings": generation} if provider == "hf" else {}
+                    raw = PROVIDERS[provider](
+                        sample["image"],
+                        prompt,
+                        model,
+                        gt_json=sample["gt"],
+                        rng=random.Random(input_seed),
+                        **kwargs,
+                    )
+                    if not isinstance(raw, str):
+                        raise TypeError("provider must return raw text")
+                except Exception as exc:
+                    # Errors may embed credentials/customer data. Keep a safe type,
+                    # never a complete SDK response or another invocation.
+                    error, raw = f"provider_call_failed:{type(exc).__name__}", ""
+                parsed, diagnostics = parse_chart_json(raw) if raw else (None, ["empty_output"])
+                ledger.complete(
+                    sample["id"],
                     {
-                        "id": s.id,
-                        "image": s.image,
-                        "gt": s.gt_json,
-                        "meta": s.meta,
                         "raw": raw,
                         "pred": parsed.model_dump() if parsed else None,
                         "usage": dict(_providers.LAST_USAGE),
-                        "status": status,
-                        "parse_errors": perrs,
+                        "generation": generation,
+                        "status": classify_status(error, parsed),
+                        "parse_errors": diagnostics,
                         "error": error,
-                    }
+                        "provider_roundtrip_seconds": time.perf_counter() - started,
+                    },
                 )
-                + "\n"
-            )
-            f.flush()
-            n_err += int(error is not None)
-            n_ok += int(error is None)
-
-    print(f"Wrote {pred_path}  (ok={n_ok}, errors={n_err}, skipped={len(done)})")
-    return pred_path
+        finally:
+            # KeyboardInterrupt/SystemExit get a portable full-schedule snapshot;
+            # SIGKILL still leaves the committed SQLite ledger authoritative.
+            try:
+                ledger.export()
+            finally:
+                ledger.close()
+    print(f"Wrote {directory / 'predictions.jsonl'}; durable schedule: {directory / 'run.sqlite3'}")
+    return directory / "predictions.jsonl"
 
 
 def main():

@@ -70,12 +70,43 @@ or an explicitly supplied, preselected subset present in every file. Paired
 bootstrap checks identical ground truth and annotation flags for each paired ID.
 No success-conditioned intersection is permitted.
 
-The runner makes one provider-function invocation per input and preserves failures
-on resume. A retry experiment requires a fresh directory. This policy does not
-attest the retry behavior internal to a provider SDK; transport retry instrumentation
-belongs in the serving benchmark. Resume also checks the input file's SHA-256,
-provider, model/revision, seed, prompt and generation settings. Missing or incompatible
-metadata fails closed. Old evidence remains readable by the scorer.
+The local runner now uses a durable **scheduled-evaluation-v1** ledger; see the
+[attempt-accounting receipt](../release/evaluation-ledger/README.md). Before any
+provider call it persists every scheduled input and its truth/image identity in
+`run.sqlite3`. Dispatch is committed before invocation. A lost in-flight outcome
+becomes an `interrupted` terminal failure on resume, never an automatic retry.
+Only never-dispatched inputs can resume. A retry experiment needs a fresh directory.
+
+`predictions.jsonl` is an atomic portable snapshot, exported initially and at exit.
+After SIGKILL it can be stale. The official scorer, comparison report and bootstrap
+prefer the live sibling ledger; they also accept `run.sqlite3` directly. Readers
+validate the full schedule count/hash. A standalone new-format JSONL plus its
+`meta.json` receives the same coverage check; legacy historical files remain
+readable without claiming that their original schedule was recorded.
+
+A partial run can be scored provisionally with every scheduled input in its
+primary denominator; `attempt_coverage` and `generation_finish_reasons` expose its
+state. Pending/dispatched rows block comparison and promotion. Completed provider
+failures, missing-image failures and terminal interrupted attempts still count.
+The primary raw-table metric is unchanged: a well-formed response at the output
+cap can score raw extraction quality while failing production completion policy.
+An end-to-end product-acceptance metric remains a separate required measurement.
+
+Resume checks dataset and image contents, provider/model identity, prompt, decoder,
+seed policy, and evaluator/parser source hashes. Local model identities hash file
+contents recursively, not names/sizes/mtimes; Hub HF models require a full commit
+SHA. Missing/incompatible metadata fails closed. Old JSONL-only output directories
+cannot serve as dispatch logs and are never silently imported for paid resume.
+The synthetic noisy reference uses per-input Python RNG seeds, so resume does not
+change untouched outputs. This is not a GPU sampling determinism guarantee.
+
+The verified durability boundary is a local POSIX filesystem with fsync and one
+host's OS file locks. It is **not** proof of persistence/ownership across Modal
+containers. Before GPU rollout, integrate explicit Volume checkpoints and external
+run ownership, account for SDK transport retries and provider finish metadata,
+and record actual product validation outcomes. Today's wrappers commit the Volume
+after the run; that is insufficient evidence for a mid-run container-loss claim.
+No new external provider or GPU was invoked in this change.
 
 Bootstrap resamples whole paired charts, not individual cells. It computes the
 same exact-numeric F1 as the primary metric and counts failed outcomes. Its 3-point

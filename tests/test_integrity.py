@@ -87,7 +87,7 @@ def test_hf_hub_model_requires_pinned_revision(tmp_path):
     try:
         run(
             "hf", "Qwen/Qwen3-VL-4B-Instruct", str(data), str(tmp_path / "o2"),
-            0, 0, revision="deadbeef",
+            0, 0, revision="d" * 40,
         )
     except SystemExit as e:
         assert "revision" not in str(e)

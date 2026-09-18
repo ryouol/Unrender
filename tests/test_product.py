@@ -484,7 +484,11 @@ def test_reprocess_failure_and_cancel_preserve_approved_result(tmp_path: Path) -
         )
     )
     assert service.process_one()
-    approved = service.approve(user_id=user_id, job_id=job["id"])
+    approved = service.approve(
+        user_id=user_id,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     approved_result = approved["result"]
     approved_at = approved["approved_at"]
     assert service.account(user_id)["credits"] == 2
@@ -853,7 +857,12 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     assert job["model_version"] == "verified-fixture/synthetic-v1-0002906"
     corrected = job["result"]
     corrected["title"] = "Budget by quarter — reviewed"
-    job = service.save_correction(user_id=user_id, job_id=job["id"], result=corrected)
+    job = service.save_correction(
+        user_id=user_id,
+        job_id=job["id"],
+        result=corrected,
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert job["result"]["title"].endswith("reviewed")
     versions = service.job_versions(user_id=user_id, job_id=job["id"])
     assert [item["version"] for item in versions["items"]] == [2, 1]
@@ -862,12 +871,31 @@ def test_saved_sample_runs_free_through_review_approval_and_exports(tmp_path: Pa
     assert "result" not in versions["items"][0]
     restored = service.job_version(user_id=user_id, job_id=job["id"], version=1)
     assert restored["result"]["title"] == "Budget (Quarter)"
-    job = service.approve(user_id=user_id, job_id=job["id"])
+    job = service.approve(
+        user_id=user_id,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert job["status"] == "approved"
 
-    csv_payload, csv_mime = service.export(user_id=user_id, job_id=job["id"], output_format="csv")
-    json_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="json")
-    xlsx_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="xlsx")
+    csv_payload, csv_mime = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="csv",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
+    json_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="json",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
+    xlsx_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="xlsx",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert csv_mime.startswith("text/csv")
     assert b"Q3 2016" in csv_payload
     assert json.loads(json_payload)["title"].endswith("reviewed")
@@ -893,7 +921,12 @@ def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
     for correction in range(21):
         result = service.get_job(user_id=user_id, job_id=job["id"])["result"]
         result["title"] = f"Correction {correction + 1}"
-        service.save_correction(user_id=user_id, job_id=job["id"], result=result)
+        service.save_correction(
+            user_id=user_id,
+            job_id=job["id"],
+            result=result,
+            expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+        )
 
     first_page = service.job_versions(user_id=user_id, job_id=job["id"])
     assert len(first_page["items"]) == 20
@@ -912,6 +945,7 @@ def test_result_history_is_bounded_paginated_and_loaded_one_version_at_a_time(
             user_id=user_id,
             job_id=job["id"],
             result=service.get_job(user_id=user_id, job_id=job["id"])["result"],
+            expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
         )
     with pytest.raises(ProductError, match="version limit"):
         service.reprocess(user_id=user_id, job_id=job["id"])
@@ -1140,14 +1174,29 @@ def test_spreadsheet_exports_neutralize_formula_cells(tmp_path: Path) -> None:
         "x": "+cmd|' /C calc'!A0",
         "y": -9.2,
     }
-    service.save_correction(user_id=user_id, job_id=job["id"], result=result)
+    service.save_correction(
+        user_id=user_id,
+        job_id=job["id"],
+        result=result,
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
 
-    csv_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="csv")
+    csv_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="csv",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     rows = list(csv.reader(io.StringIO(csv_payload.decode("utf-8"))))
     assert rows[0] == ["'=SUM(A1:A2)", "'@external"]
     assert rows[1] == ["'+cmd|' /C calc'!A0", "-9.2"]
 
-    xlsx_payload, _ = service.export(user_id=user_id, job_id=job["id"], output_format="xlsx")
+    xlsx_payload, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="xlsx",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     workbook = load_workbook(io.BytesIO(xlsx_payload), data_only=False)
     sheet = workbook["Extracted data"]
     assert sheet["A1"].value == "'=SUM(A1:A2)"
@@ -1189,6 +1238,7 @@ def test_multi_series_exports_preserve_duplicate_points_and_numeric_cells(tmp_pa
                     "status": "review",
                     "approved_at": None,
                 },  # type: ignore[arg-type]
+                {"result_version": 1, "result_sha256": "test", "review_revision": "test"},
             )
         )
     )
@@ -2875,7 +2925,10 @@ def test_correction_transport_accepts_max_contract_and_rejects_exact_overflow(
                 }
             ],
         }
-        body = json.dumps({"result": result}, separators=(",", ":")).encode()
+        revision = client.get(f"/api/jobs/{job_id}").json()["review_revision"]
+        body = json.dumps(
+            {"result": result, "expected_revision": revision}, separators=(",", ":")
+        ).encode()
         assert 970_000 < len(body) <= settings.result_request_bytes
         accepted = client.patch(
             f"/api/jobs/{job_id}/result",

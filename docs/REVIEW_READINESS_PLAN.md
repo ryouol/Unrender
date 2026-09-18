@@ -21,9 +21,14 @@ verified provider or merge the older branch's product implementation over main.
 - [ ] Evidence packaging: clean-clone reproduction with permitted raw artifacts,
   hashes, train-overlap verification and a complete scheduled/in-flight attempt
   ledger for future runs. The private saved model artifacts remain external.
-- [ ] Approval integrity: expected result version/hash on correction, restoration,
-  approval and export; atomic compare-and-swap; conflict UI; exact-version audit;
-  deterministic interleaving tests and a real two-tab browser check.
+- [x] Approval integrity for new operations: required revision on correction,
+  restoration, approval and export; atomic checks; conflict UI preserving drafts;
+  exact snapshot responses/audit; concurrent-connection and real two-tab checks.
+  See [contract](API.md#browser-review-concurrency-contract) and
+  [verification receipt](../release/review-integrity/README.md).
+- [ ] Approval rollout: fresh review of historical approvals before asserting the
+  new guarantee; old audit receipts cannot prove the version a person actually saw.
+  Deploy the browser and server contract together and verify a controlled canary.
 - [ ] Safe parsing and diagnostics: never invent truncated numbers, change quoted
   labels or silently drop points; persist stop/repair/partial reasons through
   provider, database, API, UI and exports; bounded explicit retry policy.

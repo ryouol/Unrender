@@ -1451,7 +1451,7 @@ function renderJob() {
   byId("job-status").textContent = statusLabel(job.status);
   byId("job-title").textContent = job.status === "approved" ? "Approved data" : ["review"].includes(job.status) ? "Review data" : statusLabel(job.status);
   byId("review-filename").textContent = chartName(job);
-  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage} · ${formatDate(job.updated_at)}`;
+  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage}${job.result_version ? ` · Version ${job.result_version}` : ""} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
   byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
   const error = byId("job-error");
@@ -1461,6 +1461,7 @@ function renderJob() {
   } else {
     error.hidden = true;
   }
+  setHidden("review-conflict", true);
   const resultReady = ["review", "approved"].includes(job.status) && job.result;
   setHidden("review-notice", !resultReady || job.status === "approved");
   setHidden("result-loading", Boolean(resultReady));
@@ -1560,6 +1561,45 @@ function discardEditorChanges() {
   return true;
 }
 
+function showReviewError(error, jobId, viewEpoch) {
+  if (isStaleRequest(error) || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) return;
+  if (error.code === "result_conflict") {
+    const notice = byId("review-conflict");
+    const text = document.createElement("p");
+    text.textContent = "This result changed in another tab. Your displayed table and unsaved edits have been kept. Load the latest version and review it before continuing.";
+    const reload = actionButton("Load latest version", "button-secondary", reloadLatestResult);
+    notice.replaceChildren(text, reload);
+    notice.hidden = false;
+    notice.tabIndex = -1;
+    notice.focus();
+  }
+  showToast(error);
+}
+
+async function reloadLatestResult() {
+  const jobId = state.currentJob?.id;
+  const viewEpoch = state.viewEpoch;
+  const form = byId("result-form");
+  if (!jobId || form.getAttribute("aria-busy") === "true") return;
+  if (state.editorDirty && !window.confirm("Load the latest saved version? This replaces your unsaved corrections. Cancel to keep your edits.")) return;
+  form.setAttribute("aria-busy", "true");
+  form.inert = true;
+  try {
+    const latest = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: state.viewController.signal });
+    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    state.currentJob = latest;
+    renderJob();
+    showToast("Latest version loaded. Review it before approving.");
+  } catch (error) {
+    showReviewError(error, jobId, viewEpoch);
+  } finally {
+    if (viewEpoch === state.viewEpoch) {
+      form.inert = false;
+      form.removeAttribute("aria-busy");
+    }
+  }
+}
+
 async function downloadExport(job, format) {
   if (state.editorDirty) {
     showToast("Save your corrections before exporting so the download includes your changes.");
@@ -1573,7 +1613,7 @@ async function downloadExport(job, format) {
   let objectUrl = null;
   try {
     const response = await fetch(
-      `/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format)}`,
+      `/api/jobs/${routeSegment(job.id)}/export/${routeSegment(format)}?expected_revision=${routeSegment(job.review_revision)}`,
       { headers: { Accept: "application/octet-stream" }, signal }
     );
     if (!authContextMatches(authEpoch, authRecord)
@@ -1587,7 +1627,10 @@ async function downloadExport(job, format) {
         void publishAuthChange("session-ended");
         throw staleAuthError("The authenticated session ended");
       }
-      throw new Error(`Export failed (${response.status})`);
+      const payload = await response.json().catch(() => null);
+      const error = new Error(payload?.error?.message || `Export failed (${response.status})`);
+      error.code = payload?.error?.code;
+      throw error;
     }
     const blob = await response.blob();
     if (!authContextMatches(authEpoch, authRecord)
@@ -1611,7 +1654,7 @@ async function downloadExport(job, format) {
     setHidden("export-completion", false);
     showToast("Download started. Check your browser’s downloads.");
   } catch (error) {
-    if (!isStaleRequest(error)) showToast(error);
+    showReviewError(error, job.id, viewEpoch);
   } finally {
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl);
@@ -1636,6 +1679,7 @@ async function jobMutation(action) {
   try {
     const updated = await api(`/api/jobs/${routeSegment(job.id)}/${routeSegment(action)}`, {
       method: "POST", signal,
+      ...(action === "approve" ? { body: { expected_revision: job.review_revision } } : {}),
     });
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     state.currentJob = updated;
@@ -1650,7 +1694,7 @@ async function jobMutation(action) {
     }
     showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
   } catch (error) {
-    showToast(error);
+    showReviewError(error, job.id, viewEpoch);
   } finally {
     if (viewEpoch === state.viewEpoch) {
       form.inert = false;
@@ -1674,7 +1718,7 @@ function clearSelectedChart() {
   byId("source-zoom").value = "1";
   for (const id of ["result-table", "series-editor-list", "chart-type-input", "job-actions", "audit-list", "version-list"]) byId(id).replaceChildren();
   for (const id of ["editor-change-note", "edit-state", "job-title", "job-status", "job-meta", "source-page-label", "review-filename"]) byId(id).textContent = "";
-  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "audit-list", "version-list"]) setHidden(id, true);
+  for (const id of ["result-form", "export-completion", "job-error", "review-notice", "review-conflict", "audit-list", "version-list"]) setHidden(id, true);
 }
 
 async function deleteCurrentJob() {
@@ -1892,6 +1936,7 @@ async function saveCorrections(event, { approve = false } = {}) {
   if (form.getAttribute("aria-busy") === "true") return false;
   if (!form.reportValidity()) return false;
   const jobId = state.currentJob?.id;
+  const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
   const authEpoch = state.authEpoch;
   const signal = state.viewController.signal;
@@ -1902,13 +1947,15 @@ async function saveCorrections(event, { approve = false } = {}) {
   try {
     const result = buildEditedResult();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result }, signal,
+      method: "PATCH", body: { result, expected_revision: expectedRevision }, signal,
     });
     if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
     saved = true;
     if (approve) {
-      const approved = await api(`/api/jobs/${routeSegment(jobId)}/approve`, { method: "POST", signal });
+      const approved = await api(`/api/jobs/${routeSegment(jobId)}/approve`, {
+        method: "POST", body: { expected_revision: updated.review_revision }, signal,
+      });
       if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
       state.currentJob = approved;
     }
@@ -1920,7 +1967,7 @@ async function saveCorrections(event, { approve = false } = {}) {
   } catch (error) {
     if (approve && saved && authEpoch === state.authEpoch
       && viewEpoch === state.viewEpoch && state.currentJob?.id === jobId) renderJob();
-    showToast(error);
+    showReviewError(error, jobId, viewEpoch);
     return false;
   } finally {
     if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
@@ -1985,6 +2032,7 @@ async function toggleAudit() {
 
 async function restoreVersion(version) {
   const jobId = state.currentJob?.id;
+  const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
   const signal = state.viewController.signal;
   const form = byId("result-form");
@@ -1996,12 +2044,8 @@ async function restoreVersion(version) {
   form.setAttribute("aria-busy", "true");
   form.inert = true;
   try {
-    const saved = await api(
-      `/api/jobs/${routeSegment(jobId)}/versions/${routeSegment(version.version)}`, { signal },
-    );
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
-    const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
-      method: "PATCH", body: { result: saved.result }, signal,
+    const updated = await api(`/api/jobs/${routeSegment(jobId)}/restore`, {
+      method: "POST", body: { version: version.version, expected_revision: expectedRevision }, signal,
     });
     if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
@@ -2010,7 +2054,7 @@ async function restoreVersion(version) {
     renderJob();
     showToast(`Version ${version.version} restored as a new correction`);
   } catch (error) {
-    showToast(error);
+    showReviewError(error, jobId, viewEpoch);
   } finally {
     if (viewEpoch === state.viewEpoch) {
       form.inert = false;

@@ -28,6 +28,7 @@ async function reached(stage) {
 
 function makeJob(id = "chart-a", status = "review", title = `Saved ${id}`) {
   return {
+    review_revision: `${id}:${status}:${title}`, result_version: 1,
     id, status, source_name: `${id}.png`, source_mime: "image/png", page_index: 0,
     updated_at: "2026-09-10T12:00:00Z", progress_stage: "Extracting values",
     result: ["review", "approved"].includes(status) ? {
@@ -199,7 +200,7 @@ function harness({ authenticated = true } = {}) {
       handleAuthLifecycleBoundary, renameChart, showProjects, deleteLibraryChart, openSettings,
       state, switchAuth, applyPublicConfig, renderJob, renderJobActions, markEditorDirty,
       showWorkspace,
-      downloadExport, jobMutation, restoreVersion, saveCorrections, openJob, beginViewSelection,
+      downloadExport, jobMutation, restoreVersion, saveCorrections, reloadLatestResult, openJob, beginViewSelection,
       resetPrivateState, syncAuthRecordFromStorage, showPublic, deleteCurrentJob,
       updateUploadPreview,
     };
@@ -508,7 +509,9 @@ await check("save and approve performs both writes before its single sidebar ref
   assert.deepEqual(order, ["PATCH", "POST"]);
   assert.equal(requests[0].path, "/api/jobs/chart-a/result");
   assert.equal(requests[0].options.body.result.title, "Corrected title");
+  assert.equal(requests[0].options.body.expected_revision, makeJob().review_revision);
   assert.equal(requests[1].path, "/api/jobs/chart-a/approve");
+  assert.equal(requests[1].options.body.expected_revision, makeJob("chart-a", "review", "Corrected title").review_revision);
   assert.equal(requests[0].options.signal, requests[1].options.signal);
   assert.equal(h.node("result-form").inert, true);
   assert.equal(await h.editTitle("Blocked while approving"), false);
@@ -542,6 +545,74 @@ await check("save and approve never approves a failed correction", async () => {
   assert.equal(h.test.state.editorDirty, true);
   assert.equal(h.node("chart-title-input").value, "Corrected title");
   assert.equal(h.node("result-form").inert, false);
+});
+
+await check("a stale save keeps edits and reload requires an explicit discard", async () => {
+  const h = harness();
+  h.select(makeJob());
+  await h.editTitle("My unsaved corrections");
+  const requests = [];
+  h.replace("api", async (path, options) => {
+    requests.push({ path, options });
+    const error = new Error("Changed in another tab");
+    error.code = "result_conflict";
+    throw error;
+  });
+  assert.equal(await h.test.saveCorrections(null, { approve: true }), false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.body.expected_revision, makeJob().review_revision);
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.node("chart-title-input").value, "My unsaved corrections");
+  assert.equal(h.node("review-conflict").hidden, false);
+  assert.equal(h.node("review-conflict").focused, true);
+  h.window.confirm = () => false;
+  await h.test.reloadLatestResult();
+  assert.equal(requests.length, 1);
+  assert.equal(h.node("chart-title-input").value, "My unsaved corrections");
+  h.window.confirm = () => true;
+  h.replace("api", async () => { throw new Error("Offline"); });
+  await h.test.reloadLatestResult();
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.node("chart-title-input").value, "My unsaved corrections");
+  const latest = makeJob("chart-a", "review", "Other tab's saved version");
+  h.replace("api", async () => latest);
+  await h.test.reloadLatestResult();
+  assert.equal(h.test.state.currentJob, latest);
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.node("chart-title-input").value, "Other tab's saved version");
+  assert.equal(h.node("review-conflict").hidden, true);
+});
+
+await check("a change between save and approve cannot silently approve the latest version", async () => {
+  const h = harness();
+  h.select(makeJob());
+  await h.editTitle("My correction");
+  const saved = makeJob("chart-a", "review", "My correction");
+  h.replace("api", async (path, options) => {
+    if (path.endsWith("/result")) return saved;
+    assert.equal(options.body.expected_revision, saved.review_revision);
+    const error = new Error("Changed in another tab");
+    error.code = "result_conflict";
+    throw error;
+  });
+  assert.equal(await h.test.saveCorrections(null, { approve: true }), false);
+  assert.equal(h.test.state.currentJob, saved);
+  assert.equal(h.test.state.currentJob.status, "review");
+  assert.equal(h.node("chart-title-input").value, "My correction");
+  assert.equal(h.node("review-conflict").hidden, false);
+});
+
+await check("a stale export requests the displayed revision and offers reload without a download", async () => {
+  const h = harness();
+  h.select(makeJob("chart-a", "approved"));
+  h.replace("fetch", async (url) => {
+    assert.match(url, /expected_revision=/);
+    assert.equal(new URL(url, "http://test.local").searchParams.get("expected_revision"), h.test.state.currentJob.review_revision);
+    return { ok: false, status: 409, json: async () => ({ error: { code: "result_conflict", message: "Changed in another tab" } }) };
+  });
+  await h.test.downloadExport(h.test.state.currentJob, "xlsx");
+  assert.equal(h.node("review-conflict").hidden, false);
+  assert.equal(h.downloads.length, 0);
 });
 
 await check("retrying failed approval retains saved corrections without another PATCH", async () => {
@@ -672,7 +743,7 @@ await check("dirty mutation and restore keep corrections and make no requests", 
   assert.equal(h.node("result-form").inert, false);
 });
 
-await check("restore does not PATCH a version fetched for an abandoned chart", async () => {
+await check("restore response cannot replace an abandoned chart", async () => {
   const h = harness();
   h.select(makeJob());
   const version = deferred();
@@ -694,7 +765,7 @@ await check("restore does not PATCH a version fetched for an abandoned chart", a
   assert.equal(h.test.state.editorDirty, true);
 });
 
-for (const phase of ["patch", "list"]) {
+for (const phase of ["restore", "list"]) {
   await check(`restore fences a late ${phase} response and retains its original signal`, async () => {
     const h = harness();
     h.select(makeJob());
@@ -703,16 +774,16 @@ for (const phase of ["patch", "list"]) {
     const requests = [];
     h.replace("api", async (path, options) => {
       requests.push({ path, options });
-      if (options.method !== "PATCH") return { result: makeJob("chart-a", "review", "Historical title").result };
-      if (phase === "patch") { started.resolve(); return gate.promise; }
+      if (phase === "restore") { started.resolve(); return gate.promise; }
       return makeJob("chart-a", "review", "Historical title");
     });
     if (phase === "list") h.replace("loadJobs", async () => { started.resolve(); return gate.promise; });
     const pending = h.test.restoreVersion({ version: 2 });
     await reached(started);
-    assert.equal(requests.length, 2);
-    assert.equal(requests[0].options.signal, requests[1].options.signal);
-    assert.equal(requests[1].options.body.result.title, "Historical title");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].path, "/api/jobs/chart-a/restore");
+    assert.equal(requests[0].options.body.version, 2);
+    assert.equal(requests[0].options.body.expected_revision, makeJob().review_revision);
     h.select(makeJob("chart-b"));
     await h.editTitle("Unsaved chart B");
     gate.resolve(makeJob("chart-a", "review", "Historical title"));
@@ -731,10 +802,10 @@ await check("restore succeeds in the same view and releases editor busy state", 
   const requests = [];
   h.replace("api", async (path, options) => {
     requests.push({ path, options });
-    return options.method === "PATCH" ? restored : { result: restored.result };
+    return restored;
   });
   await h.test.restoreVersion({ version: 2 });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 1);
   assert.equal(h.test.state.currentJob, restored);
   assert.equal(h.node("chart-title-input").value, "Historical title");
   assert.equal(h.node("result-form").inert, false);

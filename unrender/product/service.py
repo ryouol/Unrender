@@ -2258,15 +2258,66 @@ class ProductService:
 
     def _job_row(self, *, user_id: str, job_id: str) -> sqlite3.Row:
         with self.database.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
-            ).fetchone()
+            return self._review_row(conn, user_id, job_id)
+
+    def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
+        with self.database.transaction() as conn:
+            return self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+
+    @staticmethod
+    def _review_row(conn: sqlite3.Connection, user_id: str, job_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
+        ).fetchone()
         if not row:
             raise ProductError("job_not_found", "Extraction not found", 404)
         return row
 
-    def get_job(self, *, user_id: str, job_id: str) -> dict[str, Any]:
-        return public_job(self._job_row(user_id=user_id, job_id=job_id))
+    @staticmethod
+    def _review_snapshot(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        """Read the result and its immutable identity in the caller's transaction."""
+        snapshot = public_job(row)
+        snapshot.update(result_version=None, result_sha256=None, review_revision=None)
+        if not row["current_result_json"]:
+            return snapshot
+        version = conn.execute(
+            "SELECT id,version,chart_json FROM result_versions "
+            "WHERE job_id=? AND user_id=? ORDER BY version DESC LIMIT 1",
+            (row["id"], row["user_id"]),
+        ).fetchone()
+        if not version or version["chart_json"] != row["current_result_json"]:
+            raise ProductError(
+                "result_history_inconsistent", "The result history needs operator attention", 503
+            )
+        digest = hashlib.sha256(version["chart_json"].encode("utf-8")).hexdigest()
+        # Include the immutable version ID to reject ABA edits, and lifecycle state
+        # so a draft/approval or reprocessing transition also invalidates old views.
+        identity = json.dumps(
+            [row["id"], version["id"], digest, row["attempt"], row["status"], row["approved_at"]],
+            separators=(",", ":"),
+        )
+        snapshot.update(
+            result_version=int(version["version"]),
+            result_sha256=digest,
+            review_revision=hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+        )
+        return snapshot
+
+    @staticmethod
+    def _assert_review_revision(snapshot: dict[str, Any], expected_revision: str) -> None:
+        actual = snapshot["review_revision"]
+        if (
+            not actual
+            or not isinstance(expected_revision, str)
+            or not expected_revision.isascii()
+            or not hmac.compare_digest(actual, expected_revision)
+        ):
+            raise ProductError(
+                "result_conflict",
+                "This result changed in another tab. Your edits are still here. "
+                "Load the latest version before saving, approving, restoring, or exporting.",
+                409,
+            )
 
     def job_source(self, *, user_id: str, job_id: str, thumbnail: bool = False) -> bytes:
         row = self._job_row(user_id=user_id, job_id=job_id)
@@ -2450,58 +2501,86 @@ class ProductService:
         return int(usage["latest"]) + 1
 
     def save_correction(
-        self, *, user_id: str, job_id: str, result: dict[str, Any]
+        self, *, user_id: str, job_id: str, result: dict[str, Any], expected_revision: str
     ) -> dict[str, Any]:
         try:
             chart = ChartData.model_validate(result)
             self._validate_product_chart(chart)
         except (TypeError, ValueError) as exc:
             raise ProductError("invalid_result", "The edited table is not valid", 422) from exc
-        encoded = chart.model_dump_json()
-        encoded_bytes = len(encoded.encode("utf-8"))
         with self.database.transaction(immediate=True) as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE id=? AND user_id=?", (job_id, user_id)
+            row = self._review_row(conn, user_id, job_id)
+            self._assert_review_revision(self._review_snapshot(conn, row), expected_revision)
+            return self._store_correction(conn, row, chart.model_dump_json())
+
+    def restore_version(
+        self, *, user_id: str, job_id: str, version: int, expected_revision: str
+    ) -> dict[str, Any]:
+        with self.database.transaction(immediate=True) as conn:
+            row = self._review_row(conn, user_id, job_id)
+            self._assert_review_revision(self._review_snapshot(conn, row), expected_revision)
+            saved = conn.execute(
+                "SELECT chart_json FROM result_versions WHERE job_id=? AND user_id=? AND version=?",
+                (job_id, user_id, version),
             ).fetchone()
-            if not row:
-                raise ProductError("job_not_found", "Extraction not found", 404)
-            if row["status"] not in {"review", "approved"}:
-                raise ProductError("job_not_editable", "Wait for extraction before editing", 409)
-            version = self._next_result_version(
-                conn,
-                user_id=user_id,
-                job_id=job_id,
-                encoded_bytes=encoded_bytes,
-            )
-            old_current_bytes = len(str(row["current_result_json"] or "").encode("utf-8"))
-            self._assert_retained_byte_capacity(
-                conn,
-                additional_bytes=encoded_bytes + max(0, encoded_bytes - old_current_bytes),
-            )
-            now = timestamp()
-            self._insert_row(
-                conn,
-                "INSERT INTO result_versions("
-                "id,job_id,user_id,version,source,chart_json,created_at"
-                ") "
-                "VALUES (?,?,?,?,?,?,?)",
-                (self._id(), job_id, user_id, version, "correction", encoded, now),
-                user_id=user_id,
-            )
-            conn.execute(
-                "UPDATE jobs SET current_result_json=?,status='review',"
-                "approved_at=NULL,updated_at=? "
-                "WHERE id=?",
-                (encoded, now, job_id),
-            )
-            self._audit(
-                conn,
-                user_id=user_id,
-                job_id=job_id,
-                event_type="result_corrected",
-                details={"version": version},
-            )
-        return self.get_job(user_id=user_id, job_id=job_id)
+            if not saved:
+                raise ProductError("version_not_found", "Result version not found", 404)
+            return self._store_correction(conn, row, saved["chart_json"], restored_from=version)
+
+    def _store_correction(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        encoded: str,
+        *,
+        restored_from: int | None = None,
+    ) -> dict[str, Any]:
+        if row["status"] not in {"review", "approved"}:
+            raise ProductError("job_not_editable", "Wait for extraction before editing", 409)
+        user_id, job_id = str(row["user_id"]), str(row["id"])
+        encoded_bytes = len(encoded.encode("utf-8"))
+        version = self._next_result_version(
+            conn, user_id=user_id, job_id=job_id, encoded_bytes=encoded_bytes
+        )
+        old_current_bytes = len(str(row["current_result_json"] or "").encode("utf-8"))
+        self._assert_retained_byte_capacity(
+            conn, additional_bytes=encoded_bytes + max(0, encoded_bytes - old_current_bytes)
+        )
+        now = timestamp()
+        self._insert_row(
+            conn,
+            "INSERT INTO result_versions(id,job_id,user_id,version,source,chart_json,created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (self._id(), job_id, user_id, version, "correction", encoded, now),
+            user_id=user_id,
+        )
+        conn.execute(
+            "UPDATE jobs SET current_result_json=?,status='review',approved_at=NULL,updated_at=? "
+            "WHERE id=? AND user_id=?",
+            (encoded, now, job_id, user_id),
+        )
+        snapshot = self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+        self._audit(
+            conn,
+            user_id=user_id,
+            job_id=job_id,
+            event_type="result_corrected",
+            details={
+                **self._result_reference(snapshot),
+                "restored_from_version": restored_from,
+            },
+        )
+        # Never re-fetch after commit: another writer could otherwise replace the
+        # result before this response is used by Save & approve.
+        return snapshot
+
+    @staticmethod
+    def _result_reference(snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "version": snapshot["result_version"],
+            "sha256": snapshot["result_sha256"],
+            "review_revision": snapshot["review_revision"],
+        }
 
     def _validate_product_chart(self, chart: ChartData) -> None:
         if chart.chart_type not in CHART_TYPES or not 1 <= len(chart.series) <= 50:
@@ -2530,25 +2609,31 @@ class ProductService:
         if len(chart.model_dump_json().encode()) > self.settings.max_result_json_bytes:
             raise ValueError("Chart result is too large")
 
-    def approve(self, *, user_id: str, job_id: str) -> dict[str, Any]:
+    def approve(self, *, user_id: str, job_id: str, expected_revision: str) -> dict[str, Any]:
         with self.database.transaction(immediate=True) as conn:
-            row = conn.execute(
-                "SELECT status,current_result_json FROM jobs WHERE id=? AND user_id=?",
-                (job_id, user_id),
-            ).fetchone()
-            if not row:
-                raise ProductError("job_not_found", "Extraction not found", 404)
+            row = self._review_row(conn, user_id, job_id)
+            reviewed = self._review_snapshot(conn, row)
+            self._assert_review_revision(reviewed, expected_revision)
             if row["status"] != "review" or not row["current_result_json"]:
                 raise ProductError("job_not_approvable", "Review the result before approval", 409)
             now = timestamp()
             conn.execute(
-                "UPDATE jobs SET status='approved',"
-                "progress_stage='Approved for export',approved_at=?,updated_at=? "
-                "WHERE id=?",
-                (now, now, job_id),
+                "UPDATE jobs SET status='approved',progress_stage='Approved for export',"
+                "approved_at=?,updated_at=? WHERE id=? AND user_id=?",
+                (now, now, job_id, user_id),
             )
-            self._audit(conn, user_id=user_id, job_id=job_id, event_type="result_approved")
-        return self.get_job(user_id=user_id, job_id=job_id)
+            snapshot = self._review_snapshot(conn, self._review_row(conn, user_id, job_id))
+            self._audit(
+                conn,
+                user_id=user_id,
+                job_id=job_id,
+                event_type="result_approved",
+                details={
+                    **self._result_reference(snapshot),
+                    "reviewed_revision": expected_revision,
+                },
+            )
+            return snapshot
 
     def cancel(self, *, user_id: str, job_id: str) -> dict[str, Any]:
         with self.database.transaction(immediate=True) as conn:
@@ -2704,8 +2789,13 @@ class ProductService:
             )
         return True
 
-    def export(self, *, user_id: str, job_id: str, output_format: str) -> tuple[bytes, str]:
-        row = self._job_row(user_id=user_id, job_id=job_id)
+    def export(
+        self, *, user_id: str, job_id: str, output_format: str, expected_revision: str
+    ) -> tuple[bytes, str]:
+        with self.database.transaction() as conn:
+            row = self._review_row(conn, user_id, job_id)
+            snapshot = self._review_snapshot(conn, row)
+            self._assert_review_revision(snapshot, expected_revision)
         if row["status"] not in {"review", "approved"} or not row["current_result_json"]:
             raise ProductError("result_unavailable", "No reviewed result is available", 409)
         chart = ChartData.model_validate_json(row["current_result_json"])
@@ -2716,7 +2806,7 @@ class ProductService:
             payload = self._safe_csv(chart).encode("utf-8")
             mime = "text/csv; charset=utf-8"
         elif output_format == "xlsx":
-            payload = self._xlsx(chart, row)
+            payload = self._xlsx(chart, row, snapshot)
             mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             raise ProductError("invalid_export", "Use csv, json, or xlsx")
@@ -2726,7 +2816,11 @@ class ProductService:
                 user_id=user_id,
                 job_id=job_id,
                 event_type="result_exported",
-                details={"format": output_format, "approved": row["status"] == "approved"},
+                details={
+                    "format": output_format,
+                    "approved": row["status"] == "approved",
+                    **self._result_reference(snapshot),
+                },
             )
         return payload, mime
 
@@ -2765,7 +2859,7 @@ class ProductService:
             )
         return output.getvalue()
 
-    def _xlsx(self, chart: ChartData, row: sqlite3.Row) -> bytes:
+    def _xlsx(self, chart: ChartData, row: sqlite3.Row, snapshot: dict[str, Any]) -> bytes:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Extracted data"
@@ -2780,6 +2874,9 @@ class ProductService:
         meta.append(["Field", "Value"])
         meta.append(["Source", self._spreadsheet_cell(row["source_name"])])
         meta.append(["Job ID", row["id"]])
+        meta.append(["Result version", snapshot["result_version"]])
+        meta.append(["Result SHA-256", snapshot["result_sha256"]])
+        meta.append(["Review revision", snapshot["review_revision"]])
         meta.append(["Model", self._spreadsheet_cell(row["model_version"] or "unknown")])
         meta.append(["Status", row["status"]])
         meta.append(["Approved at", row["approved_at"] or "Not approved"])

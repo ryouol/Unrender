@@ -75,3 +75,58 @@ Relevant status codes:
 ## Compatibility policy
 
 The `/api/v1` upload/status surface is additive within v1. Removing or changing a field's meaning requires `/api/v2`. Browser-internal `/api/*` endpoints are not a public compatibility contract yet. Browser jobs, audit detail, and API-key inventories return bounded stable-cursor pages; result-history lists return bounded metadata pages and fetch one selected version body at a time. Each retained collection also has a configured count/byte/state ceiling. OpenAPI/Swagger endpoints are intentionally disabled on every environment; this file is the maintained public contract.
+
+
+## Browser review concurrency contract
+
+`GET /api/jobs/{id}` returns `result_version`, `result_sha256`, and an opaque
+`review_revision` with the result. They are null until a result exists. The digest
+is SHA-256 of the immutable stored `chart_json` UTF-8 bytes, not the pretty-printed
+JSON export or workbook bytes. The revision also binds the job, immutable version
+identity, attempt, status and approval timestamp. Restoring identical content
+creates a new version and never revives an old revision.
+
+The browser must send the revision from the **displayed** snapshot:
+
+| Action | Request |
+|---|---|
+| Save corrections | `PATCH /api/jobs/{id}/result`, body `{result, expected_revision}` |
+| Approve | `POST /api/jobs/{id}/approve`, body `{expected_revision}` |
+| Restore | `POST /api/jobs/{id}/restore`, body `{version, expected_revision}` |
+| Export | `GET /api/jobs/{id}/export/{format}?expected_revision=…` |
+
+Revisions are required 64-character lowercase hexadecimal strings. Missing or
+malformed request revisions receive 422. An outdated revision receives 409 with
+`error.code = result_conflict`; it performs no correction, approval, restoration,
+or export audit write. Ownership is checked before reading the result identity.
+There is no unconditional-write endpoint or force-overwrite option.
+
+Saves, restores and approvals check and mutate inside one immediate transaction.
+Their responses contain their own committed snapshot, not a subsequent fetch that
+could return another writer's result. Save & approve passes the revision returned
+by save to approval; an intervening edit causes a conflict. If a mutation response
+is lost, reload and review the current state before retrying. Repeating an old
+revision cannot add another result version or approval event.
+
+Restoration copies the requested immutable version on the server, creates a new
+correction, clears approval, and records `restored_from_version`. Retained correction,
+approval and export events include the exact version, content hash and review
+revision. Audit retention/rollup limits still apply; this is not a permanent ledger.
+
+Export captures the checked result and review status in one database snapshot,
+then renders those captured bytes. A later edit cannot change that download or
+its audit reference. Downloads expose `X-Unrender-Review-Revision`; XLSX includes
+version, content hash and revision in its Audit sheet. A download is a snapshot,
+not a promise that no later version exists. Complete source/model provenance and
+unit preservation remain separate export-readiness work.
+
+The interface keeps local edits on conflict and offers Load latest version. A
+failed reload keeps them; replacing dirty edits requires an explicit discard
+choice. It does not merge edits automatically. Browser tabs with the previous
+request contract must reload after deployment.
+
+No database migration is needed: revisions derive from existing immutable result
+history, and an inconsistent current result fails closed with 503
+`result_history_inconsistent`. This change cannot retroactively prove what someone
+saw before an old approval. Historical approvals require a fresh review before they
+can be presented as having passed this contract; do not relabel old audit receipts.

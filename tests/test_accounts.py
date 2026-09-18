@@ -415,8 +415,17 @@ def test_password_only_workspace_grant_persistence_and_tenant_isolation(tmp_path
     )
     job = service.create_job(user_id=owner, upload_id=upload["id"], page_index=0, crop=None)
     assert service.process_one()
-    service.approve(user_id=owner, job_id=job["id"])
-    expected = service.export(user_id=owner, job_id=job["id"], output_format="json")
+    service.approve(
+        user_id=owner,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=owner, job_id=job["id"])["review_revision"],
+    )
+    expected = service.export(
+        user_id=owner,
+        job_id=job["id"],
+        output_format="json",
+        expected_revision=service.get_job(user_id=owner, job_id=job["id"])["review_revision"],
+    )
     service.logout(first["session"])
     reopened = service_for(tmp_path, initial_credits=0, seed_demo_account=False)
     assert reopened.session_user(first["session"]) is None
@@ -424,13 +433,26 @@ def test_password_only_workspace_grant_persistence_and_tenant_isolation(tmp_path
         reopened.session_user(reopened.authenticate("owner@example.com", PASSWORD)["session"])["id"]
         == owner
     )
-    assert reopened.export(user_id=owner, job_id=job["id"], output_format="json") == expected
+    assert (
+        reopened.export(
+            user_id=owner,
+            job_id=job["id"],
+            output_format="json",
+            expected_revision=reopened.get_job(user_id=owner, job_id=job["id"])["review_revision"],
+        )
+        == expected
+    )
     assert reopened.account(owner)["email_verified"] is False
     assert reopened.list_jobs(other) == []
     for operation in (
         lambda: reopened.get_job(user_id=other, job_id=job["id"]),
         lambda: reopened.job_source(user_id=other, job_id=job["id"]),
-        lambda: reopened.export(user_id=other, job_id=job["id"], output_format="json"),
+        lambda: reopened.export(
+            user_id=other,
+            job_id=job["id"],
+            output_format="json",
+            expected_revision=reopened.get_job(user_id=owner, job_id=job["id"])["review_revision"],
+        ),
     ):
         with pytest.raises(ProductError) as caught:
             operation()
@@ -643,15 +665,29 @@ def test_verified_account_grant_is_idempotent_and_work_survives_reset(tmp_path, 
     upload = service.prepare_demo_upload(user_id)
     job = service.create_job(user_id=user_id, upload_id=upload["id"], page_index=0, crop=None)
     assert service.process_one()
-    service.approve(user_id=user_id, job_id=job["id"])
-    expected, _ = service.export(user_id=user_id, job_id=job["id"], output_format="json")
+    service.approve(
+        user_id=user_id,
+        job_id=job["id"],
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
+    expected, _ = service.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="json",
+        expected_revision=service.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     verify_existing_email(service, deliveries)
     service.request_account_email("owner@example.com", purpose="reset")
     service.complete_account_email(deliveries[-1][-1], purpose="reset", password=NEW_PASSWORD)
     reopened = service_for(tmp_path)
     account = reopened.authenticate("owner@example.com", NEW_PASSWORD)
     assert reopened.session_user(account["session"])["id"] == user_id
-    actual, _ = reopened.export(user_id=user_id, job_id=job["id"], output_format="json")
+    actual, _ = reopened.export(
+        user_id=user_id,
+        job_id=job["id"],
+        output_format="json",
+        expected_revision=reopened.get_job(user_id=user_id, job_id=job["id"])["review_revision"],
+    )
     assert actual == expected
 
 

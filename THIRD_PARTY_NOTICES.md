@@ -10,6 +10,14 @@ Phosphor regular SVG icons are bundled under the MIT license. Source: https://gi
 
 The unmodified Google G at `unrender/product/static/icons/google-g.png` comes from https://developers.google.com/static/identity/images/g-logo.png. It identifies the Google sign-in action and remains subject to Google's branding guidelines at https://developers.google.com/identity/branding-guidelines; the repository license does not grant rights to Google's trademarks.
 
+## Historical chart audit images
+
+The eight unchanged Our World in Data visualizations in
+`release/real-v0-audit/images/` are reproduced under CC BY 4.0, not Apache-2.0.
+Their embedded attributions remain intact. The [audit attribution](release/real-v0-audit/README.md#attribution)
+links the license and source pages; `audit.json` records per-image hashes and
+underlying provider credits. No endorsement of Unrender by these providers is implied.
+
 ## Referenced model artifacts
 
 The research pipeline references Qwen3-VL model artifacts distributed through Qwen/Unsloth. Their cited artifact pages identify Apache-2.0, but model and training-data obligations must be reviewed before redistributing fine-tuned weights. No model weights are bundled in the Python package or container.

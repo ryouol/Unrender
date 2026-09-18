@@ -25,6 +25,7 @@ import random
 import statistics
 from pathlib import Path
 
+from unrender.eval.dataset import require_reviewed_predictions
 from unrender.eval.ledger import load_predictions, require_terminal_attempts
 from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.score import score_prediction, validate_rows
@@ -58,6 +59,8 @@ def compare(a_rows, b_rows, ids, tol=0.05, iters=10000, seed=0, decode_a="table"
         raise ValueError("bootstrap iterations must be positive")
     a_by = {str(row["id"]): row for row in validate_rows(a_rows, ids)}
     b_by = {str(row["id"]): row for row in validate_rows(b_rows, ids)}
+    require_reviewed_predictions(list(a_by.values()))
+    require_reviewed_predictions(list(b_by.values()))
     counts_a, counts_b = [], []
     invalid_a = invalid_b = 0
     for rid in ids:

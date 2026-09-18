@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
+from unrender.eval.dataset import require_reviewed_predictions
 from unrender.eval.ledger import (
     LEDGER_NAME,
     load_predictions,
@@ -67,6 +68,7 @@ def build(
     reference = None
     for provider in providers:
         selected = validate_rows(provider["rows"], ids)
+        require_reviewed_predictions(selected)
         ground_truth = {
             str(r["id"]): (json.loads(r["gt"]), (r.get("meta") or {}).get("labels_shown"))
             for r in selected

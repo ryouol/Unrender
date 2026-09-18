@@ -1,46 +1,21 @@
-"""Build a REAL-chart eval set (harness row format) from hand-labeled charts.
+"""Build a reviewed real-chart evaluation set from images and source-backed labels.
 
-The synthetic eval proves the pipeline works; THIS set is what decides whether any
-of it transfers to charts the model never trained on — the question MODEL_STATUS_
-REVIEW.md and the audit both flag as the unmet gate. You supply, per chart, the
-image plus the EXACT underlying values. Those values are the one thing only a
-human with the real data can provide: read them off a source that publishes the
-numbers (FRED/OWID/a table), never machine-estimate them off the pixels, or the
-"benchmark" would just be measuring a model against another model's guess.
+Each label must include the real-ground-truth-review-v1 receipt documented in
+data/real_v0/README.md. It binds actual visible metadata, values, units and
+recoverability checks to the image, annotation and retained source data. Missing,
+incomplete or stale reviews fail before either output JSONL is written.
 
-    data/real_v0/
-      images/   us_unemployment.png        ...   # the real chart images you drop in
-      labels/   us_unemployment.json       ...   # the TRUE values, one file per image
+Emits test.jsonl and test.modal.jsonl with identical targets and review metadata,
+using local and /vol image paths respectively. Historical real_v0 annotations
+are rejected; use a new dataset version for corrected, independently reviewed data.
 
-Each label file (copy labels/_TEMPLATE.json):
-
-    {
-      "image": "us_unemployment.png",            # filename in images/
-      "chart_type": "line",                      # one of CHART_TYPES
-      "title": "US Unemployment Rate",           # or null
-      "x_axis": {"label": "Year", "unit": null},
-      "y_axis": {"label": "Rate", "unit": "%"},
-      "labels_shown": false,                      # are exact values PRINTED on the chart?
-      "source": "FRED series UNRATE",            # provenance of the true numbers
-      "series": [{"name": "UNRATE",
-                  "points": [["2019", 3.7], ["2020", 8.1]]}]   # [x, y] pairs
-    }
-
-`labels_shown` drives the labeled-vs-label-free slice — the slice the whole thesis
-turns on — so set it honestly per chart.
-
-Emits two files with IDENTICAL rows, differing only in image path:
-  * test.jsonl        — repo-relative paths, for the LOCAL frontier run (Gemini).
-  * test.modal.jsonl  — /vol paths, for the Modal base/LoRA run after upload.
-Both use split_dataset._row, so the rows are byte-for-byte the shape training and
-the synthetic eval use — run_baselines.py / score.py work unchanged.
-
-    python -m unrender.eval.build_real_set --dir data/real_v0
+    python -m unrender.eval.build_real_set --dir data/real_dev_v1
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -49,6 +24,7 @@ from pathlib import Path
 # GT JSON + meta). Importing it (rather than re-emitting) is what guarantees a
 # real row is indistinguishable from a synthetic one to the loader and scorer.
 from unrender.data_gen.split_dataset import _row
+from unrender.eval.dataset import validate_ground_truth_review
 from unrender.schema.chart_schema import (
     CHART_TYPES,
     Axis,
@@ -84,7 +60,7 @@ def label_to_chartdata(label: dict, src: str) -> ChartData:
             try:
                 y = float(y)
             except (TypeError, ValueError):
-                raise ValueError(f"{src}: series[{i}] y value {y!r} is not a number")
+                raise ValueError(f"{src}: series[{i}] y value {y!r} is not a number") from None
             pts.append(Point(x=x, y=y))
         if not pts:
             raise ValueError(f"{src}: series[{i}] has no points")
@@ -134,7 +110,18 @@ def build(dirpath: str) -> dict:
             "chart_type": gt.chart_type,
             "augmented": False,  # real charts aren't synthetically degraded
             "source": label.get("source"),
+            "ground_truth_review": label.get("ground_truth_review"),
         }
+        validate_ground_truth_review(label_json, meta, img_path)
+        source_file = label.get("source_data_file")
+        if not isinstance(source_file, str) or not source_file.strip():
+            raise ValueError(f"{lf}: source_data_file must identify the saved source data")
+        source_bytes = (root / source_file).read_bytes()
+        if (
+            hashlib.sha256(source_bytes).hexdigest()
+            != meta["ground_truth_review"]["source_data_sha256"]
+        ):
+            raise ValueError(f"{lf}: source data changed since review")
         rel = f"{root.as_posix()}/images/{img_name}"  # data/real_v0/images/x.png
         vol = f"{VOL_ROOT}/{rel}"  # /vol/data/real_v0/images/x.png (matches the upload target)
         rows_local.append(_row(rel, label_json, meta))
@@ -146,10 +133,17 @@ def build(dirpath: str) -> dict:
 
     by_type = Counter(r["meta"]["chart_type"] for r in rows_local)
     n_free = sum(1 for r in rows_local if r["meta"]["labels_shown"] is False)
-    summary = {"n": len(rows_local), "label_free": n_free, "labeled": len(rows_local) - n_free,
-               "by_type": dict(by_type)}
+    summary = {
+        "n": len(rows_local),
+        "label_free": n_free,
+        "labeled": len(rows_local) - n_free,
+        "by_type": dict(by_type),
+    }
     print(f"built {summary['n']} real charts -> {root}/test.jsonl  (+ test.modal.jsonl for Modal)")
-    print(f"  labeled={summary['labeled']}  label_free={summary['label_free']}  by_type={summary['by_type']}")
+    print(
+        f"  labeled={summary['labeled']}  label_free={summary['label_free']} "
+        f"by_type={summary['by_type']}"
+    )
     return summary
 
 

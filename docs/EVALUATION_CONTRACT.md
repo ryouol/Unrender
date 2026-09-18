@@ -166,3 +166,29 @@ Strict diagnostic scores remain inspectable, but semantic quality claims are
 withheld until a visual metadata audit. Do not interpret a metadata mismatch as
 proof of inability to read numbers, and do not assert contamination from a perfect
 small-set numeric score alone.
+
+
+## External-chart annotation review
+
+The [real_v0 image audit](../release/real-v0-audit/README.md) confirmed defective
+metadata in all eight historical charts. Its quality comparisons are rejected;
+the original inputs and old rescore remain historical evidence, not valid claims.
+
+New rows with external `meta.source` or `ground_truth_review` require a verified
+`real-ground-truth-review-v1` receipt. The receipt binds the image, target,
+value-label visibility and source citation, records a source-data hash and the
+reviewer's checks/time/identity. The real-set builder checks source bytes; the
+loader rechecks target and available image bytes before evaluation. See the
+[annotation workflow](../data/real_v0/README.md). This is an attestation and drift
+check, not proof of independent or correct review. Final-holdout review and
+source/table disjointness remain separate requirements.
+
+Saved-output scores expose `ground_truth_review` coverage. Unverified external
+rows remain inspectable as diagnostics but cannot enter paired bootstrap or
+comparison reports. Rows without external provenance do not gain real-world
+validity merely by passing this gate. Existing synthetic scores are unchanged.
+
+For narrow-range/high-offset real time series, 5% relative error can reward a
+constant answer. The replacement benchmark must also predeclare axis-span error,
+simple constant/trend baselines and recoverable precision at actual model input
+resolution. This audit does not retroactively change the chart-table-v2 ruler.

@@ -154,6 +154,9 @@ def reproduce(bundle: Path = BUNDLE, root: Path = ROOT) -> dict:
             for name in (
                 "analysis/reproduce_common300.py",
                 "unrender/eval/metrics.py",
+                "unrender/eval/dataset.py",
+                "unrender/eval/ledger.py",
+                "unrender/io_utils.py",
                 "unrender/eval/score.py",
                 "unrender/eval/paired_bootstrap.py",
                 "unrender/schema/chart_schema.py",

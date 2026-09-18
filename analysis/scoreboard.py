@@ -87,10 +87,11 @@ def build(model_root: Path | None = None, frontier_root: Path | None = None):
         "numeric_vs_fair": compare(numeric, fair, COMMON300, tol=TOL),
         "frontier": frontier,
         "real_v0_review": {
-            "status": "withheld_pending_visual_metadata_audit",
+            "status": "rejected_visual_metadata",
             "reason": (
-                "The fetcher constructs titles, axes and series names; these need "
-                "image-level verification before semantic quality claims."
+                "All eight recovered charts have mismatched titles and series names, "
+                "and fabricated axis labels. See release/real-v0-audit/audit.json. "
+                "Historical image-byte binding and original source CSVs remain unavailable."
             ),
         },
         "real_v0": {
@@ -150,9 +151,9 @@ def render(result: dict) -> str:
         lines.append(f"| {name} | {entry['n_recorded']} / {entry['n_expected']} | {comparison} |")
     lines += [
         "",
-        "Real_v0 semantic quality claims are WITHHELD pending a visual metadata audit.",
-        "Its fetcher synthesizes titles, axis labels and series names; source CSV values alone",
-        "do not verify those fields against the image. Strict diagnostic scores remain in JSON.",
+        "Real_v0 semantic quality claims are REJECTED by the visual metadata audit.",
+        "All eight recovered images disagree with the stored titles, series and axis labels.",
+        "See release/real-v0-audit/README.md. Strict diagnostic scores remain in JSON.",
         "The set contains only eight public line charts and evaluates the earlier LoRA.",
         "It cannot establish generalization or frontier parity. Contamination is a hypothesis,",
         "not a demonstrated cause. Raw/repaired validity, all outcomes, family slices,",

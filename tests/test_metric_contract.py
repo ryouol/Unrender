@@ -289,7 +289,7 @@ def test_scoreboard_comparison_direction_matches_named_ladder(tmp_path, monkeypa
     for frontier in result["frontier"].values():
         assert frontier["missing_ids"] == ["b"]
         assert "paired_fair_minus_frontier" not in frontier
-    assert result["real_v0_review"]["status"] == "withheld_pending_visual_metadata_audit"
+    assert result["real_v0_review"]["status"] == "rejected_visual_metadata"
 
 
 def test_runner_rejects_changed_truth_with_same_ids(tmp_path):

@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
+from unrender.eval.dataset import ground_truth_review_coverage
 from unrender.eval.ledger import attempt_coverage, load_predictions, prediction_metadata
 from unrender.eval.metrics import (
     METRIC_VERSION,
@@ -184,6 +185,7 @@ def score_rows(
             for key in ("raw_json_valid", "raw_schema_valid", "raw_semantic_valid")
         },
         "attempt_coverage": attempt_coverage(rows),
+        "ground_truth_review": ground_truth_review_coverage(rows),
         "generation_finish_reasons": dict(
             sorted(
                 Counter(
@@ -233,6 +235,8 @@ def score(
         f"{report['provider']}:{report['model']}" if report["provider"] else pred_path.parent.name
     )
     head = tracks[f"{tols[0]}"]
+    if not head["ground_truth_review"]["review_gate_passed"]:
+        print("DIAGNOSTIC ONLY: unverified real-chart ground truth; quality comparisons withheld.")
     infra, inval = head["n_infra_error"], head["n_model_invalid"]
     n = head["metrics"]["n"]
     if infra:

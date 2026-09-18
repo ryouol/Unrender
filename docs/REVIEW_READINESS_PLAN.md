@@ -66,8 +66,12 @@ verified provider or merge the older branch's product implementation over main.
 - [ ] Dataset: development pool plus at least 300 independent final charts;
   source/table-disjoint groups, multiple renderers, representative real charts,
   all supported families, density/resolution/scale/date slices and unsupported
-  cases. Double-check truth/recoverability. Audit the old real_v0 metadata against
-  images. Common300 is only a historical regression set.
+  cases. Double-check truth/recoverability and include axis-span error plus simple
+  constant/trend baselines. Common300 is only a historical regression set.
+- [x] Historical real_v0 visual audit: all eight recovered images have defective
+  series/title/axis annotations; comparison rejected. New external-chart rows
+  require a review receipt bound to image, annotation and source data; old outputs
+  remain diagnostic. [Evidence and limits](../release/real-v0-audit/README.md).
 - [ ] Current-provider evaluation: compare full image input with deployed 512-token
   vision budget on identical charts; freeze processor/prompt/model/precision;
   evaluate quality separately from runtime changes.

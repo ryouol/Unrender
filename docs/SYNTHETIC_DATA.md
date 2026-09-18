@@ -89,6 +89,58 @@ local file synchronization is not a claim of distributed ownership or durable
 intermediate cloud checkpoints. Research training recipes and provider release
 pins still require their separate validation before any GPU run or deployment.
 
+## Review sources before training
+
+Generation and processor-audit completion do not approve a chart. After creating
+the full/capped input audit, prepare a packet alongside the immutable bundle:
+
+```sh
+python -m unrender.data_gen.review --dataset data/synthetic_visible_dev_a --audit /path/to/fresh/audit --processor /path/to/local/processor
+```
+
+Open `review/index.html` in a browser. Each card links the generated image and
+both actual processor rasters at original size, with a readable target table and
+full metadata JSON. Read `review/protocol.md` and record decisions in
+`review/review.json`. The page is a static packet, not an approval editor. All
+rows start `pending`; no approval or exclusion is inferred from layout or font
+estimates. The directory is created exclusively and cannot be regenerated over
+an existing packet. A partially written packet lacks its completion marker and
+fails verification.
+
+The source protocol uses the current cell tolerance, absolute error at most
+`max(0.05 * abs(target), 1e-6)`, rather than demanding recovery of unprinted
+trailing digits. An eligible row needs an identified reviewer, timezone-aware
+time, notes and all seven checks: metadata, source values, scale/units, native
+readability, full-input readability, capped-input readability and supported
+numeric precision. Label-free reading intervals must fit the tolerance. Pending,
+stress and unreadable decisions retain their IDs and images.
+
+Actual training requires every row in the requested train/validation splits to
+be eligible, before oversampling or validation-size sampling. It fails the entire
+request on a bad row; it never silently trains on a smaller subset. Packet hashes
+bind the generation, splits, protocol, decisions, processor audit/configuration
+and raster bytes. The batch transform also checks the exact image bytes it is
+about to decode. Move the complete `review/` directory with its source bundle.
+The low-level diagnostic loaders still read pending datasets; this is necessary
+to inspect failures and does not grant training eligibility.
+
+The normal Modal `train` and `smoke` entrypoints require explicit `visible_*`
+dataset tags and run the CPU source gate before dispatching a GPU worker. The
+worker rechecks the expected review receipts, and local `sft_lora.train` checks
+sources before CUDA imports. Historical tags, duplicate/escaped names and the
+unverified geometry conversion are rejected. Calling a decorated GPU worker
+directly can allocate a container before its body runs; use the normal entrypoint.
+
+This gate currently covers generated bundles. Reviewed external training inputs
+need their own bound integration; arbitrary/manual chat files are rejected by
+the training entrypoint. Hashes demonstrate consistency, not the identity,
+independence or correctness of the reviewer. The audited CPU processor is also
+not proof of the actual Unsloth collator's transformations. Runtime/base revision
+pins, exact collator token accounting, resume identity, source/table overlap
+across bundles and generated task-quality checkpoint selection remain separate
+requirements. The former preflight's historical tokenizer heuristic and fixed
+GPU cost estimates were removed because they did not establish those guarantees.
+
 The historical geometry conversion path remains unsuitable for a new experiment:
 it regenerates specs from seeds and can skip mismatches. Its redesign and
 augmentation-coordinate validation are separate work; do not use it to convert

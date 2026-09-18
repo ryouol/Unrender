@@ -17,7 +17,10 @@ Dataset prerequisite: create a NEW visible-contract dataset, then review its
 native and model-input recoverability before training. See docs/SYNTHETIC_DATA.md.
 Historical synthetic_v0/v1/v2 cannot be regenerated with current code. Relative
 image paths now belong to the split file directory, never the working directory.
-The loader verifies current synthetic generation/split evidence before use.
+The training entrypoint requires bound source-review receipts before CUDA imports.
+Low-level loaders remain available for diagnostics; the batch transform rechecks
+image bytes before decoding. This does not verify the actual collator or prove
+reviewer independence.
 
 On Modal, all of the above is wrapped by modal_train.py (gen/smoke/train/evaluate).
 
@@ -29,6 +32,7 @@ below follows the established vision-SFT notebook.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import random
@@ -91,6 +95,7 @@ def load_records(train_paths: List[str], data_root: str, labelfree_weight: float
                 "image": image,
                 "user": r["messages"][0]["content"],
                 "assistant": r["messages"][1]["content"],
+                "image_sha256": ((r.get("meta") or {}).get("generation") or {}).get("image_sha256"),
             }
             meta = r.get("meta") or {}
             mult = 1.0
@@ -123,11 +128,19 @@ def build_dataset(records: List[dict]):
     ds = Dataset.from_list(records)
 
     def to_messages(batch):
+        from unrender.data_gen.provenance import digest
+
         out = []
-        for img_path, user, assistant in zip(batch["image"], batch["user"], batch["assistant"]):
+        for img_path, user, assistant, expected in zip(
+            batch["image"], batch["user"], batch["assistant"], batch["image_sha256"], strict=True
+        ):
+            raw = Path(img_path).read_bytes()
+            if not expected or digest(raw) != expected:
+                raise ValueError("training image changed after source review")
+            image = Image.open(io.BytesIO(raw)).convert("RGB")
             out.append([
                 {"role": "user", "content": [
-                    {"type": "image", "image": Image.open(img_path).convert("RGB")},
+                    {"type": "image", "image": image},
                     {"type": "text", "text": user},
                 ]},
                 {"role": "assistant", "content": [{"type": "text", "text": assistant}]},
@@ -223,6 +236,10 @@ def train(
     type_weights: str = "",
     seed: int = 3407,
 ) -> None:
+    from unrender.data_gen.provenance import digest
+    from unrender.data_gen.review import require_training_sources
+
+    source_reviews = require_training_sources(train_paths, val_paths or [], data_root)
     # Heavy, CUDA-only imports stay inside the function (see module docstring).
     from unsloth import FastVisionModel, is_bf16_supported
     from unsloth.trainer import UnslothVisionDataCollator
@@ -245,6 +262,10 @@ def train(
             val_records = val_records[:val_size]
         eval_dataset = build_dataset(val_records)
         print(f"Validation: {len(val_records)} records (best-checkpoint selection on eval_loss)")
+
+    for path, receipt in source_reviews.items():
+        if digest(Path(path).read_bytes()) != receipt["split_sha256"]:
+            raise ValueError("training split changed after source review")
 
     model, processor = FastVisionModel.from_pretrained(
         base,
@@ -378,6 +399,7 @@ def train(
         "lora_alpha": lora_alpha, "max_seq_length": max_seq_length,
         "val_size": val_size, "n_evals": n_evals, "seed": seed,
         "n_records": len(records),
+        "source_reviews": source_reviews,
     }, indent=2, sort_keys=True) + "\n")
 
     adapter_dir = out_dir / "adapter"
@@ -405,7 +427,7 @@ def main():
     p.add_argument("--save-total-limit", type=int, default=3, help="checkpoints to keep (best is always kept)")
     p.add_argument("--out", required=True, help="output dir (adapter/ + merged/ written here)")
     p.add_argument("--base", default=DEFAULT_BASE, help="base model id (e.g. Qwen/Qwen3-VL-8B-Instruct for launch)")
-    p.add_argument("--data-root", default=".", help="fallback root for resolving relative image paths")
+    p.add_argument("--data-root", default=".", help="base directory for relative train/val split paths")
     p.add_argument("--labelfree-weight", type=float, default=1.5, help="oversample factor for label-free charts")
     p.add_argument("--type-weights", default="",
                    help='per-chart-type oversampling, e.g. "multi_line:1.5,stacked_bar:1.5" (composes with the others)')

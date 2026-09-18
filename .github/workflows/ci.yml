@@ -39,6 +39,8 @@ jobs:
           ruff format --check unrender/eval/metrics.py unrender/eval/score.py unrender/eval/paired_bootstrap.py unrender/eval/report.py unrender/eval/run_baselines.py unrender/eval/ledger.py tests/test_eval_ledger.py analysis/scoreboard.py analysis/parser_audit.py analysis/reproduce_common300.py analysis/error_audit.py tests/test_error_audit.py tests/test_common300_evidence.py unrender/eval/dataset.py unrender/eval/build_real_set.py unrender/eval/fetch_real_set.py tests/test_real_set.py tests/test_ground_truth_review.py unrender/schema/validate.py tests/test_repair.py tests/test_metric_contract.py
       - name: Synthetic data provenance lint
         run: |
+          ruff check unrender/data_gen/review.py tests/test_source_review.py
+          ruff format --check unrender/data_gen/review.py tests/test_source_review.py
           ruff check unrender/data_gen/generate.py unrender/data_gen/provenance.py unrender/data_gen/split_dataset.py unrender/data_gen/layout.py analysis/audit_image_budget.py analysis/replay_augmentation.py tests/test_generation_contract.py tests/test_chart_layout.py tests/test_image_audit.py
           ruff format --check unrender/data_gen/generate.py unrender/data_gen/provenance.py unrender/data_gen/split_dataset.py unrender/data_gen/layout.py analysis/audit_image_budget.py analysis/replay_augmentation.py tests/test_generation_contract.py tests/test_chart_layout.py tests/test_image_audit.py
       - name: Product types

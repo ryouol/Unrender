@@ -86,6 +86,13 @@ verified provider or merge the older branch's product implementation over main.
   Preserve unsuitable examples in a declared stress/abstention slice; never
   silently filter failed examples from a quality denominator or train exact
   numeric targets whose precision the raster cannot support.
+- [x] Generated-source review boundary: pending packets bind every source/target,
+  generation/split identity, review protocol and both observed processor inputs.
+  Actual training rejects noneligible train/validation rows without filtering,
+  before sampling; normal Modal entrypoints run the CPU gate before GPU dispatch
+  and the worker verifies the same receipts. Images are checked again at batch
+  read. All 72 development rows remain pending; no independent approval is claimed.
+  [Workflow and limits](SYNTHETIC_DATA.md#review-sources-before-training).
 - [ ] Geometry data conversion: replace historical seed regeneration/skipped
   mismatches with complete artifact binding and augmentation-coordinate checks.
   Do not train on a silently reduced or mismatched geometry dataset.
@@ -115,7 +122,9 @@ verified provider or merge the older branch's product implementation over main.
   paths; keep paid-launch/legal/support gates separate from private code review.
 - [ ] Conditional training: first reproduce the baseline with immutable recipe,
   data, base/processor and environment hashes; validate resume identity; select
-  by generated task quality. Train reviewed current-contract synthetic/realistic mixtures or one diagnosed
+  by generated task quality. Validate the actual collator's image transformations
+  and token lengths; add reviewed external-source training integration and
+  cross-bundle source/table overlap checks. Train reviewed current-contract synthetic/realistic mixtures or one diagnosed
   error intervention only after evaluation identifies the need. Multiple seeds
   for a finalist; no automatic 8B/RL or repetition of unsuccessful geometry work.
 - [ ] Demo and handoff: sharp owned source, source-aligned review order, clear

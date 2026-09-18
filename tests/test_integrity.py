@@ -179,17 +179,6 @@ def test_split_membership_independent_of_manifest_order(tmp_path):
 
 # --- table-level leakage (data-table dedup across splits) -------------------
 
-def _table_sigs_by_id(path):
-    """id -> data_table_signature for a chat-format split file."""
-    from unrender.io_utils import read_jsonl
-    from unrender.schema.chart_schema import ChartData, data_table_signature
-    out = {}
-    for r in read_jsonl(path):
-        rid = Path(r["images"][0]).stem
-        out[rid] = data_table_signature(ChartData.model_validate_json(r["messages"][1]["content"]))
-    return out
-
-
 def test_data_table_signature_ignores_cosmetics_keeps_values():
     from unrender.schema.chart_schema import Axis, ChartData, Point, Series, data_table_signature
     base = ChartData(chart_type="bar", title="A", x_axis=Axis(label="X"),
@@ -203,24 +192,15 @@ def test_data_table_signature_ignores_cosmetics_keeps_values():
 
 
 def test_common300_no_data_table_leak_into_train():
-    """The base-vs-LoRA subset (common300) must share NO underlying data table with
-    the TRAIN split — id-level disjointness isn't enough if a train chart was
-    re-rendered into test (audit finding G). Reads the committed Modal split
-    artifacts; skips if they aren't present."""
-    root = Path(__file__).resolve().parent.parent
-    train_p = root / "outputs/modal/data_v1/train.jsonl"
-    test_p = root / "outputs/modal/data_v1/test.jsonl"
-    sub_p = root / "unrender/eval/subsets/common300.json"
-    if not (train_p.exists() and test_p.exists() and sub_p.exists()):
-        pytest.skip("committed Modal split artifacts not present")
-    common = set(json.loads(sub_p.read_text())["ids"])
-    test_sigs = _table_sigs_by_id(test_p)
-    common_sigs = {test_sigs[i] for i in common if i in test_sigs}
-    train_sigs = set(_table_sigs_by_id(train_p).values())
-    leaked = common_sigs & train_sigs
-    assert not leaked, (
-        f"{len(leaked)} common300 data tables also appear in TRAIN (memorization leak)"
-    )
+    """The committed raw evidence must pass in a clean clone, without a skip."""
+    from analysis.reproduce_common300 import audit_evidence, load_evidence
+
+    audit = audit_evidence(load_evidence())
+    assert audit["n"] == 300
+    for split in audit["training_overlap"].values():
+        assert split["rows"] == 3500
+        assert split["historical_table_signature"] == []
+        assert split["numerical_table_sha256"] == []
 
 
 # --- geometry-supervision plumbing ------------------------------------------

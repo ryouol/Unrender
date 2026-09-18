@@ -21,7 +21,12 @@ verified provider or merge the older branch's product implementation over main.
 - [ ] Evidence packaging: clean-clone reproduction with permitted raw artifacts,
   hashes, train-overlap verification and a complete scheduled/in-flight attempt
   ledger for future runs, including generation stop reasons and the actual product
-  validation outcome. The private saved model artifacts remain external.
+  validation outcome. Historical Common300 raw evidence is now committed; full
+  run/image/weight provenance and frontier/real-chart evidence remain open.
+- [x] Historical Common300 reproduction: all 900 raw predictions, original run
+  metadata and recovered v0/v1 training and v1 test tables are committed with
+  hashes. CPU rescore verifies coverage, truth and two table-overlap signatures.
+  See [offline evidence and limits](../release/common300-evidence/README.md).
 - [x] Local evaluation attempt ledger: complete scheduled denominator, durable
   pre-dispatch record, no automatic retry of uncertain calls, safe resume and
   source/input hashes. Actual SIGKILL and cross-process ownership checks pass.

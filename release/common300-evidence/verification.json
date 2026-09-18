@@ -1,0 +1,56 @@
+{
+  "scope": "historical Common300 CPU rescore and recovered split overlap audit",
+  "validation_date": "2026-09-18",
+  "clean_source_archive": {
+    "git_tree": "be351aa96452a4967a1799713e6f10282dd6dac1",
+    "module_paths_verified_inside_archive": true,
+    "private_modal_outputs_present": false,
+    "dependencies": "Existing environment installed from the repository locks; fresh dependency download not repeated."
+  },
+  "report_sha256": "37b3118346e664d9edc9470f9ec0cc401463fb81319b26935157528edba0a36d",
+  "manifest_sha256": "d1d6bc3f11b5da54c4b33e283cb6afdd89da8aa35d065560c65f994901bf87dc",
+  "source_hashes": {
+    "analysis/reproduce_common300.py": "7379750f4d3bb0645abc91be51719bcdbce165dbc5796166875c53ce26272526",
+    "unrender/eval/metrics.py": "61376d77ab137b7b2ae16071c8a2a05e2b1f9c3cdc4bbf5a0952cf80d216f241",
+    "unrender/eval/score.py": "032d64f6520780efdc7443a116dd5ed767a2ced94df07ac001266e923c5daf01",
+    "unrender/eval/paired_bootstrap.py": "34b25b3aec0f506873bc6a0c0909143047284d8b77a7823954a8579da4304d23",
+    "unrender/schema/chart_schema.py": "41091b6ec5abc79d2559688d4c23fa793d052e83566aacc0325ce2e14c3250c4",
+    "unrender/schema/validate.py": "bf4fd0a0b9c15eecd725f3a39e9a63146f8161c1adfc9e98f0b2fd5d655b2322"
+  },
+  "audit": {
+    "n": 300,
+    "truth_verified_arms": [
+      "base",
+      "fair",
+      "numeric"
+    ],
+    "training_overlap": {
+      "train_v0": {
+        "rows": 3500,
+        "id_overlap": 158,
+        "historical_table_signature": [],
+        "numerical_table_sha256": []
+      },
+      "train_v1": {
+        "rows": 3500,
+        "id_overlap": 0,
+        "historical_table_signature": [],
+        "numerical_table_sha256": []
+      }
+    }
+  },
+  "prior_receipt_match": {
+    "raw_artifact_sha256": "all three arms match release/evaluation-v2/summary.json",
+    "paired_gaps_intervals_invalid_rates": "exact equality for both comparisons"
+  },
+  "validation": {
+    "full_suite_passed": 463,
+    "skipped": 0,
+    "warnings": 4,
+    "focused_suite_passed": 25,
+    "lint_and_format": "passed"
+  },
+  "new_gpu_runs": 0,
+  "paid_api_calls": 0,
+  "deployment_performed": false
+}

@@ -1,0 +1,76 @@
+{
+  "format": "common300-evidence-v1",
+  "source_kind": "recovered_historical_modal_volume_files",
+  "artifacts": {
+    "train_v0": {
+      "file": "train_v0.jsonl.gz",
+      "source_path": "/vol/data/synthetic_v0/train.jsonl",
+      "sha256": "fc6c28f8c599391a7058013f504719cbb6f8a2d7eeae38e93e7c63c924bc901c",
+      "compressed_sha256": "e76995ddd68ddcecb9993605d6cc6af5275243cfd652ff23694310e4905aab74",
+      "bytes": 6326134,
+      "rows": 3500
+    },
+    "train_v1": {
+      "file": "train_v1.jsonl.gz",
+      "source_path": "/vol/data/synthetic_v1/train.jsonl",
+      "sha256": "66afdb5bca59c002c8f2640cacdefff521fb7a617ea5c4de616d01e3f0dc17d3",
+      "compressed_sha256": "72582254ce62a1d526ed99718db7779f51bac267d628b6bf6d284d6457fda310",
+      "bytes": 8110314,
+      "rows": 3500
+    },
+    "test_v1": {
+      "file": "test_v1.jsonl.gz",
+      "source_path": "/vol/data/synthetic_v1/test.jsonl",
+      "sha256": "c9a27451daf61e98e617c9a0288822f32aa7e8801540f26cca90fbb0e5f10e4d",
+      "compressed_sha256": "2c859474b205a06c477f9519569d60bef7bfdd0f46f25d079b97cdb5dc9cebaf",
+      "bytes": 2320298,
+      "rows": 1000
+    },
+    "base": {
+      "file": "base.jsonl.gz",
+      "source_path": "/vol/outputs/eval_v1__Qwen3-VL-4B-Instruct__common300/predictions.jsonl",
+      "sha256": "f68eab3219ad63d8a5ae8fc4fb96b2d5828acdcf331411a38967561248e395fc",
+      "compressed_sha256": "7f5b03acb35ad538009b6c8977a40f0bd8180a462e1219e2cc01c1705b23f2e3",
+      "bytes": 1937882,
+      "rows": 300
+    },
+    "fair": {
+      "file": "fair.jsonl.gz",
+      "source_path": "/vol/outputs/eval_v1__qwen3vl4b-table-fair__common300/predictions.jsonl",
+      "sha256": "c3cc0b1cff5c9b757b6ee533bf4f6d4a5ee250cbe615a96e10674e18cb2233a4",
+      "compressed_sha256": "70965ead8b723042b490eff89d26b16435bba4c6ce5b6e37639b14b2fd239572",
+      "bytes": 1153035,
+      "rows": 300
+    },
+    "numeric": {
+      "file": "numeric.jsonl.gz",
+      "source_path": "/vol/outputs/eval_v1__qwen3vl4b-table-numloss__common300/predictions.jsonl",
+      "sha256": "ba5add1a5607e2f35150d36f4012341103bb7df1fa3ebe12d9b085b692b5262f",
+      "compressed_sha256": "61a5aace80931de5a9b2dd85f625743884fff30ee7a075fe88d6c8bb169a59d7",
+      "bytes": 1178089,
+      "rows": 300
+    }
+  },
+  "models": {
+    "base": {
+      "file": "base.meta.json",
+      "sha256": "5c3a3c4d7c1b85b76c563247bbf7d3bc3310f9abdae31d41c84a7c29a5101431"
+    },
+    "fair": {
+      "file": "fair.meta.json",
+      "sha256": "4f6de594ad6a53892566532e9b1351d78d7339850718ac89869cbe3e036264d2"
+    },
+    "numeric": {
+      "file": "numeric.meta.json",
+      "sha256": "54deee46be2736cac413aa52757e3680e56f4cd4ba198ccf314ca38f6776d6e3"
+    }
+  },
+  "subset": {
+    "file": "unrender/eval/subsets/common300.json",
+    "sha256": "21372a7c551c2676b8acb18819629d50d3be2ec744b9250562343ed2e072a3a9"
+  },
+  "modal_split": {
+    "file": "unrender/eval/subsets/modal_v1_split.json",
+    "sha256": "55d1be633f6e91a53c726e16782caea984001bee9781fffce89b2e0bd6f43858"
+  }
+}

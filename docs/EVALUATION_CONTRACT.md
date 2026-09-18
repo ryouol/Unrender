@@ -141,8 +141,11 @@ Missing evidence is an error and cannot overwrite an existing report with blank
 results. Reports carry the metric version; the scoreboard records raw artifact
 SHA-256 hashes. It writes a new output directory and never overwrites historical
 `RESULTS.md`. Incomplete frontier runs show expected/recorded coverage and missing
-IDs, without a paired quality claim. Packaging the permitted private saved model
-artifacts for clean-clone reproduction remains a separate readiness requirement.
+IDs, without a paired quality claim. The [Common300 evidence bundle](../release/common300-evidence/README.md) now
+includes the raw three-arm responses and recovered training/test tables for CPU
+rescore, hash/coverage/truth verification and table-overlap checks from a clean
+checkout. This does not reproduce model weights or prove historical dispatch
+completeness; image, frontier and real-chart provenance remain open.
 
 The [initial saved-data rescore](../release/evaluation-v2/RESULTS.md) and
 [summary with artifact/source hashes](../release/evaluation-v2/summary.json)

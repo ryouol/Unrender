@@ -1,0 +1,167 @@
+{
+  "contract": "training-resume-fault-audit-v1",
+  "device": "cpu",
+  "downloaded_weights": false,
+  "python": "3.11.14",
+  "system": "Darwin",
+  "machine": "arm64",
+  "packages": {
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "PyYAML": "6.0.3",
+    "Pygments": "2.21.0",
+    "accelerate": "1.15.0",
+    "annotated-doc": "0.0.5",
+    "annotated-types": "0.8.0",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "click": "8.5.0",
+    "contourpy": "1.3.3",
+    "cycler": "0.12.1",
+    "filelock": "4.0.0",
+    "fonttools": "4.65.0",
+    "fsspec": "2026.7.0",
+    "h11": "0.16.0",
+    "hf-xet": "1.6.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "huggingface_hub": "1.32.0",
+    "idna": "3.20",
+    "iniconfig": "2.3.0",
+    "kiwisolver": "1.5.1",
+    "markdown-it-py": "4.2.0",
+    "matplotlib": "3.11.1",
+    "mdurl": "0.1.2",
+    "mpmath": "1.3.0",
+    "networkx": "3.6.1",
+    "numpy": "2.4.6",
+    "packaging": "26.3",
+    "peft": "0.21.0",
+    "pillow": "12.3.0",
+    "pluggy": "1.6.0",
+    "psutil": "7.2.2",
+    "pydantic": "2.13.5",
+    "pydantic_core": "2.46.5",
+    "pyparsing": "3.3.2",
+    "pytest": "9.1.1",
+    "python-dateutil": "2.9.0.post0",
+    "regex": "2026.9.10",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "setuptools": "84.0.0",
+    "shellingham": "1.5.4",
+    "six": "1.17.0",
+    "sympy": "1.14.0",
+    "tokenizers": "0.23.2",
+    "torch": "2.14.0",
+    "torchvision": "0.29.0",
+    "tqdm": "4.70.1",
+    "transformers": "5.17.0",
+    "typer": "0.27.2",
+    "typing-inspection": "0.4.4",
+    "typing_extensions": "4.16.0",
+    "unrender": "0.2.0"
+  },
+  "auditor_sha256": "3ac406f9748c255e6072cabb75f0f68506842ddc3a6f688eb03139619824d1f6",
+  "processes": {
+    "continuous": {
+      "returncode": 0,
+      "log_sha256": "d82b7433a9c3911993d81c389bfbaae1ca9a64550ee8560fe31826803f9bfede"
+    },
+    "killed_complete": {
+      "returncode": -9,
+      "log_sha256": "c78ec21093aaf1f5bc37f9b9ff9f25a46691f78c42570c98c9b103f99aa7d23b"
+    },
+    "resumed": {
+      "returncode": 0,
+      "log_sha256": "901776fcf3f1fb98e395e80dd3b2481fbcf21dff428cd893996d63afedf6ef03"
+    },
+    "changed_lr": {
+      "returncode": 0,
+      "log_sha256": "08f5c0d374f59e84cd056711c802fa6e414150b6d38ecf4fdd51ee6da54f3eea"
+    },
+    "killed_partial": {
+      "returncode": -9,
+      "log_sha256": "c5ca2ced3909aeeea16079daf4185075df5664646d541cc612a57b52276bd85e"
+    },
+    "partial_resume": {
+      "returncode": 1,
+      "log_sha256": "415a9d2353c962bc1806e2000be14ffceb954af9146b86b35e1dd65008526572"
+    },
+    "checked_continuous": {
+      "returncode": 0,
+      "log_sha256": "7a126f898bf62c8318ce003f5cb7d2234ace6f6e16b6bd64acfb9fbbf08c1ab4"
+    },
+    "checked_killed_complete": {
+      "returncode": -9,
+      "log_sha256": "b6327ab519af5a3cc58012b93913bab62312d7ddba4b01ef4f1580bc54a77d13"
+    },
+    "checked_resumed": {
+      "returncode": 0,
+      "log_sha256": "aa68f692973c1a6039c678a7a49ae9b9ba158626790fbd52f46990d0d1fa0018"
+    },
+    "checked_changed_lr": {
+      "returncode": 1,
+      "log_sha256": "460f6c82cde5d5f0aa0acc561964d0ed766edf31f300e45f22b118a26b3607e5"
+    },
+    "checked_killed_partial": {
+      "returncode": -9,
+      "log_sha256": "cac4393077120c2d1521a3550128b1f305072afe0ebb493667a1a8827c4439ba"
+    },
+    "checked_partial_resume": {
+      "returncode": 1,
+      "log_sha256": "2871d2ef4426c7edd9d3831c7777dba4859236f9db1fedfc44573065227797a4"
+    }
+  },
+  "limits": "Random tiny GPT-2 / stock Trainer; not Qwen, Unsloth, CUDA or Modal parity.",
+  "complete_resume_equal": {
+    "model_sha256": true,
+    "optimizer_sha256": true,
+    "scheduler_sha256": true,
+    "rng_sha256": true,
+    "losses": true,
+    "global_step": true
+  },
+  "verified_guard": {
+    "complete_resume_equal": {
+      "model_sha256": true,
+      "optimizer_sha256": true,
+      "scheduler_sha256": true,
+      "rng_sha256": true,
+      "losses": true,
+      "global_step": true
+    },
+    "changed_lr_rejected": true,
+    "partial_resume_rejected": true,
+    "receipt_before_complete_kill": true,
+    "retained_checkpoint_has_receipt": true,
+    "older_checkpoint_rotated": true,
+    "verifier_sha256": "a4badbafaae3d4c38fea3918100b17d4ed6b3e5915b46192dd4b14039e2de0bf"
+  },
+  "changed_lr_accepted": true,
+  "partial_resume_accepted": false,
+  "checkpoint_files": {
+    "complete": [
+      "config.json",
+      "generation_config.json",
+      "model.safetensors",
+      "optimizer.pt",
+      "rng_state.pth",
+      "scheduler.pt",
+      "trainer_state.json",
+      "training_args.bin"
+    ],
+    "partial": [
+      "config.json",
+      "generation_config.json",
+      "model.safetensors",
+      "optimizer.pt",
+      "scheduler.pt",
+      "training_args.bin"
+    ]
+  },
+  "project_selector": {
+    "source_sha256": "a4badbafaae3d4c38fea3918100b17d4ed6b3e5915b46192dd4b14039e2de0bf",
+    "rejects_incomplete_newest": true
+  }
+}

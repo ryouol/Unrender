@@ -1,5 +1,7 @@
 # Documentation
 
+[Cleanup review findings and validation](CLEANUP_REVIEW.md) record the latest repository review.
+
 Start with the [engineering review guide](ENGINEERING_REVIEW.md) for a code review or the [local setup](../README.md#run-locally) for a demo.
 
 | Task | Read |

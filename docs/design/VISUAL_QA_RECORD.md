@@ -18,11 +18,11 @@ The private library uses three independently checked, sharp local fixtures. Thei
 
 ## Final evidence
 
-- [Landing comparison](docs/screenshots/refined/landing-comparison-final.png), [typography detail](docs/screenshots/refined/landing-detail-final.png).
-- [Library comparison](docs/screenshots/refined/library-comparison-final.png), [heading and filters detail](docs/screenshots/refined/library-detail-final.png).
-- [Review comparison](docs/screenshots/refined/review-comparison-final.png), [editable table detail](docs/screenshots/refined/review-detail-final.png).
-- [Mobile landing](docs/screenshots/refined/landing-mobile.png), [mobile library](docs/screenshots/refined/library-mobile-viewport.png), [mobile review](docs/screenshots/refined/review-mobile-viewport.png), [mobile signup](docs/screenshots/refined/signup-mobile.png).
-- [976-pixel review](docs/screenshots/refined/review-tablet-final.png), [dark review](docs/screenshots/refined/review-dark-final.png).
+- [Landing comparison](../screenshots/refined/landing-comparison-final.png), [typography detail](../screenshots/refined/landing-detail-final.png).
+- [Library comparison](../screenshots/refined/library-comparison-final.png), [heading and filters detail](../screenshots/refined/library-detail-final.png).
+- [Review comparison](../screenshots/refined/review-comparison-final.png), [editable table detail](../screenshots/refined/review-detail-final.png).
+- [Mobile landing](../screenshots/refined/landing-mobile.png), [mobile library](../screenshots/refined/library-mobile-viewport.png), [mobile review](../screenshots/refined/review-mobile-viewport.png), [mobile signup](../screenshots/refined/signup-mobile.png).
+- [976-pixel review](../screenshots/refined/review-tablet-final.png), [dark review](../screenshots/refined/review-dark-final.png).
 
 Mobile viewport captures are 390 × 844; tablet is 976 × 900. Full-page mobile stitching produced duplicated/blank areas in the browser capture, so viewport captures and actual DOM geometry were used instead. At 976 pixels, source and data top coordinates both measured 305.48 pixels, with widths 504.59 and 396.86; document overflow was false. Mobile intentionally stacks the source above the editor.
 

@@ -13,7 +13,7 @@ The root README embeds these actual local application captures from the Septembe
 
 The chart library and review captures use independently checked **illustrative local fixtures**, not live inference predictions or customer data. The four quarterly values do not measure model accuracy. The landing artwork is a concept illustration within the real page. Images are included as captured, not recreated as UI mockups. Account initials are from a synthetic local account; no credentials or personal customer uploads appear.
 
-[Visual QA record](../../design-qa.md) documents the source, dimensions, and comparison method. Additional mobile/tablet captures and reference-comparison boards remain in `refined/`; comparison boards are not used as product screenshots in the README.
+[Visual QA record](../design/VISUAL_QA_RECORD.md) documents the source, dimensions, and comparison method. Additional mobile/tablet captures and reference-comparison boards remain in `refined/`; comparison boards are not used as product screenshots in the README.
 
 ## Earlier v0.2 captures
 

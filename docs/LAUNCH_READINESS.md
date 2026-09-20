@@ -1,94 +1,26 @@
 # Launch readiness
 
-## September 18 deployment update
+**Controlled beta, as verified September 18, 2026.** Runtime `2bc72d1`, schema 15, is deployed on Render with the pinned Modal provider. Google and password signup grant three testing credits. Email delivery and billing are off.
 
-Runtime `2bc72d1` is live with schema 15 and the GPU-verified provider. The
-restore drill, exact preservation of existing customer data, hosted extraction,
-versioned correction/approval, all exports and browser checks passed. The
-operations monitor now runs every two minutes. [Deployment receipt and limits](RENDER_MODAL_LAUNCH.md).
-
-The current scan has zero critical and zero Python findings, with 44 high Debian
-findings without listed fixes. Independent label review, new Qwen training and
-recovery, prospective accuracy/serving benchmarks, broader capacity testing and
-the remaining external review gates are still open. See [the current plan](AUDIT_REMEDIATION.md).
-
-## Historical September 12 scorecard
-
-The dated scorecard below preserves earlier evidence. Use the September 18
-receipt and remediation plan for current runtime, test counts and open gates.
-
-September 12 handoff: the controlled beta runs on Render at
-`a14b961db721004a4ad77d4e2ab5cdac343d1ef9`, schema 14. Google and password
-signup are available with **three testing credits per new account**. Existing
-balances are preserved; returning sign-in and linking do not grant credits.
-Email delivery and customer billing remain off. The pinned model and hosting
-resources are unchanged. This release passed 320 local tests / 1 skipped and
-branch, PR, and main CI. A fresh hosted password signup received exactly three
-credits and retained them after sign-out/sign-in; its synthetic account was removed.
-See [PR #8](https://github.com/ryouol/Unrender/pull/8) and
-[RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md) for deployment evidence.
-
-The September 11 refined-platform receipt remains historical evidence for
-UI, deletion and account preservation checks:
-[refined-platform receipt](../release/launch-eval-results/refined-platform-v1.json).
-Its account counts and zero-credit configuration are not current inventory.
-The engineering review entry point is [ENGINEERING_REVIEW.md](ENGINEERING_REVIEW.md).
-
-Status labels: **PASS** is demonstrated in repository evidence, **BLOCKED** needs owner/external action, and **DEFERRED** is intentionally outside the controlled beta.
-
-| Gate | Status | Evidence or blocker |
+| Area | Verified evidence | Remaining work |
 |---|---|---|
-| Core saved-sample workflow | PASS | `tests/test_product.py` runs upload → durable job → review → correction → approval → CSV/JSON/XLSX and audit |
-| Failure, cancellation, refund/spend idempotency | PASS | Pre-dispatch cancellation/failure refunds exactly once; post-dispatch failure/cancellation consumes the credit; per-user/global failure circuits block later dispatch before spend. Adversarial tests cover all three states and preserved prior results. |
-| Worker lease/restart recovery | PASS | September 10 live Render restart exposed and then verified a periodic-recovery fix: post-startup expiry terminates the charged attempt without redispatch; approved work survives.  Owner/token/generation leases heartbeat durably; every progress/result/terminal/provider/audit/refund commit is fenced. Fresh leases survive peer startup, exactly one reaper recovers an expiry, stale owners mutate nothing, post-dispatch ambiguity is never redriven/refunded, and long provider calls keep a valid lease while draining. |
-| Tenant and browser request isolation | PASS | `/api/me` returns a generation-bound principal marker. BroadcastChannel/storage plus focus, visibility, and pageshow reconciliation synchronously reread a versioned durable barrier and wipe private tables/forms/images/blobs/key dialogs, polls, and in-flight work on logout or account change. Missing/malformed events cannot clear quarantine. Mixed v2→v1 logout uses channel-only wiping until server revocation/`401`, then retains the legacy storage barrier; no pre-revocation storage task can trigger the deployed-v1 dropped-detail bug. Legacy-v1, new-tab, BFCache, failed-revocation, and lost-response paths remain blocked until an explicit authenticated transition. Export bodies are fenced by principal, auth record, selection, and exact job version. Node and real two-tab Chromium tests discard delayed old-account responses. Each public demo session is isolated and removed on sign-out. |
-| Session revocation | PASS (controlled pilot) | Sign out invalidates every session for the account and increments its session generation; old cookies fail immediately across tabs. This deliberately bounded pilot control does not provide a per-device session inventory or security-event notification, which remain broad-launch product work. |
-| API credential lifecycle | PASS | Keys are shown once, stored as hashes, cursor-paginated without hashes, bounded active/retained, individually revocable, and revocable all at once; complete-inventory tests cover the prior 101st-key class of bug. |
-| API replay safety | PASS | Mutating v1 requests require a bounded `Idempotency-Key`; exact retries replay inside the configured window, changed/expired reuse returns `409`, compact tombstones prevent silent late double-charge during their documented retention horizon, and record count is tenant-bounded |
-| Result-history bounds | PASS | Initial, API, and reprocess attempts reserve a fenced worst-case result-history byte budget before credit or provider work, then settle actual bytes or release before dispatch. Capacity rejection is deterministic and uncharged; legacy or corrupted attempts missing that durable reservation fail closed before provider dispatch and refund eligible spend. Per-job version and per-tenant byte ceilings are transactional; lists are cursor-paginated metadata and selected bodies are fetched one at a time. |
-| Retained database/file state bounds | PASS | Sessions, keys, jobs/uploads, audit detail/rollups, credit ledger, idempotency, billing events, provider attempts, and tenant/global row budgets are centrally admitted. Mandatory terminal/audit/refund rows and one ledger append per refundable obligation are reserved. Global retained-byte, database-headroom, and minimum-free-space admission use cross-process durable staging/copy/result reservations; restart/pressure tests verify cleanup and concurrency. |
-| Source deletion and publication | PASS | Job deletion transactionally queues its source and, only for the last reference, the original upload, then removes both rows. The outbox survives storage failure and denies previews immediately. Staging/upload/job publication fsyncs bytes and every containing namespace before SQLite references. Opaque owner-token leases fence reservation renewal and exact final consumption; deletion holds the cross-process operational lock from its final reference check through file removal, so expiry cleanup cannot produce a row without its file. |
-| Private projects and account deletion | PASS | Local tests cover chart names, project assignment and both project-deletion modes. Hosted checks passed project creation/rename/list/deletion with charts kept, password-confirmed account deletion and subsequent session rejection; synthetic accounts were removed. Recent authentication, CSRF, explicit confirmation and durable file cleanup protect account removal. Backups retain their separate expiry policy. See CHART_LIBRARY.md and refined-platform-v1.json. |
-| Google authentication implementation | PASS (engineering) | Signed-token validation, PKCE/state/nonce, one-use browser completion, one-time configured Google signup credits and explicit account linking pass local tests. Dedicated credentials are configured in production; public configuration reports Google available. No real Google consent or identity exchange is established by these checks. See GOOGLE_SIGNIN.md. |
-| Complete live Google acceptance matrix | BLOCKED — verification pending | Google is configured and a Google-connected owner account has been observed after the account reset. A complete recorded live matrix covering consent cancellation, returning sign-in, and explicit linking is still pending. Matching email never links existing password accounts automatically. |
-| Export safety | PASS | CSV/XLSX neutralize non-numeric formula prefixes; JSON preserves exact reviewed values; workbook regression is tested |
-| Upload/body safety limits | PASS | Streaming body counting avoids a second accepted-body copy; route-specific upload/render and password-KDF concurrency ceilings, magic decoding, image dimensions, PDF page/password handling, finite crop/chart numbers, and storage-root deletion guard are tested. |
-| Truthful sample | PASS | Exact source hash plus deterministic synthetic ground truth; `verified-fixture/synthetic-v1-0002906`; no provider call |
-| Local no-spend default and production inference controls | PASS | The local launcher defaults to saved replay and accepts only its fixture. Production retains pinned Modal inference, three testing credits per new account, explicit operator top-ups, and configured request/concurrency limits; these controls are not a provider spend hard cap. Stripe live keys are rejected. |
-| Model benchmark claims | PASS WITH CAVEATS | Saved research receipts are linked; product copy does not convert them into an accuracy guarantee |
-| Dependency lock and package install | PASS | Fresh Python 3.11 environments installed all three hash-locked runtime/build/development sets, passed `pip check`, imported the app plus each shipped CLI, and built sdist/wheel `unrender-0.2.0` without build isolation |
-| Container build | PASS (runtime), WITH LIMITS (security) | Refined image passed 24 local HTTP checks and restart/integrity checks; branch, PR and main CI verify/container jobs passed. Render runs the reviewed merge with healthy private storage. The scan has zero Python findings and the unchanged Debian baseline of 3 critical/51 high findings, with no fixed package version listed; it is not a clean vulnerability scan. The later SQL lint-comment relocation is AST-identical to the locally tested image source. |
-| Automated regression suite | PASS | Refined release: 316 pytest passed / 1 skipped; 73 workflow, 17 Google and 7 preview browser scenarios; Ruff/security Ruff and mypy passed. CI runs 34625970573, 34626014418 and 34626482105 passed verify/container jobs. Thirty hosted HTTP checks passed without inference, email or billing calls. See REFINED_PLATFORM_REVIEW.md and refined-platform-v1.json. Earlier public-account results (268 tests, 45 workflow scenarios) remain in PUBLIC_ACCOUNT_REVIEW.md and public-accounts-v1.json. |
-| Visual QA | PASS | The refined desktop/tablet/mobile and light/dark flows passed design-qa.md. Hosted landing has no interactive example module, overflow or browser errors; the existing owner browser retained all five charts and opened a fresh approved XLSX with 18 data rows and its Audit sheet. Earlier UI/signup and cross-tab/maximum-result evidence remains in UI_CODE_REVIEW.md and VISUAL_QA.md. |
-| Accessibility baseline | PASS WITH LIMITS | Semantic snapshot, labels, unique IDs, responsive overflow, focus styling, and AA color pairs checked; external keyboard/screen-reader audit remains an owner gate |
-| Repository security review | PASS WITH LIMITS | Historical reviews are in SECURITY_REVIEW.md and PRODUCTIZATION_REVIEW.md; current UI/account findings and fixes are in UI_CODE_REVIEW.md and PUBLIC_ACCOUNT_REVIEW.md. Runtime/build/development lock audits passed. Native-advisory assessment, broader penetration testing and cloud-access attestation remain separate. |
-| Independent code review | PASS WITH LIMITS | PR #6 merged after Simplify, specialized reviews and browser QA; all findings and the staged change-size disposition are recorded in REFINED_PLATFORM_REVIEW.md. The final tree is one release, not independently deployable intermediate commits. Earlier PRs 2, 3 and 4 and their reviews remain in PRODUCTIZATION_REVIEW.md, UI_CODE_REVIEW.md and PUBLIC_ACCOUNT_REVIEW.md. |
-| Migration/restart safety | PASS | The schema-10 pre-upgrade recovery set restored in isolation, migrated to schema 14, initialized twice and verified all eight new deletion indexes. Hosted pre/post comparisons retained seven users, eleven sessions, five uploads/charts, six versions, nine ledger rows, five provider attempts and one credit; all stable table/source hashes matched and SQLite/FK checks passed. Maintenance ended only after preservation and health verification. Historical schema-9/10 restore and session-restart receipts remain valid; older code still requires its matching recovery set. |
-| Coordinated backup implementation | PASS | The admin backup takes an exclusive mutation lock and emits a hash inventory; file contents, manifest, staging tree, final tree, and parent namespaces are fsynced before success. Restore rejects tampering/unsafe paths, checks SQLite/FKs, rewrites the root, fsyncs publication, and publishes only into an absent target. Active-mutation and durability drills are tested. |
-| Backup restore drill | PASS WITH LIMITS | Runtime bf5da14 enables daily coordinated copies to a private Modal volume. The first automatic archive passed independent download, SHA-256, isolated SQLite/FK restore, approved source preservation and CSV/JSON/XLSX audit-sheet regeneration. Alert delivery and measured recovery objectives remain open. |
-| Real inference canary | PASS WITH LIMITS | Pinned private trained model and unrender-production/infer_one deployed; real Render upload→inference (82.89 s)→correction→approval→CSV/JSON/XLSX passed. One chart is operational evidence, not a quality benchmark. |
-| Fixed pilot numerical check | PASS WITH LIMITS | Three frozen owned synthetic inputs recovered 15/15 values exactly, with one attempt each and observed upload-to-result times of 92.10, 67.72 and 193.21 seconds. Saved receipts rescore offline. The shared research renderer, tiny set, unmeasured human correction effort and untested customer-input distribution prevent a customer accuracy claim; see LAUNCH_EVALUATION.md. |
-| Fine-tuned weight distribution rights | BLOCKED | Owner/counsel must review weights, training-data provenance, and publication terms |
-| PDF renderer dependency gate | PASS (engineering) | PyMuPDF is absent from code and runtime/dev locks. Locked pypdfium2/PDFium replaces it with render, encryption-rejection, hash-lock, SBOM, audit, and policy-drift coverage. This dependency check has no unresolved technical blocker. Retaining shipped notices and approving the complete distribution remain business/legal owner responsibilities, not engineering claims of sellability. |
-| Customer privacy/terms | BLOCKED | Drafts exist; the owner supplied the public support email. Legal operator identity/address, reviewed processor/jurisdiction terms, retention and deletion commitments still require owner input/review. |
-| Production domain/TLS | PASS | https://unrender.onrender.com is live; hosted sign-in uses Secure HttpOnly cookies. Custom domain is optional. Client IPs remain unavailable for attribution; admission no longer relies on proxy/header identities. |
-| Shared capacity and tenant request quotas | PASS WITH LIMITS | Runtime be6c99b uses pre-auth global capacity plus validated tenant and normalized login-account quotas. Hosted verification exhausted one test account at 120 requests while another account and readiness remained available; sessions and headers did not reset the quota. CI covers API-key sharing and malformed authenticated requests. Global exhaustion still affects all users and readiness; these are one-instance capacity controls, not an uptime or dollar cap. See REQUEST_LIMITS.md. |
-| Billing | DEFERRED | Explicitly off for this release. Existing test-mode code requires approved price/purchase/refund validation before any later billing launch. |
-| Platform failure notifications | PASS WITH LIMITS | UNRENDER has an explicit Render failure-only override with Email delivery. Two earlier deployment-failure notices were verified in the operator inbox; supported platform events include unhealthy services and disk use above 80%. Other projects/defaults were unchanged. Each event type has not been independently induced. |
-| Application monitoring and alert delivery | PASS WITH LIMITS | Deployed /health/operations and hourly unrender-monitor cover queue age, fixed provider failure/latency thresholds, ledger reconciliation, worker availability and backup age. A real 191.53-second pilot attempt triggered exit 1 and a verified Render email at September 11 01:04:09 UTC. The endpoint recovered naturally after the lookback window; the first scheduled 01:17 UTC run passed. Hourly cadence can miss short incidents; individual ledger/backup/queue failures were tested locally, not induced in production. The 15-minute failure-rate dashboard and repeated authentication/signature-failure alerts remain open. |
-| Public paid launch | BLOCKED | Production hosting and public accounts are live; the beta allows three testing credits per new account with explicit operator top-ups. Customer billing is off and a broad paid launch still depends on the remaining gates. |
-| Horizontal scaling | DEFERRED | Single-node beta is explicit; Postgres/object storage/queue migration is documented |
-| Enterprise features | DEFERRED | SSO, organizations, RBAC, SLAs, and compliance are not part of v0.2 |
+| Product workflow | Hosted extraction, corrections, stale-approval rejection, exact-version approval, CSV/JSON/XLSX and browser download | Independent 30-chart workflow pilot |
+| Deployment and recovery | Coordinated backup, schema upgrade, restore drill, matching source/package inventory, original account/chart data preserved | Production-scale recovery timing and ongoing restore practice |
+| Model execution | Existing weights ran on L4; 12 reference values, labels and units matched, both cold and warm | Independent labels, representative accuracy and actual cost measurements |
+| Training | Pinned recipe, processor and loss contracts; CPU process-kill/resume checks | Real Qwen/CUDA interrupted-training check and generated-task checkpoint selection |
+| Serving | Durable attempts and bounded worker pool; production concurrency remains one | Same-GPU comparison, repeated load tests, remote cancellation acknowledgement and global spend cap |
+| Monitoring | Two-minute scheduled checks passed after rollout | New alert-delivery latency not measured |
+| Security | Zero critical and zero Python findings in the recorded scan; access/accounting regression coverage | 44 high Debian findings, external security/accessibility review and complete live Google acceptance matrix |
+| Data and legal | Frozen evidence and explicit source-review gates | Independent development-packet review and model/data legal approval |
 
-## Owner handoff checklist
+The 72-chart packet is development material awaiting the reviewer arranged by the owner. It must stay separate from the final holdout. No new model was trained in this release, and the reference canary does not establish representative accuracy or a general speedup.
 
-1. Confirm product name/trademark and legal entity/contact details.
-2. Complete model/data/font/dependency counsel review.
-3. Confirm remaining cloud membership, private-volume and credential-scope controls; Render/Modal, region, HTTPS and persistent storage are configured.
-4. Keep the already-canaried immutable model/provider pins; gather intended-customer-input quality and human correction-time evidence before making performance claims.
-5. Complete the remaining monitoring/cancellation coverage and recovery objectives; existing alerts, daily backups and restore receipts are linked above.
-6. Complete external accessibility/security and native-advisory assessment; the requested source code reviews are complete.
-7. Conduct design-partner validation before enabling any paid mode.
-8. Complete the recorded live Google acceptance matrix: cancellation, returning sign-in, and explicit linking using a separate controlled password account. The current owner account is already Google-connected; no automatic email-based account merge is permitted.
+## Next steps
 
-Until those actions are complete, the honest release label is **controlled beta with three welcome testing credits**, not generally available or enterprise-ready.
+1. Complete independent source/label review and resolve rejected or disputed charts.
+2. Run one bounded Qwen/CUDA training and interrupted-resume canary on approved development data.
+3. Use a development inference/workflow pilot to set sample size, cost limits and timing targets.
+4. Freeze the prospective quality/performance study before collecting final outcomes.
+5. Complete the remaining security, legal and account-recovery reviews before broadening access.
+
+The [remediation plan](AUDIT_REMEDIATION.md) defines the benchmark thresholds and stop conditions. The [deployment record](RENDER_MODAL_LAUNCH.md), [container scan](CONTAINER_SCAN.md) and [engineering guide](ENGINEERING_REVIEW.md) link the supporting evidence. The [historical scorecard](archive/LAUNCH_READINESS.md) preserves earlier checks and their dates.

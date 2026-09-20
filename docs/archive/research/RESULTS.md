@@ -4,7 +4,7 @@
 > `c84b741c5358239bbb5d7290d4d9b2b98ea4b038`. The scorer credited fuzzy date matches,
 > ignored extra predicted cells in recall, and repaired malformed output. These
 > are not current `chart-table-v2` scores or exact-table guarantees. See the
-> [current evaluation contract](docs/EVALUATION_CONTRACT.md). The current scoreboard
+> [current evaluation contract](../../EVALUATION_CONTRACT.md). The current scoreboard
 > writes to `outputs/evaluation-v2/` and does not regenerate this historical table.
 >
 > Historical metric: cells recovered within 5% tolerance, excluding unlabeled-pie

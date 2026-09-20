@@ -150,7 +150,9 @@ infer_image = (
 gemini_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "google-genai",
+        "google-genai==2.24.0",
+        "numpy>=1.24",
+        "matplotlib>=3.7",
         "pydantic>=2.5",
         "tqdm>=4.66",
         "rapidfuzz>=3.6",
@@ -439,18 +441,15 @@ def _load_subset_ids(name: str):
 
 
 def _parse_eval_specs(spec: str):
-    """ "real_v0,common300,v2:300" -> ordered eval descriptors for the post-train
-    chain. Forms: "common300" (the frozen v1 subset), "real_v0" (a real set dir),
-    "v0"/"v1"/"v2" (a synthetic test split); an optional ":N" caps the row count
-    (e.g. "v2:300"). Pure string parsing -> unit-testable."""
+    """Parse current dataset names with optional :N limits for chained evaluation."""
     out = []
     for part in (s.strip() for s in spec.split(",") if s.strip()):
         name, _, lim = part.partition(":")
         d = {"limit": int(lim) if lim else 0}
-        if name == "common300":
-            d.update(data="v1", subset="common300")
-        else:
-            d.update(data=name, subset="")
+        _evaluation_data_path(name)
+        if d["limit"] < 0:
+            raise ValueError("evaluation limit must be nonnegative")
+        d.update(data=name, subset="")
         out.append(d)
     return out
 
@@ -846,12 +845,12 @@ def train_model(
     n_evals: int = 5,
     type_weights: str = "",
     eval_after: str = "",
-    common300_ids=None,
     expected_source_reviews: dict | None = None,
 ):
     from unrender.data_gen.review import require_training_sources
     from unrender.train.sft_lora import train
 
+    eval_specs = _parse_eval_specs(eval_after)
     paths, val_paths = _training_source_paths(train_files, val_files, geometry=geometry)
     observed = require_training_sources(paths, val_paths, V)
     if expected_source_reviews is None or observed != expected_source_reviews:
@@ -892,13 +891,9 @@ def train_model(
         raise ValueError("training ownership changed unexpectedly")
     owners.pop(out_name)
 
-    # One-shot chain (eval_after="real_v0,common300,v2:300"): run the evals in
-    # THIS container right after the merge commits — no human needed between
-    # train and results. Each eval is resumable and failure-isolated: a crash
-    # here never loses the trained model (committed above), and the remaining
-    # evals still run.
-    for spec in _parse_eval_specs(eval_after):
-        ids = common300_ids if spec["subset"] == "common300" else None
+    # Training is committed before evaluation; failed evaluations retain their ledgers.
+    for spec in eval_specs:
+        ids = None
         print(f"\n=== chained eval: {spec} ===")
         try:
             _eval_impl(
@@ -949,9 +944,19 @@ def _cloud_evaluation(**kwargs):
     return prediction
 
 
+def _evaluation_data_path(data: str) -> str:
+    if not re.fullmatch(r"(?:visible_|real_)[a-z0-9_-]+", data):
+        raise ValueError(
+            "explicit current visible_* or reviewed real_* data is required; "
+            "rescore historical predictions offline"
+        )
+    name = data if data.startswith("real_") else "synthetic_" + data
+    return f"{V}/data/{name}/test.jsonl"
+
+
 def _eval_impl(
     model_path: str,
-    data: str = "v1",
+    data: str = "",
     limit: int = 0,
     out_name: str = "",
     subset: str = "",
@@ -970,6 +975,7 @@ def _eval_impl(
 
     from unrender.prompts import EXTRACTION_PROMPT, GEOMETRY_PROMPT
 
+    data_path = _evaluation_data_path(data)
     prompt = GEOMETRY_PROMPT if decode == "geometry" else EXTRACTION_PROMPT
     mp = _resolve_model(model_path)
     # ids arrive as an arg (the entrypoint reads the committed JSON on your Mac),
@@ -982,13 +988,10 @@ def _eval_impl(
         gen_config["max_new_tokens"] = max_new_tokens
 
     out_dir = f"{V}/outputs/{out_name or _eval_tag(mp, data, subset, gen_config)}"
-    # "v0"/"v1" -> the synthetic splits; "real_*" -> a hand-labeled real-chart set
-    # (data/real_v0, uploaded to the Volume) for the transfer eval. See data/real_v0/README.md.
-    data_sub = data if data.startswith("real") else f"synthetic_{data}"
     pred = _cloud_evaluation(
         provider="hf",
         model=mp,
-        data=f"{V}/data/{data_sub}/test.jsonl",
+        data=data_path,
         out=out_dir,
         limit=limit,
         seed=0,
@@ -1041,7 +1044,7 @@ def _eval_impl(
 )
 def eval_model(
     model_path: str,
-    data: str = "v1",
+    data: str = "",
     limit: int = 0,
     out_name: str = "",
     subset: str = "",
@@ -1082,7 +1085,7 @@ def eval_model(
 def sweep_model(
     model_path: str = "runs/qwen3vl4b-lora/merged",
     lora_pred_dir: str = "outputs/eval_v1__qwen3vl4b-lora",
-    data: str = "v1",
+    data: str = "",
     n_valid: int = 200,
     penalties: str = "1.1,1.3",
 ):
@@ -1099,6 +1102,7 @@ def sweep_model(
     from unrender.eval.score import row_status, score_rows
     from unrender.io_utils import read_jsonl
 
+    data_path = _evaluation_data_path(data)
     mp = _resolve_model(model_path)
     full = read_jsonl(Path(f"{V}/{lora_pred_dir}/predictions.jsonl"))
     invalid_ids = [r["id"] for r in full if row_status(r) == "model_invalid"]
@@ -1127,7 +1131,6 @@ def sweep_model(
     results = [_summarize(full, "greedy")]  # control — no generation
     valid_floor = results[0]["valid_cell"]
 
-    data_path = f"{V}/data/synthetic_{data}/test.jsonl"
     for rp in [float(x) for x in penalties.split(",") if x.strip()]:
         pred = _cloud_evaluation(
             provider="hf",
@@ -1349,6 +1352,7 @@ def train(
     gate is not approval of the unpinned research runtime or resume behavior;
     those and generated task-quality checkpoint selection remain open work.
     """
+    _parse_eval_specs(eval_after)
     _training_source_paths(train_files, val_files, geometry=geometry)
     from unrender.train.recipe import require_revision
 
@@ -1384,7 +1388,6 @@ def train(
         type_weights=type_weights,
         eval_after=eval_after,
         # resolve the frozen id list LOCALLY (the repo ships it; the container doesn't)
-        common300_ids=_load_subset_ids("common300") if "common300" in eval_after else None,
     )
     print(
         f"submitted train '{out_name}' (FunctionCall {call.object_id}); "
@@ -1397,7 +1400,7 @@ def train(
 @app.local_entrypoint()
 def evaluate(
     model: str = "runs/qwen3vl4b-table-fair/merged",
-    data: str = "v1",
+    data: str = "",
     limit: int = 0,
     subset: str = "",
     repetition_penalty: float = 0.0,
@@ -1405,22 +1408,14 @@ def evaluate(
     revision: str = "",
     decode: str = "table",
 ):
-    """Eval one model. Examples (item 1 base-model controls on the frozen subset):
-        modal run modal_train.py::evaluate --model unsloth/Qwen3-VL-4B-Instruct \
-            --revision 252d592b59b0233b226875a44ac135cfa1d3f755 --subset common300
-        modal run modal_train.py::evaluate --subset common300
-            # LoRA on the same 300 (apples-to-apples)
+    """Evaluate explicit current visible_* or reviewed real_* data.
 
-    `--revision` pins a Hub base to an exact commit; the base control must use the
-    Unsloth mirror + matching revision (PREREGISTRATION.md), not an unpinned HEAD.
-    `--decode geometry` evals the geometry arm (geometry prompt + deterministic decode).
-
-    Uses .spawn() — returns immediately; ALWAYS run with `modal run --detach ...` so
-    the long eval survives a dropped client (the base run nearly lost its report to a
-    local network blip). Results persist on the Volume; logs via `modal app logs <id>`.
+    Use --detach to survive a client disconnect. Historical scores are reproduced
+    offline from saved predictions; old synthetic bundles cannot start new runs.
     """
     # Resolve the frozen id list LOCALLY (the repo has it) and pass it as an arg,
     # so the container needs no data-file mount.
+    _evaluation_data_path(data)
     ids = _load_subset_ids(subset) if subset else None
     call = eval_model.spawn(
         model_path=model,
@@ -1443,7 +1438,7 @@ def evaluate(
 def sweep(
     model: str = "runs/qwen3vl4b-lora/merged",
     lora_pred_dir: str = "outputs/eval_v1__qwen3vl4b-lora",
-    data: str = "v1",
+    data: str = "",
     n_valid: int = 200,
     penalties: str = "1.1,1.3",
 ):
@@ -1452,6 +1447,7 @@ def sweep(
         modal run --detach modal_train.py::sweep
     Uses .spawn() — run with --detach; read the ADOPT table in `modal app logs <id>`.
     """
+    _evaluation_data_path(data)
     call = sweep_model.spawn(
         model_path=model,
         lora_pred_dir=lora_pred_dir,

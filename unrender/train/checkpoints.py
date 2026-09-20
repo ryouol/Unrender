@@ -125,10 +125,10 @@ def _verify_best(directory: Path, identity: dict, model_format: str, fp16: bool)
         ):
             raise ValueError("best checkpoint points outside this run or into its future")
         if best.resolve() != directory.resolve():
-            verify(best, identity, model_format=model_format, fp16=fp16)
+            _verify_inventory(best, identity, model_format=model_format, fp16=fp16)
 
 
-def verify(directory: Path, identity: dict, *, model_format: str, fp16: bool = False) -> dict:
+def _verify_inventory(directory: Path, identity: dict, *, model_format: str, fp16: bool) -> dict:
     expected = identity_digest(identity)
     if (directory / RECEIPT).is_symlink():
         raise ValueError("checkpoint receipt cannot be a symbolic link")
@@ -148,6 +148,11 @@ def verify(directory: Path, identity: dict, *, model_format: str, fp16: bool = F
     step = _structure(directory, files, model_format, fp16)
     if receipt.get("files") != files or receipt.get("step") != step:
         raise ValueError("checkpoint artifact inventory changed")
+    return receipt
+
+
+def verify(directory: Path, identity: dict, *, model_format: str, fp16: bool = False) -> dict:
+    receipt = _verify_inventory(directory, identity, model_format=model_format, fp16=fp16)
     _verify_best(directory, identity, model_format, fp16)
     return receipt
 
@@ -198,9 +203,15 @@ def latest(root: Path, identity: dict, *, model_format: str, fp16: bool = False)
     candidates = sorted(root.glob("checkpoint-*"), key=lambda p: p.name)
     checked = []
     for path in candidates:
-        receipt = verify(path, identity, model_format=model_format, fp16=fp16)
+        receipt = _verify_inventory(path, identity, model_format=model_format, fp16=fp16)
         checked.append((receipt["step"], path))
-    return max(checked)[1] if checked else None
+    if not checked:
+        return None
+    newest = max(checked)[1]
+    # Only the resumed state needs its best weights; older saves may refer to
+    # best checkpoints already removed by normal retention.
+    _verify_best(newest, identity, model_format, fp16)
+    return newest
 
 
 class SealBeforeRetention:

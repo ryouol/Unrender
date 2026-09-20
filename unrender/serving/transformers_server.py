@@ -134,9 +134,9 @@ def create_app(snapshot: Path, manifest: dict, profile_dir: Path | None) -> Fast
                 text = processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
-                inputs = processor(text=[text], images=[image], return_tensors="pt").to(
-                    model.device
-                )
+                inputs = processor(
+                    text=[text], images=[image], return_tensors="pt", truncation=False
+                ).to(model.device)
                 torch.cuda.synchronize()
                 if profile_dir is not None:
                     profile.disable()

@@ -117,3 +117,79 @@ def test_warm_verification_is_bound_to_release_and_exact_loaded_objects(monkeypa
     with pytest.raises(ValueError, match="Digest mismatch"):
         modal_train.infer_one.local(b"image", "approved/model", "a" * 40, "bad")
     assert len(verified) == 5
+
+
+def test_reference_server_preserves_expanded_image_tokens(tmp_path, monkeypatch):
+    import json
+
+    from fastapi.testclient import TestClient
+    from test_serving import CHART, png
+
+    from unrender.serving.client import request_body
+    from unrender.serving.release import inventory, model_name
+    from unrender.serving.transformers_server import create_app
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    class Processor:
+        tokenizer = object()
+
+        def apply_chat_template(self, *args, **kwargs):
+            return "expanded image prompt"
+
+        def __call__(self, **kwargs):
+            if kwargs.get("truncation", True):
+                raise ValueError("Mismatch in image token count")
+            return Inputs(input_ids=np.zeros((1, 2500), dtype=int))
+
+    class Model:
+        device = "cpu"
+        generation_config = SimpleNamespace(eos_token_id=7)
+
+        def eval(self):
+            return self
+
+        def generate(self, **kwargs):
+            assert kwargs["input_ids"].shape[1] == 2500
+            kwargs["streamer"].on_finalized_text(json.dumps(CHART), stream_end=True)
+            return np.array([[0] * 2500 + [7]])
+
+    class Streamer:
+        def __init__(self, *args, **kwargs):
+            self.next_tokens_are_prompt = True
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            bfloat16="test",
+            cuda=SimpleNamespace(synchronize=lambda: None),
+            inference_mode=nullcontext,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoProcessor=SimpleNamespace(from_pretrained=lambda *a, **k: Processor()),
+            AutoModelForImageTextToText=SimpleNamespace(from_pretrained=lambda *a, **k: Model()),
+            StoppingCriteria=object,
+            StoppingCriteriaList=list,
+            TextIteratorStreamer=Streamer,
+        ),
+    )
+    monkeypatch.setenv("UNRENDER_VLLM_API_KEY", "cpu-test")
+    (tmp_path / "config.json").write_text("{}")
+    manifest = {"files": inventory(tmp_path), "dtype": "bfloat16", "max_model_len": 8192}
+    with TestClient(create_app(tmp_path, manifest, None)) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer cpu-test"},
+            json=request_body(png(), model_name(manifest), False, 4096),
+        )
+    assert response.status_code == 200
+    assert '"finish_reason": "stop"' in response.text
+    assert '"prompt_tokens": 2500' in response.text
+    assert '"error"' not in response.text

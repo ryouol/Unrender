@@ -1,0 +1,289 @@
+{
+  "scope": "Synthetic hosted deployment canary",
+  "checks": {
+    "welcome_credits": true,
+    "idempotent_job": true,
+    "visible_values_axes_labels_exact": true,
+    "one_credit_consumed": true,
+    "stale_approval_rejected": true,
+    "approved": true,
+    "relogin_preserves_approval": true,
+    "deleted_session_rejected": true
+  },
+  "source_sha256": "8158d17d651270fb49cea303052b3b14f0ca22b39d4112d7621d94676299025e",
+  "user_id": "2196a2f4-2728-41c3-8847-6cdea271c683",
+  "job_id": "3039dd83-bf12-451e-a50b-9e75bcfa37ac",
+  "queue_to_review_seconds": 69.72578066699998,
+  "initial_job": {
+    "id": "3039dd83-bf12-451e-a50b-9e75bcfa37ac",
+    "source_name": "release-check.png",
+    "display_name": "release-check.png",
+    "project_id": null,
+    "source_mime": "image/png",
+    "page_index": 0,
+    "crop": null,
+    "status": "review",
+    "progress_stage": "Ready for review",
+    "attempt": 1,
+    "recovery_count": 0,
+    "extractor": "modal",
+    "model_version": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:8ea1e0e748ac",
+    "error": null,
+    "approved_at": null,
+    "created_at": "2026-09-23T00:38:34.280920Z",
+    "updated_at": "2026-09-23T00:39:40.459751Z",
+    "result": {
+      "chart_type": "bar",
+      "title": "Pilot orders by location",
+      "x_axis": {
+        "label": "Location",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Orders",
+        "unit": null
+      },
+      "series": [
+        {
+          "name": null,
+          "points": [
+            {
+              "x": "Harbor",
+              "y": 14.0
+            },
+            {
+              "x": "Cedar",
+              "y": 28.0
+            },
+            {
+              "x": "Meadow",
+              "y": 21.0
+            },
+            {
+              "x": "Ridge",
+              "y": 35.0
+            }
+          ]
+        }
+      ]
+    },
+    "original_result": {
+      "chart_type": "bar",
+      "title": "Pilot orders by location",
+      "x_axis": {
+        "label": "Location",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Orders",
+        "unit": null
+      },
+      "series": [
+        {
+          "name": null,
+          "points": [
+            {
+              "x": "Harbor",
+              "y": 14.0
+            },
+            {
+              "x": "Cedar",
+              "y": 28.0
+            },
+            {
+              "x": "Meadow",
+              "y": 21.0
+            },
+            {
+              "x": "Ridge",
+              "y": 35.0
+            }
+          ]
+        }
+      ]
+    },
+    "result_version": 1,
+    "result_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+    "review_revision": "d9bc3739ff689ec52c43fb0215fda5102fc35e856211cc329c1083e9183bb05d",
+    "extraction_receipt": {
+      "contract": "extraction-receipt-v1",
+      "capture": "recorded",
+      "origin": "model",
+      "attempt": 1,
+      "execution_generation": 1,
+      "provider_roundtrip_ms": 65850,
+      "captured_at": "2026-09-23T00:39:40.458247Z",
+      "extractor": "modal",
+      "model_version": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:8ea1e0e748ac",
+      "source_sha256": "8158d17d651270fb49cea303052b3b14f0ca22b39d4112d7621d94676299025e",
+      "provider_input_sha256": "05edef3055bdf836e2dce9d0be18fb6f9e03f023ccbd8be65e2eb7fcfab30808",
+      "page_index": 0,
+      "crop": null,
+      "raw_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+      "raw_byte_count": 267,
+      "stored_raw_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+      "raw_truncated": false,
+      "diagnostics": {
+        "parser_version": "chart-json-v2",
+        "parse_status": "raw_valid",
+        "finish_reason": "eos",
+        "output_tokens": 96,
+        "max_output_tokens": 4096,
+        "provider_release": "8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0",
+        "model_repository": "modal-volume/unrender-inference-cache",
+        "model_revision": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+        "model_digest": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "schema_sha256": "c319ef67ebf3267e5658e0ac28a075ceb2bea7f94e154fde8903a9083b8566c5"
+      }
+    },
+    "extraction_receipt_sha256": "1ac34a973c277d404213cf37e24c2ba2b6d6ed7ec26c13cea77fcb7535600071",
+    "extraction_warnings": []
+  },
+  "exports": {
+    "csv": {
+      "bytes": 2641,
+      "sha256": "6ff2d0898f870a68f9c1775c23a04312bd7bcac6bba5bf471e1c058c5a917036"
+    },
+    "json": {
+      "bytes": 3469,
+      "sha256": "05c0f30819295f41c6aad5e384cf94bdd87a5db5d04dc3ce04ea771b6b60d25d"
+    },
+    "xlsx": {
+      "bytes": 6956,
+      "sha256": "9abeb52ee83bff500f09292cd52966776713071ef74f29367663bf87a8990ff5"
+    }
+  },
+  "approved_job": {
+    "id": "3039dd83-bf12-451e-a50b-9e75bcfa37ac",
+    "source_name": "release-check.png",
+    "display_name": "release-check.png",
+    "project_id": null,
+    "source_mime": "image/png",
+    "page_index": 0,
+    "crop": null,
+    "status": "approved",
+    "progress_stage": "Approved for export",
+    "attempt": 1,
+    "recovery_count": 0,
+    "extractor": "modal",
+    "model_version": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:8ea1e0e748ac",
+    "error": null,
+    "approved_at": "2026-09-23T00:39:44.591087Z",
+    "created_at": "2026-09-23T00:38:34.280920Z",
+    "updated_at": "2026-09-23T00:39:44.591087Z",
+    "result": {
+      "chart_type": "bar",
+      "title": "Pilot orders by location",
+      "x_axis": {
+        "label": "Location",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Orders",
+        "unit": null
+      },
+      "series": [
+        {
+          "name": null,
+          "points": [
+            {
+              "x": "Harbor",
+              "y": 14.0
+            },
+            {
+              "x": "Cedar",
+              "y": 28.0
+            },
+            {
+              "x": "Meadow",
+              "y": 21.0
+            },
+            {
+              "x": "Ridge",
+              "y": 35.0
+            }
+          ]
+        }
+      ]
+    },
+    "original_result": {
+      "chart_type": "bar",
+      "title": "Pilot orders by location",
+      "x_axis": {
+        "label": "Location",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Orders",
+        "unit": null
+      },
+      "series": [
+        {
+          "name": null,
+          "points": [
+            {
+              "x": "Harbor",
+              "y": 14.0
+            },
+            {
+              "x": "Cedar",
+              "y": 28.0
+            },
+            {
+              "x": "Meadow",
+              "y": 21.0
+            },
+            {
+              "x": "Ridge",
+              "y": 35.0
+            }
+          ]
+        }
+      ]
+    },
+    "result_version": 3,
+    "result_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+    "review_revision": "f23a6a1a8cb8630d59cd21574a9be650226f90dade21cf5f7a9127aebe890dbd",
+    "extraction_receipt": {
+      "contract": "extraction-receipt-v1",
+      "capture": "recorded",
+      "origin": "model",
+      "attempt": 1,
+      "execution_generation": 1,
+      "provider_roundtrip_ms": 65850,
+      "captured_at": "2026-09-23T00:39:40.458247Z",
+      "extractor": "modal",
+      "model_version": "modal-volume/unrender-inference-cache@3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e+provider:8ea1e0e748ac",
+      "source_sha256": "8158d17d651270fb49cea303052b3b14f0ca22b39d4112d7621d94676299025e",
+      "provider_input_sha256": "05edef3055bdf836e2dce9d0be18fb6f9e03f023ccbd8be65e2eb7fcfab30808",
+      "page_index": 0,
+      "crop": null,
+      "raw_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+      "raw_byte_count": 267,
+      "stored_raw_sha256": "01788e11b0acd6f7d2c7ec9f0c988efb81e6b8b171aea97df24bdc9ea1f07181",
+      "raw_truncated": false,
+      "diagnostics": {
+        "parser_version": "chart-json-v2",
+        "parse_status": "raw_valid",
+        "finish_reason": "eos",
+        "output_tokens": 96,
+        "max_output_tokens": 4096,
+        "provider_release": "8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0",
+        "model_repository": "modal-volume/unrender-inference-cache",
+        "model_revision": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+        "model_digest": "3954f3395a9db64fcbd3b9dc94508ab0cf9af2f5f2156643504881ee712e8c7e",
+        "prompt_sha256": "ca24d7b556fcbbe3686d1f3985c8eadfff7c6c52f23e1297059cf471f2b89c5a",
+        "schema_sha256": "c319ef67ebf3267e5658e0ac28a075ceb2bea7f94e154fde8903a9083b8566c5"
+      }
+    },
+    "extraction_receipt_sha256": "1ac34a973c277d404213cf37e24c2ba2b6d6ed7ec26c13cea77fcb7535600071",
+    "extraction_warnings": []
+  },
+  "account_cleanup": {
+    "status": "deleted",
+    "charts_deleted": 1,
+    "projects_deleted": 0
+  },
+  "status": "passed"
+}

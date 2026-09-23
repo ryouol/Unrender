@@ -1,0 +1,95 @@
+{
+  "runtime_commit": "a7673d90d8c88a639b946ecfe3f1da1f56f81add",
+  "web_deployment": {
+    "id": "dep-dapht3ff3r2c73encktg",
+    "commit": {
+      "id": "a7673d90d8c88a639b946ecfe3f1da1f56f81add",
+      "message": "Merge pull request #14 from ryouol/codex/deploy-cleanup\n\nPin verified provider for cleanup deployment",
+      "createdAt": "2026-09-23T00:34:11Z"
+    },
+    "status": "live",
+    "trigger": "api",
+    "createdAt": "2026-09-23T00:34:21.233902Z",
+    "updatedAt": "2026-09-23T00:35:31.503009Z",
+    "startedAt": "2026-09-23T00:34:21.206374Z",
+    "finishedAt": "2026-09-23T00:34:59.837677Z"
+  },
+  "monitor_deployment": {
+    "id": "dep-dapht5nf3r2c73enctd0",
+    "commit": {
+      "id": "a7673d90d8c88a639b946ecfe3f1da1f56f81add",
+      "message": "Merge pull request #14 from ryouol/codex/deploy-cleanup\n\nPin verified provider for cleanup deployment",
+      "createdAt": "2026-09-23T00:34:11Z"
+    },
+    "status": "live",
+    "trigger": "api",
+    "createdAt": "2026-09-23T00:34:30.927247Z",
+    "updatedAt": "2026-09-23T00:34:52.438626Z",
+    "startedAt": "2026-09-23T00:34:30.927176Z",
+    "finishedAt": "2026-09-23T00:34:52.437974Z"
+  },
+  "modal_app": "unrender-production",
+  "modal_tag": "cleanup-6580d79",
+  "provider_release": "8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0",
+  "schema": 15,
+  "backup": "/data/release-backups/pre-cleanup-20260922-schema15",
+  "preserved_counts": {
+    "users": 2,
+    "sessions": 2,
+    "api_keys": 0,
+    "uploads": 0,
+    "jobs": 4,
+    "result_versions": 8,
+    "credit_ledger": 11,
+    "provider_attempts": 5,
+    "projects": 3,
+    "google_identities": 2
+  },
+  "all_existing_table_hashes_preserved": true,
+  "source_hashes_preserved": 4,
+  "integrity": "ok",
+  "foreign_key_errors": 0,
+  "active_jobs_after_canary": 0,
+  "live_matches_scanned_image": {
+    "application_files": 121,
+    "python_packages": 71,
+    "debian_package_manifest": true,
+    "uid": 10001,
+    "scope": "Package/source inventory equality, not a Render image digest attestation"
+  },
+  "worker_concurrency": 1,
+  "maintenance_disabled": true,
+  "monitor": {
+    "schedule": "*/2 * * * *",
+    "command": "timeout --kill-after=5s 55s unrender-operations-check",
+    "failure_only_notifications_preserved": true,
+    "observations": [
+      {
+        "timestamp": "2026-09-23T00:36:23.589590324Z",
+        "message": "UNRENDER operational checks failed; inspect /health/operations and service logs"
+      },
+      {
+        "timestamp": "2026-09-23T00:38:24.438984354Z",
+        "message": "UNRENDER operational checks passed"
+      },
+      {
+        "timestamp": "2026-09-23T00:38:27.288899152Z",
+        "message": "\u001b[0;32m\u001b[1m==> \u001b[0m\u001b[1mCron job run finished successfully\u001b[0m"
+      }
+    ],
+    "new_email_delivery_not_checked": true
+  },
+  "ci": {
+    "merged_main": "35802637491",
+    "conclusion": "success",
+    "tests_passed": 673,
+    "tests_skipped": 3
+  },
+  "not_established": [
+    "Independent source annotation approval",
+    "New model training",
+    "General accuracy or inference speedup",
+    "Load capacity above one worker",
+    "Remote GPU cancellation acknowledgement or global dollar cap"
+  ]
+}

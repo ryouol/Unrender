@@ -6,7 +6,7 @@ Turn chart images into editable data, with the source and review history attache
 
 Upload a chart, compare the extracted table with its source, correct it, approve it, and export CSV, JSON, or an Excel workbook with an Audit sheet. Unrender combines a FastAPI web app with a post-trained Qwen3-VL-4B model on Modal.
 
-**Status: controlled beta.** The September 18 release passed a hosted extraction/review/export check and a restore drill. Representative model accuracy, serving capacity and actual inference cost remain unmeasured. See [readiness](docs/LAUNCH_READINESS.md) for the open gates.
+**Status: controlled beta.** The September 22 cleanup is deployed; hosted extraction/review/export checks passed. The September 18 release also passed a restore drill. Representative model accuracy, serving capacity and actual inference cost remain unmeasured. See [readiness](docs/LAUNCH_READINESS.md) for the open gates.
 
 ![Source chart beside an editable table](docs/screenshots/refined/review-desktop-final.png)
 

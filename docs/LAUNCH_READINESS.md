@@ -1,12 +1,12 @@
 # Launch readiness
 
-**Controlled beta, as verified September 18, 2026.** Runtime `2bc72d1`, schema 15, is deployed on Render with the pinned Modal provider. Google and password signup grant three testing credits. Email delivery and billing are off.
+**Controlled beta, as verified September 22, 2026.** Runtime `a7673d9`, schema 15, is deployed on Render with the pinned Modal provider. Google and password signup grant three testing credits. Email delivery and billing are off.
 
 | Area | Verified evidence | Remaining work |
 |---|---|---|
 | Product workflow | Hosted extraction, corrections, stale-approval rejection, exact-version approval, CSV/JSON/XLSX and browser download | Independent 30-chart workflow pilot |
 | Deployment and recovery | Coordinated backup, schema upgrade, restore drill, matching source/package inventory, original account/chart data preserved | Production-scale recovery timing and ongoing restore practice |
-| Model execution | Existing weights ran on L4; 12 reference values, labels and units matched, both cold and warm | Independent labels, representative accuracy and actual cost measurements |
+| Model execution | Existing weights ran on L4; September 22 checked four visible values and labels, following the September 18 cold/warm canaries | Independent labels, representative accuracy and actual cost measurements |
 | Training | Pinned recipe, processor and loss contracts; CPU process-kill/resume checks | Real Qwen/CUDA interrupted-training check and generated-task checkpoint selection |
 | Serving | Durable attempts and bounded worker pool; production concurrency remains one | Same-GPU comparison, repeated load tests, remote cancellation acknowledgement and global spend cap |
 | Monitoring | Two-minute scheduled checks passed after rollout | New alert-delivery latency not measured |

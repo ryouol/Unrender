@@ -137,6 +137,8 @@ def test_gpu_probe_failure_prevents_dispatch_and_reaps_child(workload, monkeypat
 
 def test_ledger_snapshots_are_outside_per_request_work(workload, monkeypatch):
     args, calls = workload
+    # This verifies snapshot placement, not deadline enforcement; allow slow CI process startup.
+    args.timeout = 10
     original = benchmark.RunLedger.export
     snapshots = []
 

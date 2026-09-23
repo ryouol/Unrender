@@ -115,14 +115,15 @@ def test_load_records_hbar_weight_composes(tmp_path):
 def test_parse_eval_specs():
     import modal_train
 
-    specs = modal_train._parse_eval_specs("real_v0,common300,v2:300")
+    specs = modal_train._parse_eval_specs("real_reviewed,visible_reviewed:300")
     assert specs == [
-        {"limit": 0, "data": "real_v0", "subset": ""},
-        {"limit": 0, "data": "v1", "subset": "common300"},
-        {"limit": 300, "data": "v2", "subset": ""},
+        {"limit": 0, "data": "real_reviewed", "subset": ""},
+        {"limit": 300, "data": "visible_reviewed", "subset": ""},
     ]
-    assert modal_train._parse_eval_specs("") == []  # chain off by default
-    assert modal_train._parse_eval_specs(" v1 , ") == [{"limit": 0, "data": "v1", "subset": ""}]
+    assert modal_train._parse_eval_specs("") == []
+    for invalid in ("v1", "common300", "visible_reviewed:-1"):
+        with pytest.raises(ValueError):
+            modal_train._parse_eval_specs(invalid)
 
 
 def test_production_model_resolution_uses_only_verified_hub_snapshot(tmp_path, monkeypatch):

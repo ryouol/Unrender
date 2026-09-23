@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from unrender.eval.ledger import LEDGER_NAME
 from unrender.eval.metrics import METRIC_VERSION
 from unrender.eval.paired_bootstrap import compare, verdict
 from unrender.eval.score import score_rows, validate_rows
@@ -46,6 +47,10 @@ def build(model_root: Path | None = None, frontier_root: Path | None = None):
         path = root / directory / "predictions.jsonl"
         if not path.is_file():
             raise ValueError(f"missing evidence: {path}; no scoreboard was written")
+        if (path.parent / LEDGER_NAME).exists():
+            raise ValueError(
+                "historical scoreboard requires frozen snapshots without a live ledger"
+            )
         rows = validate_rows(read_jsonl(path))
         if not rows:
             raise ValueError(f"empty evidence: {path}")

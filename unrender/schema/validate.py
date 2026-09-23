@@ -38,7 +38,10 @@ def strict_json(raw: str) -> Any:
     def constant(_value):
         raise InvalidJSON("nonfinite_json_constant")
 
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+    try:
+        return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+    except RecursionError as exc:
+        raise InvalidJSON("json_nesting_too_deep") from exc
 
 
 def _complete_object(text: str) -> str:

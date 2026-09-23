@@ -208,3 +208,9 @@ The error audit conserves the frozen scorer's denominator and credit; it does no
 relax identities, repair labels or replace the headline with a favorable post-hoc
 subset. New generation/target provenance, visibility and clipping checks, and
 independent real/multirenderer evaluation are required before quality claims.
+
+## Current inference inputs
+
+New Modal evaluations require explicit `--data visible_<name>` or a reviewed `real_<name>` dataset. Historical v0/v1/v2 repository-relative image paths are rejected before evaluation; reproduce old scores from saved predictions. Chained `--eval-after` requests use the same gate before training starts. Current bundles use split-relative image paths and retain their source/review requirements.
+
+The gallery and ensemble tools read authoritative ledger outcomes when available. The historical scoreboard accepts frozen snapshots only, so its recorded hash always identifies the bytes it scores. Optional frontier SDKs require OpenAI 3.16.2+ and google-genai 2.24.0+ within their declared major versions; those API contracts were checked offline.

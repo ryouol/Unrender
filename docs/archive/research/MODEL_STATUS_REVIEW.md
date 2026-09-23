@@ -4,7 +4,7 @@ Date: 2026-06-14
 
 > Historical research review. Deployment statements below describe June 2026,
 > not the current hosted beta. See [current results](RESULTS.md) and
-> [deployment evidence](docs/RENDER_MODAL_LAUNCH.md) for the later state.
+> [deployment evidence](../../RENDER_MODAL_LAUNCH.md) for the later state.
 
 Review method: ARIS `analyze-results` workflow plus two-round external review
 with Claude Opus 4.8. Full review trace:

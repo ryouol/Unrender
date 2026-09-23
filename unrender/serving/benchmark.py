@@ -36,6 +36,32 @@ def check_split(ids: list[str], final: bool) -> None:
         raise ValueError("Tuning workload overlaps reserved common300")
 
 
+async def gpu_sample() -> dict:
+    """Fail closed if memory cannot be measured; always reap the probe."""
+    process = await asyncio.create_subprocess_exec(
+        "nvidia-smi",
+        "--query-gpu=memory.used,memory.free,utilization.gpu",
+        "--format=csv,noheader,nounits",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+    values = [[float(value) for value in line.split(",")] for line in stdout.decode().splitlines()]
+    if (
+        process.returncode
+        or not values
+        or any(len(row) != 3 or not all(math.isfinite(v) and v >= 0 for v in row) for row in values)
+        or any(row[1] < 2048 for row in values)
+    ):
+        raise ValueError("GPU memory is low or telemetry is invalid")
+    return {"gpu_csv": stdout.decode().strip()}
+
+
 async def run(args: argparse.Namespace) -> dict:
     manifest = json.loads(args.manifest.read_text())
     samples = load_eval_samples(str(args.data))
@@ -89,6 +115,7 @@ async def run(args: argparse.Namespace) -> dict:
     active = 0
     stop = asyncio.Event()
     unsafe = asyncio.Event()
+    ready = asyncio.Event()
     start = time.perf_counter()
     async with httpx.AsyncClient(
         headers={"Authorization": "Bearer " + os.environ["UNRENDER_VLLM_API_KEY"]},
@@ -114,25 +141,16 @@ async def run(args: argparse.Namespace) -> dict:
                             "error": type(exc).__name__,
                         }
                     if getattr(args, "gpu_safety", False):
-                        process = await asyncio.create_subprocess_exec(
-                            "nvidia-smi",
-                            "--query-gpu=memory.used,memory.free,utilization.gpu",
-                            "--format=csv,noheader,nounits",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                        )
-                        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
-                        record["gpu_csv"] = stdout.decode().strip()
                         try:
-                            free = [
-                                float(line.split(",")[1]) for line in stdout.decode().splitlines()
-                            ]
-                            if process.returncode or not free or min(free) < 2048:
-                                unsafe.set()
-                        except (ValueError, IndexError):
+                            record.update(await gpu_sample())
+                        except Exception as exc:
                             unsafe.set()
+                            record["gpu_error"] = type(exc).__name__ + ": " + str(exc)
                     handle.write(json.dumps(record) + "\n")
                     handle.flush()
+                    if unsafe.is_set():
+                        raise RuntimeError("GPU safety monitor stopped the benchmark")
+                    ready.set()
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(stop.wait(), timeout=1)
 
@@ -197,68 +215,68 @@ async def run(args: argparse.Namespace) -> dict:
             row.update(asdict(result))
             row["finished_s"] = time.perf_counter() - start
             row["response_s"] = row["finished_s"] - scheduled
-            rows.append(row)
             ledger.complete(sample.id, row, dispatched=dispatched)
-            ledger.export()
+            rows.append(row)
             if interrupted:
                 raise asyncio.CancelledError
 
-        poller = asyncio.create_task(metrics())
-        tasks = set()
         completed = False
         try:
-            if args.rate:
-                # Open loop: do not hide saturation behind an unbounded semaphore queue.
-                for i in range(len(samples)):
-                    scheduled = i / args.rate
-                    await asyncio.sleep(max(0, start + scheduled - time.perf_counter()))
-                    task = asyncio.create_task(one(i, scheduled))
-                    tasks.add(task)
-                    task.add_done_callback(tasks.discard)
-                    await asyncio.sleep(0)
-                await asyncio.gather(*tasks)
-            else:
-                queue = asyncio.Queue()
-                for i in range(len(samples)):
-                    queue.put_nowait(i)
+            async with asyncio.TaskGroup() as group:
+                group.create_task(metrics())
+                try:
+                    if getattr(args, "gpu_safety", False):
+                        await ready.wait()
+                        start = time.perf_counter()
+                    async with asyncio.TaskGroup() as requests:
+                        if args.rate:
+                            # TaskGroup observes failures even after a request has finished.
+                            for i in range(len(samples)):
+                                scheduled = i / args.rate
+                                await asyncio.sleep(max(0, start + scheduled - time.perf_counter()))
+                                requests.create_task(one(i, scheduled))
+                                await asyncio.sleep(0)
+                        else:
+                            queue = asyncio.Queue()
+                            for i in range(len(samples)):
+                                queue.put_nowait(i)
 
-                async def worker() -> None:
-                    while not queue.empty():
-                        await one(queue.get_nowait(), time.perf_counter() - start)
+                            async def worker() -> None:
+                                while not queue.empty():
+                                    await one(queue.get_nowait(), time.perf_counter() - start)
 
-                tasks = {asyncio.create_task(worker()) for _ in range(args.concurrency)}
-                await asyncio.gather(*tasks)
+                            for _ in range(args.concurrency):
+                                requests.create_task(worker())
+                finally:
+                    stop.set()
+            if len(rows) != len(samples):
+                raise RuntimeError("Benchmark has nonterminal scheduled requests")
             completed = True
         finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            stop.set()
             try:
-                await poller
+                if not completed:
+                    recorded = {row["id"] for row in rows}
+                    (args.out / "interrupted.json").write_text(
+                        json.dumps(
+                            {
+                                "status": "interrupted",
+                                "expected": len(samples),
+                                "recorded": len(samples),
+                                "unrecorded_ids": [],
+                                "nonterminal_ids": [
+                                    sample.id for sample in samples if sample.id not in recorded
+                                ],
+                                "note": (
+                                    "All inputs are in the ledger; "
+                                    "nonterminal outcomes are unknown."
+                                ),
+                            },
+                            indent=2,
+                        )
+                    )
+                ledger.export()
             finally:
                 ledger.close()
-            if not completed:
-                recorded = {row["id"] for row in rows}
-                (args.out / "interrupted.json").write_text(
-                    json.dumps(
-                        {
-                            "status": "interrupted",
-                            "expected": len(samples),
-                            "recorded": len(samples),
-                            "unrecorded_ids": [],
-                            "nonterminal_ids": [
-                                sample.id for sample in samples if sample.id not in recorded
-                            ],
-                            "note": (
-                                "All inputs are in the ledger; "
-                                "nonterminal inputs have unknown outcomes."
-                            ),
-                        },
-                        indent=2,
-                    )
-                )
     elapsed = max(row["finished_s"] for row in rows)
     summary = summarize(rows, elapsed)
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))

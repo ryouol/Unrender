@@ -197,3 +197,35 @@ def test_failed_receipt_publication_does_not_create_false_completion(
         seal(path, identity, model_format="full")
     assert not (path / RECEIPT).exists()
     assert not list(tmp_path.glob(".receipt-*"))
+
+
+def test_retention_does_not_require_obsolete_best_dependencies(tmp_path, identity):
+    import shutil
+
+    oldest = checkpoint(tmp_path, 10)
+    seal(oldest, identity, model_format="full")
+    prior = checkpoint(tmp_path, 20, oldest)
+    seal(prior, identity, model_format="full")
+    best = checkpoint(tmp_path, 30)
+    seal(best, identity, model_format="full")
+    newest = checkpoint(tmp_path, 40, best)
+    seal(newest, identity, model_format="full")
+    shutil.rmtree(oldest)
+    assert latest(tmp_path, identity, model_format="full") == newest
+    # The selected checkpoint's best weights are still required.
+    shutil.rmtree(best)
+    with pytest.raises(ValueError, match="no completion receipt"):
+        latest(tmp_path, identity, model_format="full")
+
+
+def test_best_weights_do_not_require_their_own_old_best(tmp_path, identity):
+    import shutil
+
+    old = checkpoint(tmp_path, 10)
+    seal(old, identity, model_format="full")
+    best = checkpoint(tmp_path, 20, old)
+    seal(best, identity, model_format="full")
+    newest = checkpoint(tmp_path, 30, best)
+    seal(newest, identity, model_format="full")
+    shutil.rmtree(old)
+    assert verify(newest, identity, model_format="full")["step"] == 30

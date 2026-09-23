@@ -66,5 +66,5 @@ Smaller landing PRs require deliberate hunk extraction and remeasurement, not mo
 - Final incremental review: **42 workflow scenarios**, account recovery checks, and **8 focused pytest tests** passed after the discard-state fix. The final API-key/sample pending-label patch was rereviewed independently; all 42 workflow scenarios and auth/two-tab/account checks passed again.
 - Product CI scope: Ruff formatting/lint/security rules passed; mypy passed for 19 product source files. Historical research modules outside that CI scope were not rewritten to satisfy unrelated broad lint failures.
 - Package wheel built successfully; new landing/theme assets, logo and chart were found inside the wheel.
-- Browser: actual local signup and exact replay upload → review → correction → approval → export initiation; light/dark/system, 390/1100/1440 layouts, magnification, menu and audit/history. [Visual QA](../design-qa.md) records screenshots and limitations.
+- Browser: actual local signup and exact replay upload → review → correction → approval → export initiation; light/dark/system, 390/1100/1440 layouts, magnification, menu and audit/history. [Visual QA](design/VISUAL_QA_RECORD.md) records screenshots and limitations.
 - No production deployment, paid extraction, email send, cloud IAM inspection or model-quality benchmark was performed in this UI pass.

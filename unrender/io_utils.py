@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List
 
 
 def resolve_image(image: str, split_path: str | Path) -> str:
@@ -15,18 +15,28 @@ def resolve_image(image: str, split_path: str | Path) -> str:
     Never search the working directory or guess a dataset root. Missing images
     remain resolvable so evaluation can record them as input failures.
     """
+    parts = Path(image).parts
+    if (
+        len(parts) >= 2
+        and parts[0] == "data"
+        and parts[1] in {"synthetic_v0", "synthetic_v1", "synthetic_v2"}
+    ):
+        raise ValueError(
+            "historical repository-relative images are unsupported for new inference; "
+            "rescore saved predictions or use a current split-relative dataset"
+        )
     if Path(image).is_absolute():
         return image
     return str(Path(split_path).resolve().parent / image)
 
 
-def read_jsonl(path, limit: int = 0) -> List[dict]:
+def read_jsonl(path, limit: int = 0) -> list[dict]:
     """Read a .jsonl file into a list of dicts, streaming line-by-line.
 
     Blank lines are skipped. With ``limit > 0`` it stops after ``limit`` records
     — so taking a prefix of a huge file doesn't read the whole thing.
     """
-    out: List[dict] = []
+    out: list[dict] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()

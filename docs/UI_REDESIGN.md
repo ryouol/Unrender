@@ -4,7 +4,7 @@ This records the approved Instrument redesign and the disposition of every item 
 
 **Stack:** Python/FastAPI/Starlette and Pydantic; SQLite and private files on the Render persistent disk; plain JavaScript, HTML and handwritten CSS; Docker on Render with Modal inference and backup integration. There is no React, Svelte, Supabase, Firebase or browser database SDK.
 
-The [original source security audit and endpoint inventory](UI_SECURITY_BASELINE.md#endpoint-protection-inventory) preceded implementation. Final commands, results and browser evidence belong in [design-qa.md](../design-qa.md); this report deliberately does not duplicate changing test totals.
+The [original source security audit and endpoint inventory](UI_SECURITY_BASELINE.md#endpoint-protection-inventory) preceded implementation. Final commands, results and browser evidence belong in [design-qa.md](design/VISUAL_QA_RECORD.md); this report deliberately does not duplicate changing test totals.
 
 ## Implemented direction
 
@@ -20,7 +20,7 @@ The user selected and refined the Instrument direction before coding: [approved 
 
 The model, weights, inference contract, credit rules and provider deployment were not changed by the redesign. Existing CSRF, origin, tenant-ownership, input-limit, private-source/export, account-generation, logout-barrier and stale-response guards remain part of the product. Hidden controls are presentation, not authorization.
 
-Local validation used saved exact replay, including enabled local signup → upload → correction → approval → Download workbook. It did not make a new extraction-provider call or start a paid GPU run. Local signup verification does not enable public production signup. Browser checks covered 1440px, 1100px and 390px widths, light/dark presentation, theme persistence, menu focus/navigation, sticky CTA and dirty-edit safeguards; see [design-qa.md](../design-qa.md) for the exact evidence and limits.
+Local validation used saved exact replay, including enabled local signup → upload → correction → approval → Download workbook. It did not make a new extraction-provider call or start a paid GPU run. Local signup verification does not enable public production signup. Browser checks covered 1440px, 1100px and 390px widths, light/dark presentation, theme persistence, menu focus/navigation, sticky CTA and dirty-edit safeguards; see [design-qa.md](design/VISUAL_QA_RECORD.md) for the exact evidence and limits.
 
 ## Checklist disposition
 
@@ -71,7 +71,7 @@ Phase 1 does not waive existing [security-model launch actions](SECURITY_MODEL.m
 
 | Checklist item | Status and reason |
 |---|---|
-| No horizontal page scroll | ✅ done at checked widths — Flexible grid tracks and the sidebar breakpoint resolve the previous 1100px overflow. Intentional table/source scrolling remains inside its pane. See measured browser scope in [design-qa.md](../design-qa.md). |
+| No horizontal page scroll | ✅ done at checked widths — Flexible grid tracks and the sidebar breakpoint resolve the previous 1100px overflow. Intentional table/source scrolling remains inside its pane. See measured browser scope in [design-qa.md](design/VISUAL_QA_RECORD.md). |
 | Real mobile breakpoints across pages | ✅ done — Landing, account/legal shells and workspace have narrow/tablet layouts. The workspace sidebar collapses below 1180px; review stacks at 760px and below. |
 | Working mobile menu | ✅ done — Landing uses a labeled Menu button and native modal dialog for focus containment, Escape/close behavior, focus return and close-on-navigation. Auth/workspace controls remain directly available rather than adding an unnecessary drawer. |
 | Sticky mobile CTA | ✅ done — The landing CTA appears when the main action leaves view and hides during dialogs. Upload's extraction action remains sticky; the mobile review keeps source context available. |
@@ -130,7 +130,7 @@ The owner supplied `royluo05@gmail.com` as the public support contact on Septemb
 
 - Supply and review the legal/contact information above; decide whether analytics should be installed at all, then implement only the approved consent, event and CSP policy.
 - Verify deployed Render/Modal access with the operator. Source inspection cannot attest to private cloud IAM, volume sharing or credential scopes.
-- Use [design-qa.md](../design-qa.md) and [UI_CODE_REVIEW.md](UI_CODE_REVIEW.md) for the final tested scope and review disposition.
+- Use [design-qa.md](design/VISUAL_QA_RECORD.md) and [UI_CODE_REVIEW.md](UI_CODE_REVIEW.md) for the final tested scope and review disposition.
 - Keep production signup, SMTP delivery, billing, credit policy and provider spending behind their existing operator decisions. Local replay validation does not authorize any of them.
 - Revalidate larger-document preview fidelity separately if needed. The new marketing chart fixes the public asset's blur; CSS zoom cannot recover missing pixels in an uploaded raster or narrow PDF crop.
 

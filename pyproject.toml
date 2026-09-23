@@ -39,9 +39,9 @@ Issues = "https://github.com/ryouol/Unrender/issues"
 eval = [
     "rapidfuzz>=3.6",
     "python-dotenv>=1.0",
-    "openai>=1.30",
+    "openai>=3.16.2,<4",
     "anthropic>=0.34",
-    "google-genai>=0.3",
+    "google-genai>=2.24.0,<3",
 ]
 # CUDA training uses requirements-train.lock (exact Linux wheel hashes), then
 # install the project with --no-deps. Do not resolve a separate mutable train extra.
@@ -68,11 +68,7 @@ unrender-operations-check = "unrender.product.operations_check:main"
 [tool.setuptools.packages.find]
 include = ["unrender*"]
 
-# Ship the frozen eval subsets (common300.json, etc.) with the package — they are
-# data, not code, so without this a `pip install` (and any in-container read) would
-# miss them. The Modal score step now also writes resolved ids to a container-local
-# file, but packaging keeps `python -m unrender.eval.score --subset <name>` working
-# from an installed wheel too.
+# Include frozen subsets so scoring also works from an installed wheel.
 [tool.setuptools.package-data]
 "unrender.eval" = ["subsets/*.json"]
 "unrender.product" = [
@@ -88,9 +84,7 @@ include = ["unrender*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Put the repo root on sys.path so top-level modules (e.g. modal_train.py, which
-# is a script, not part of the installed `unrender` package) import under a bare
-# `pytest` invocation, not only `python -m pytest` (which adds CWD implicitly).
+# Include top-level Modal and analysis modules during test collection.
 pythonpath = ["."]
 
 [tool.ruff]

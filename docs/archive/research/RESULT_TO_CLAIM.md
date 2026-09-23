@@ -2,8 +2,8 @@
 
 > Historical research notes below use earlier checkpoints and scoring rules. They
 > do not certify current deployment quality or the new strict-table contract.
-> Follow [EVALUATION_CONTRACT.md](docs/EVALUATION_CONTRACT.md) and the
-> [readiness plan](docs/REVIEW_READINESS_PLAN.md) for current work and open gates.
+> Follow [EVALUATION_CONTRACT.md](../../EVALUATION_CONTRACT.md) and the
+> [readiness plan](../../REVIEW_READINESS_PLAN.md) for current work and open gates.
 
 **Date**: 2026-06-16
 **Judge**: consolidated from independent reviews — the cross-model Codex audit (`EXPERIMENT_AUDIT.json`, claims C1–C10) + the fresh-Claude path review (`RESEARCH_REVIEW.md`, verified ceiling + claims matrix). No new Codex call (per user preference; heavy judgment already done independently — avoiding redundant adjudication).

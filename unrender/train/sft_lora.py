@@ -132,10 +132,7 @@ def build_dataset(records: list[dict]):
 
 
 def _numeric_token_ids(tokenizer) -> set:
-    """Token ids whose surface form contains a digit — the fraction/number tokens
-    the geometry target's precision lives in. Up-weighting their loss makes the
-    model care about 0.314 vs 0.341 (the Stage-A coordinate-precision failure).
-    Pure Python (no torch) so it's unit-testable off the GPU box."""
+    """Token IDs containing a digit, used by the weighted loss."""
     out = set()
     for tid in range(len(tokenizer)):
         tok = tokenizer.convert_ids_to_tokens(tid)
@@ -145,11 +142,7 @@ def _numeric_token_ids(tokenizer) -> set:
 
 
 def _eval_save_steps(total_steps: int, n_evals: int) -> int:
-    """Eval/save interval giving ~`n_evals` checkpoints over a `total_steps` run.
-    Floored at 10 and capped at the run length so at least one eval always fires
-    (load_best_model_at_end needs a recorded metric). save_steps == eval_steps, so
-    the HF 'save must be a multiple of eval' constraint holds trivially. Pure
-    arithmetic -> unit-testable off the GPU box."""
+    """Keep eval/save intervals equal and ensure at least one evaluation."""
     if total_steps <= 0:
         return 10
     return min(total_steps, max(10, total_steps // max(1, n_evals)))
@@ -225,11 +218,7 @@ def _train_owned(
     )
     dataset = build_dataset(records)
 
-    # Validation set for best-checkpoint selection (the fairness fix — the old
-    # table-LoRA merged the FINAL checkpoint with no val, which the audit flagged
-    # as an unfair anchor). Unweighted (natural distribution) and capped so the
-    # eval passes stay cheap; the [:val_size] slice is deterministic because
-    # load_records shuffles by `seed`. None => no eval (smoke stays a plumbing check).
+    # Validation uses natural sampling; the seeded shuffle makes the cap reproducible.
     eval_dataset = None
     if val_paths:
         val_records = load_records(
@@ -308,10 +297,7 @@ def _train_owned(
     # max_steps overrides epochs when set (>0) — handy for a quick smoke run.
     steps_kw = {"max_steps": max_steps} if max_steps > 0 else {"num_train_epochs": epochs}
 
-    # Best-checkpoint selection on the val set (only when a val set was built).
-    # eval_loss under each arm's OWN objective (the numeric-weighted CE for the
-    # lever arm, plain CE for the baseline) — within-arm selection, so the
-    # lever-vs-baseline contrast stays clean. ~n_evals eval points over the run.
+    # Select within each arm using its own validation objective.
     eval_kw: dict = {}
     if eval_dataset is not None:
         eff_batch = batch_size * grad_accum

@@ -1214,9 +1214,10 @@ function applyKeyboardCrop() {
   if (!Object.values(crop).every(Number.isFinite)
     || crop.x < 0 || crop.y < 0 || crop.width < 0.05 || crop.height < 0.05
     || crop.x + crop.width > 1 || crop.y + crop.height > 1) {
-    showToast("Crop percentages must stay within the source");
+    showError("crop-error", new Error("Left + width and top + height must each be at most 100%. Width and height must be at least 5%."));
     return;
   }
+  clearError("crop-error");
   state.crop = crop.width === 1 && crop.height === 1 && crop.x === 0 && crop.y === 0
     ? null
     : crop;
@@ -1443,6 +1444,27 @@ function actionButton(label, kind, handler) {
   return button;
 }
 
+function setJobSourceImage(job) {
+  const image = byId("job-source-image");
+  const sourceUrl = `/api/jobs/${routeSegment(job.id)}/source`;
+  if (image.getAttribute("src") === sourceUrl) return;
+  window.clearTimeout(state.sourceRetryTimer);
+  const auth = state.authEpoch;
+  let retries = 0;
+  image.onerror = () => {
+    if (auth !== state.authEpoch || state.currentJob?.id !== job.id) return;
+    if (retries >= 5) {
+      byId("source-page-label").textContent = "Source could not load. Reopen this chart to retry.";
+      return;
+    }
+    state.sourceRetryTimer = window.setTimeout(() => {
+      if (auth === state.authEpoch && state.currentJob?.id === job.id) image.src = sourceUrl;
+    }, Math.min(30000, 2000 * 2 ** retries++));
+  };
+  image.onload = () => window.clearTimeout(state.sourceRetryTimer);
+  image.src = sourceUrl;
+}
+
 function renderJob() {
   const job = state.currentJob;
   if (!job) return;
@@ -1451,7 +1473,7 @@ function renderJob() {
   byId("review-filename").textContent = chartName(job);
   byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage}${job.result_version ? ` · Version ${job.result_version}` : ""} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
-  byId("job-source-image").src = `/api/jobs/${routeSegment(job.id)}/source?v=${routeSegment(job.updated_at)}`;
+  setJobSourceImage(job);
   const error = byId("job-error");
   if (job.error) {
     error.textContent = job.error.message;
@@ -1464,12 +1486,14 @@ function renderJob() {
   setHidden("review-notice", !resultReady || job.status === "approved");
   setHidden("result-loading", Boolean(resultReady));
   setHidden("result-form", !resultReady);
-  byId("result-loading").textContent = job.error?.message || job.progress_stage;
+  byId("result-loading").textContent = job.error?.message || (["queued", "running"].includes(job.status)
+    ? `${job.progress_stage} · ${Math.max(0, Math.floor((Date.now() - Date.parse(job.provider_dispatched_at || job.updated_at)) / 1000))} seconds in this stage. You can return to My charts; extraction continues in the background.`
+    : job.progress_stage);
   byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
   renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
   renderExtractionEvidence(job, Boolean(resultReady));
-  if (resultReady) renderEditor(job.result);
+  if (resultReady) { resetReviewTools(); renderEditor(job.result); }
   renderJobActions();
   setHidden("audit-list", true);
   setHidden("version-list", true);
@@ -1734,6 +1758,7 @@ async function jobMutation(action) {
 }
 
 function clearSelectedChart() {
+  resetReviewTools();
   state.currentJob = null;
   state.editorDirty = false;
   state.editorRows = [];
@@ -1742,6 +1767,9 @@ function clearSelectedChart() {
   byId("result-form").reset();
   byId("result-form").inert = false;
   byId("result-form").removeAttribute("aria-busy");
+  window.clearTimeout(state.sourceRetryTimer);
+  byId("job-source-image").onerror = null;
+  byId("job-source-image").onload = null;
   byId("job-source-image").removeAttribute("src");
   byId("job-source-image").style.width = "";
   byId("job-source-image").className = "";
@@ -1869,8 +1897,10 @@ function renderResultTable() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "Remove";
+    remove.setAttribute("aria-label", `Remove row ${rowIndex + 1}: ${item.x}`);
     remove.addEventListener("click", () => {
       collectEditorRows();
+      checkpointEditor();
       state.editorRows.splice(rowIndex, 1);
       markEditorDirty();
       const pageCount = Math.max(1, Math.ceil(state.editorRows.length / EDITOR_PAGE_SIZE));
@@ -1926,6 +1956,7 @@ function addEditorRow() {
     showToast("This result already contains the maximum 10,000 values");
     return;
   }
+  checkpointEditor();
   state.editorRows.push({ seriesIndex: 0, x: "", xType: "string", y: "" });
   markEditorDirty();
   state.editorPage = Math.floor((state.editorRows.length - 1) / EDITOR_PAGE_SIZE);
@@ -2120,7 +2151,8 @@ async function loadVersions(before = null, append = false) {
     restore.className = "text-button";
     restore.textContent = "Restore as new correction";
     restore.addEventListener("click", () => restoreVersion(item));
-    entry.append(title, time, restore);
+    const compare = actionButton("Compare with current", "text-button", () => compareVersion(item));
+    entry.append(title, time, compare, restore);
     list.append(entry);
   }
   if (payload.next_before !== null) {
@@ -2357,6 +2389,7 @@ function closeKeyDialog() {
 }
 
 function bindEvents() {
+  bindReviewTools();
   for (const id of ["google-signin", "google-signup"]) byId(id)?.addEventListener("click", startGoogleLogin);
   bindLibraryEvents();
   bindSettingsEvents();

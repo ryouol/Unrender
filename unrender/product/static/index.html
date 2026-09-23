@@ -9,6 +9,7 @@
     <script src="/static/previews.js" defer></script>
     <script src="/static/library.js" defer></script>
     <script src="/static/settings.js" defer></script>
+    <script src="/static/review-tools.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body class="product-shell">
@@ -136,13 +137,14 @@
               <details class="crop-options"><summary>Set crop with keyboard</summary>
               <fieldset class="crop-fields">
                 <legend>Keyboard crop (percent of source)</legend>
-                <label>Left<input id="crop-left-input" type="number" min="0" max="95" step="1" value="0"></label>
-                <label>Top<input id="crop-top-input" type="number" min="0" max="95" step="1" value="0"></label>
-                <label>Width<input id="crop-width-input" type="number" min="5" max="100" step="1" value="100"></label>
-                <label>Height<input id="crop-height-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <label>Left<input aria-describedby="crop-error" id="crop-left-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Top<input aria-describedby="crop-error" id="crop-top-input" type="number" min="0" max="95" step="1" value="0"></label>
+                <label>Width<input aria-describedby="crop-error" id="crop-width-input" type="number" min="5" max="100" step="1" value="100"></label>
+                <label>Height<input aria-describedby="crop-error" id="crop-height-input" type="number" min="5" max="100" step="1" value="100"></label>
                 <button class="button button-secondary" id="apply-crop-button" type="button">Apply crop</button>
               </fieldset>
               </details>
+              <p id="crop-error" class="form-error" role="alert" hidden></p>
               <div class="crop-stage" id="crop-stage">
                 <img id="upload-preview" alt="Selected upload page">
                 <div class="crop-selection" id="crop-selection" hidden></div>
@@ -209,6 +211,17 @@
                     <div class="series-editor-list" id="series-editor-list"></div>
                   </fieldset>
                   </details>
+                  <div class="review-tools" aria-label="Table editing">
+                    <button id="undo-edit" class="text-button" type="button" disabled>Undo</button>
+                    <button id="redo-edit" class="text-button" type="button" disabled>Redo</button>
+                    <button id="reverse-rows" class="text-button" type="button">Reverse rows within each series</button>
+                  </div>
+                  <details class="metadata-details"><summary>Paste a table from a spreadsheet</summary>
+                    <label>Tab-separated rows<textarea id="bulk-values" maxlength="1000000" rows="5" aria-describedby="bulk-hint"></textarea></label>
+                    <p id="bulk-hint">Paste category and value columns without headers. For multiple series, add the series number as the first column. Blank values remain missing.</p>
+                    <button id="paste-values" type="button" class="button button-secondary">Replace table with pasted rows</button>
+                    <p id="bulk-error" class="form-error" role="alert" hidden></p>
+                  </details>
                   <div class="table-scroll"><table class="data-table" id="result-table"></table></div>
                   <div class="editor-pagination" aria-label="Result value pages">
                     <button class="text-button" id="editor-previous-page" type="button">Previous values</button>
@@ -222,6 +235,7 @@
                 </form>
               </section>
             </div>
+            <section id="version-comparison" class="version-comparison" tabindex="-1" hidden></section>
             <div class="review-footnote"><span>Keep your source and review history with your work.</span><span>CSV · JSON · XLSX</span></div>
             <section class="audit-panel" aria-labelledby="audit-heading">
               <div class="pane-heading"><h3 id="audit-heading">History &amp; audit</h3><div class="history-actions"><button class="text-button" id="toggle-versions-button" type="button">Show versions</button><button class="text-button" id="toggle-audit-button" type="button">Show activity</button></div></div>

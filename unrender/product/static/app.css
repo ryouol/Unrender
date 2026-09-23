@@ -432,3 +432,20 @@ dialog::backdrop { background: rgb(12 18 30 / .4); }
 .extraction-details dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
 .extraction-details dt { font-weight: 600; }
 .extraction-details dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Keep the source and editable values visible together on ordinary laptop screens. */
+#job-view .job-commandbar { margin-bottom: 8px; }
+#job-view .workflow-steps { margin: 6px 0; padding-bottom: 0; }
+#job-view .review-notice { margin-bottom: 8px; }
+#job-view .extraction-details { margin-bottom: 8px; }
+.review-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.version-comparison { padding: 16px; border: 1px solid var(--line); overflow-wrap: anywhere; }
+#bulk-values { width: 100%; font: inherit; background: var(--surface); color: var(--ink); }
+#library-view.is-empty .library-toolbar { display: none; }
+#library-view.is-empty { min-height: 0; }
+.empty-state { margin-top: 24px; }
+@media (max-width: 700px) {
+  #job-view .source-canvas { min-height: 0; max-height: 35vh; }
+  #job-view .source-canvas img { max-height: 32vh; }
+  #job-view .pane-heading { min-height: 44px; }
+}

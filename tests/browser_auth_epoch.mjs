@@ -70,7 +70,7 @@ const context = {
   AbortController,
   Error,
   FormData,
-  Headers,
+  Headers, URLSearchParams,
   Intl,
   JSON,
   Map,
@@ -264,10 +264,10 @@ context.fetch = async (path, options = {}) => {
       json: async () => ({ ...test.state.account, principal_marker: "job-principal" }),
     };
   }
-  if (path.startsWith("/api/jobs?")) {
+  if (path.startsWith("/api/library?")) {
     return {
       ok: true, status: 200, headers: { get: () => "application/json" },
-      json: async () => ({ items: [{ id: "job-1", status: "queued" }], next_cursor: null }),
+      json: async () => ({ items: [{ id: "job-1", status: "queued" }], next_cursor: null, page: 0, total: 1, counts: { all: 1 } }),
     };
   }
   if (path === "/api/jobs/job-1") {
@@ -310,10 +310,10 @@ context.fetch = async (path, options = {}) => {
       json: async () => ({ ...test.state.account, principal_marker: "job-principal" }),
     };
   }
-  if (path.startsWith("/api/jobs?")) {
+  if (path.startsWith("/api/library?")) {
     return {
       ok: true, status: 200, headers: { get: () => "application/json" },
-      json: async () => ({ items: [{ id: "job-2", status: "queued" }], next_cursor: null }),
+      json: async () => ({ items: [{ id: "job-2", status: "queued" }], next_cursor: null, page: 0, total: 1, counts: { all: 1 } }),
     };
   }
   if (path === "/api/jobs/job-2") {
@@ -482,7 +482,7 @@ assert.equal(test.state.upload.id, "pending-upload");
 test.state.jobsInitialized = false;
 let listAttempts = 0;
 context.fetch = async (path) => {
-  if (path.startsWith("/api/jobs") && ++listAttempts === 1) throw new Error("temporary network failure");
+  if (path.startsWith("/api/library") && ++listAttempts === 1) throw new Error("temporary network failure");
   return {
     ok: true, status: 200, headers: { get: () => "application/json" },
     json: async () => path === "/api/me"

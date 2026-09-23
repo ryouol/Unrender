@@ -111,7 +111,7 @@ function makeTab({ broadcast = true } = {}) {
     BroadcastChannel: broadcast ? SharedBroadcastChannel : undefined,
     Error,
     FormData,
-    Headers,
+    Headers, URLSearchParams,
     Intl,
     JSON,
     Map,

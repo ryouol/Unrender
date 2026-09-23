@@ -52,6 +52,16 @@ def install_library_routes(
         clear_cookies(response)
         return result
 
+    @app.get("/api/library")
+    def chart_page(
+        page: int = Query(default=0, ge=0, le=1000),
+        search: str = Query(default="", max_length=120),
+        project: str = Query(default="", max_length=80),
+        status: str = "all",
+        user: Any = current_user,
+    ):
+        return library.page(user["id"], page=page, search=search, project=project, status=status)
+
     @app.get("/api/projects")
     def list_projects(user: Any = current_user):
         return library.list_projects(user["id"])

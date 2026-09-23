@@ -181,3 +181,27 @@ def test_expired_keys_allow_replacement_at_active_and_retained_limits(tmp_path):
     new = service.create_api_key(user_id=user, name="Replacement")
     assert service.api_key_user(old["key"]) is None
     assert service.api_key_user(new["key"]) is not None
+
+
+def test_populated_schema15_migration_preserves_credentials_and_jobs(tmp_path):
+    from test_product import _paid_job, customer_id, service_for
+
+    service = service_for(tmp_path)
+    user = customer_id(service)
+    job = _paid_job(service, user, color="green")
+    key = service.create_api_key(user_id=user, name="Existing integration")
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("ALTER TABLE api_keys DROP COLUMN scope")
+        conn.execute("ALTER TABLE api_keys DROP COLUMN expires_at")
+        conn.execute("DROP TABLE dispatch_budget")
+        conn.execute("UPDATE schema_meta SET version=15")
+    service.database.initialize()
+    service.database.initialize()  # Restart after migration is idempotent.
+    authenticated = service.api_key_user(key["key"])
+    assert authenticated["id"] == user
+    assert authenticated["api_key_scope"] == "extract"
+    assert service.get_job(user_id=user, job_id=job["id"])["status"] == "queued"
+    with service.database.connect() as conn:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 16
+        assert conn.execute("SELECT expires_at FROM api_keys").fetchone()[0] is None
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

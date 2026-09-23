@@ -50,6 +50,10 @@ function setLibraryPreviewsActive(enabled) {
   if (!enabled) {
     libraryPreviews.queue = [];
     cancelPreviewRetry();
+    if (libraryPreviews.active) {
+      libraryPreviews.active.entry.status = "queued";
+      libraryPreviews.active.controller.abort();
+    }
   }
 }
 
@@ -59,10 +63,6 @@ function resetLibraryPreviews() {
   for (const entry of libraryPreviews.entries.values()) releaseLibraryPreview(entry);
   libraryPreviews.entries.clear();
   libraryPreviews.active?.controller.abort();
-}
-
-async function waitForLibraryPreview() {
-  await libraryPreviews.active?.finished;
 }
 
 function syncLibraryPreviews(cards) {
@@ -93,9 +93,7 @@ async function drainLibraryPreviews() {
       entry.status = "loading";
       entry.attempts += 1;
       const controller = new AbortController();
-      let finish;
-      const finished = new Promise((resolve) => { finish = resolve; });
-      libraryPreviews.active = { entry, controller, finished };
+      libraryPreviews.active = { entry, controller };
       try {
         const blob = await api(entry.path, {
           responseType: "blob", timeoutMs: 30000, signal: controller.signal,
@@ -120,7 +118,6 @@ async function drainLibraryPreviews() {
         } else failLibraryPreview(entry);
       } finally {
         libraryPreviews.active = null;
-        finish();
       }
     }
   } finally {

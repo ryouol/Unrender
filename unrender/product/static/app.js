@@ -93,12 +93,13 @@ async function api(path, options = {}) {
   delete requestOptions.timeoutMs;
   delete requestOptions.responseType;
   const parentSignal = requestOptions.signal || state.authController.signal;
-  const timed = options.timeoutMs ? new AbortController() : null;
+  const timeoutMs = options.timeoutMs ?? (body instanceof FormData ? 120000 : 30000);
+  const timed = new AbortController();
   const cancel = () => timed?.abort();
   if (timed) parentSignal.addEventListener("abort", cancel, { once: true });
   if (parentSignal.aborted) cancel();
   let expired = false;
-  const timer = timed ? window.setTimeout(() => { expired = true; timed.abort(); }, options.timeoutMs) : null;
+  const timer = timed ? window.setTimeout(() => { expired = true; timed.abort(); }, timeoutMs) : null;
   let response;
   let payload;
   try {
@@ -1383,7 +1384,6 @@ async function openJob(jobId, { throwOnError = false } = {}) {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
     const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal, timeoutMs: 30000 });
-    await waitForLibraryPreview();
     if (view.epoch !== state.viewEpoch) throw staleAuthError();
     state.currentJob = job;
     state.jobs = state.jobs.map((item) => item.id === job.id ? {
@@ -1404,9 +1404,12 @@ async function openJob(jobId, { throwOnError = false } = {}) {
     }
     return job;
   } catch (error) {
-    if (error.status === 429 && state.currentJob?.id === jobId
+    if (!isStaleRequest(error) && (!error.status || error.status === 429 || error.status >= 500)
+      && authEpoch === state.authEpoch && view.epoch === state.viewEpoch
+      && state.currentJob?.id === jobId
       && ["queued", "running"].includes(state.currentJob.status)) {
-      state.pollDelay = 5000;
+      state.pollDelay = Math.min(30000, Math.max(5000, state.pollDelay * 2));
+      showToast("Connection interrupted. Reconnecting automatically…");
       state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
     } else {
       if (throwOnError) throw error;

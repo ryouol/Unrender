@@ -51,6 +51,7 @@ class Settings:
     smtp_password: str = ""
     email_from: str = ""
     require_email_verification: bool = False
+    require_verified_trial: bool = False
     seed_demo_account: bool = True
     session_ttl_hours: int = 24 * 7
     upload_ttl_hours: int = 24
@@ -85,6 +86,7 @@ class Settings:
     mandatory_database_rows_global: int = 512
     max_billing_events_global: int = 100_000
     max_provider_attempts_per_job: int = 100
+    max_provider_dispatches_per_day: int = 100
     idempotency_ttl_hours: int = 24 * 30
     idempotency_tombstone_days: int = 365
     max_idempotency_records_per_user: int = 10_000
@@ -304,6 +306,8 @@ class Settings:
             raise ValueError("Active API-key limit cannot exceed retained-key limit")
         if self.max_audit_events_per_job > self.max_audit_events_per_user:
             raise ValueError("Per-job audit limit cannot exceed the tenant audit limit")
+        if self.max_provider_dispatches_per_day < 0:
+            raise ValueError("Daily provider dispatch limit must not be negative")
         admission_limits = (
             self.auth_rate_limit_per_minute,
             self.global_rate_limit_per_minute,
@@ -366,6 +370,8 @@ class Settings:
             worker_lease_seconds=_int("UNRENDER_WORKER_LEASE_SECONDS", 45),
             worker_heartbeat_seconds=_int("UNRENDER_WORKER_HEARTBEAT_SECONDS", 10),
             worker_shutdown_timeout_seconds=_int("UNRENDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 30),
+            max_provider_dispatches_per_day=_int("UNRENDER_MAX_PROVIDER_DISPATCHES_PER_DAY", 100),
+            require_verified_trial=_bool("UNRENDER_REQUIRE_VERIFIED_TRIAL", False),
             allow_registration=_bool("UNRENDER_ALLOW_REGISTRATION", True),
             google_client_id=os.getenv("UNRENDER_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("UNRENDER_GOOGLE_CLIENT_SECRET", ""),

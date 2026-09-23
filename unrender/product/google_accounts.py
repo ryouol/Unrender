@@ -150,7 +150,9 @@ class GoogleAccounts:
                 (user_id, email, owns_email(claims), timestamp()),
                 user_id=None,
             )
-            if self.service.settings.initial_credits:
+            if self.service.settings.initial_credits and (
+                not self.service.settings.require_verified_trial or owns_email(claims)
+            ):
                 self.service._change_credits(
                     conn,
                     user_id=user_id,

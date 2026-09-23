@@ -30,6 +30,8 @@ services:
         value: "4000000"
       - key: UNRENDER_MAX_CONCURRENT_AUTH_REQUESTS
         value: "1"
+      - key: UNRENDER_MAX_PROVIDER_DISPATCHES_PER_DAY
+        value: "20"
       - key: UNRENDER_GLOBAL_RATE_LIMIT_PER_MINUTE
         value: "600"
       - key: UNRENDER_GLOBAL_AUTH_RATE_LIMIT_PER_MINUTE
@@ -44,6 +46,8 @@ services:
         value: "true"
       - key: UNRENDER_REQUIRE_EMAIL_VERIFICATION
         value: "false"
+      - key: UNRENDER_REQUIRE_VERIFIED_TRIAL
+        value: "true"
       - key: UNRENDER_INITIAL_CREDITS
         value: "3"
       - key: UNRENDER_SEED_DEMO

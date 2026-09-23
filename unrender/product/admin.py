@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 from pathlib import Path
 
@@ -47,6 +48,9 @@ def parser() -> argparse.ArgumentParser:
         "check-provider-contract",
         help="resolve the configured Modal function without invoking inference",
     )
+    commands.add_parser("usage", help="aggregate account/job counts and dispatch allowance")
+    dispatch = commands.add_parser("dispatch", help="pause or resume global provider admission")
+    dispatch.add_argument("action", choices=["pause", "resume", "status"])
     return root
 
 
@@ -77,6 +81,39 @@ def main() -> None:
             f"Resolved Modal contract {settings.modal_app_name}/{settings.modal_function_name}; "
             "no inference was invoked"
         )
+        return
+    if arguments.command in {"usage", "dispatch"}:
+        from unrender.product.dispatch_budget import status
+        from unrender.product.service import timestamp
+
+        database = Database(settings.database_path)
+        database.initialize()
+        with database.transaction(immediate=True) as conn:
+            day = timestamp()[:10]
+            if arguments.command == "dispatch" and arguments.action != "status":
+                conn.execute(
+                    "INSERT OR IGNORE INTO dispatch_budget(id,day,used) VALUES (1,?,0)", (day,)
+                )
+                conn.execute(
+                    "UPDATE dispatch_budget SET paused=? WHERE id=1",
+                    (int(arguments.action == "pause"),),
+                )
+            result = {"dispatch": status(conn, day, settings.max_provider_dispatches_per_day)}
+            if arguments.command == "usage":
+                result["accounts"] = dict(
+                    conn.execute(
+                        "SELECT COUNT(*) AS total,COALESCE(SUM(created_at>=?),0) AS created_today "
+                        "FROM users WHERE account_kind='customer'",
+                        (day,),
+                    ).fetchone()
+                )
+                result["jobs_by_status"] = {
+                    row["status"]: row["count"]
+                    for row in conn.execute(
+                        "SELECT status,COUNT(*) AS count FROM jobs GROUP BY status"
+                    )
+                }
+        print(json.dumps(result, indent=2))
         return
     if arguments.command not in {"create-user", "grant-credits", "invite-user", "account-link"}:
         raise SystemExit(2)

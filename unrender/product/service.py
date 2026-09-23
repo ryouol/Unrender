@@ -28,6 +28,7 @@ from unrender.product.config import Settings
 from unrender.product.database import Database
 from unrender.product.dispatch_budget import reserve_dispatch
 from unrender.product.extractors import ExtractionError, Extractor
+from unrender.product.preview_cache import PreviewCache
 from unrender.product.provenance import (
     MAX_RECEIPT_BYTES,
     Crop,
@@ -95,6 +96,13 @@ def truncate_utf8(value: object, byte_limit: int) -> str:
     return encoded[:byte_limit].decode("utf-8", errors="ignore")
 
 
+JOB_LIST_COLUMNS = (
+    "id,source_name,display_name,project_id,source_mime,page_index,crop_json,"
+    "status,progress_stage,attempt,recovery_count,extractor,model_version,error_code,"
+    "error_message,approved_at,created_at,updated_at"
+)
+
+
 def public_job(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, Any]:
     result: dict[str, Any] = {
         "id": row["id"],
@@ -151,6 +159,7 @@ class ProductService:
         self.storage = storage
         self.extractor = extractor
         self.static_dir = static_dir
+        self._previews = PreviewCache()
         self._dummy_password_hash = hash_password("unrender timing defense password")
 
     def initialize(self, *, recover_jobs: bool = True) -> None:
@@ -2236,9 +2245,7 @@ class ProductService:
         created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT id,source_name,display_name,project_id,source_mime,page_index,crop_json,"
-                "status,progress_stage,attempt,recovery_count,extractor,model_version,error_code,"
-                "error_message,approved_at,created_at,updated_at FROM jobs WHERE user_id=? AND ("
+                f"SELECT {JOB_LIST_COLUMNS} FROM jobs WHERE user_id=? AND ("  # noqa: S608 -- fixed columns
                 "? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
                 "ORDER BY created_at DESC,id DESC LIMIT ?",
                 (user_id, created_at, created_at, created_at, row_id, bounded_limit + 1),
@@ -2357,7 +2364,8 @@ class ProductService:
 
     def job_source(self, *, user_id: str, job_id: str, thumbnail: bool = False) -> bytes:
         row = self._job_row(user_id=user_id, job_id=job_id)
-        try:
+
+        def render() -> bytes:
             return self.storage.page_png(
                 source=Path(row["source_path"]),
                 mime_type=row["source_mime"],
@@ -2365,6 +2373,12 @@ class ProductService:
                 crop=json.loads(row["crop_json"]) if row["crop_json"] else None,
                 max_edge=640 if thumbnail else 2200,
             )
+
+        try:
+            if thumbnail:
+                key = (user_id, job_id, row["source_sha256"], row["page_index"], row["crop_json"])
+                return self._previews.get(key, render)
+            return render()
         except InvalidUpload as exc:
             raise ProductError("source_unavailable", str(exc), 422) from exc
 

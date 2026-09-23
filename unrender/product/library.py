@@ -6,7 +6,13 @@ import sqlite3
 import unicodedata
 from typing import Any
 
-from unrender.product.service import ProductError, ProductService, public_job, timestamp
+from unrender.product.service import (
+    JOB_LIST_COLUMNS,
+    ProductError,
+    ProductService,
+    public_job,
+    timestamp,
+)
 
 MAX_PROJECTS = 50
 
@@ -27,6 +33,58 @@ def library_name(value: object, limit: int) -> str:
 class ChartLibrary:
     def __init__(self, service: ProductService):
         self.service = service
+
+    def page(
+        self,
+        user_id: str,
+        *,
+        page: int = 0,
+        search: str = "",
+        project: str = "",
+        status: str = "all",
+    ) -> dict[str, Any]:
+        if page < 0 or page > 1000 or len(search) > 120 or len(project) > 80:
+            raise ProductError("invalid_filter", "Invalid chart filter", 422)
+        if status not in {"all", "review", "approved", "failed", "queued", "running"}:
+            raise ProductError("invalid_filter", "Invalid chart status", 422)
+        where = (
+            "user_id=? AND (?='' OR project_id=?) "
+            "AND (?='' OR instr(unicode_fold(display_name || ' ' || source_name),"
+            "unicode_fold(?))>0)"
+        )
+        parameters: tuple[str, ...] = (user_id, project, project, search, search)
+        with self.service.database.transaction() as conn:
+            conn.create_function(
+                "unicode_fold",
+                1,
+                lambda value: unicodedata.normalize("NFC", value).casefold(),
+                deterministic=True,
+            )
+            counts = {
+                row["status"]: row["count"]
+                for row in conn.execute(
+                    "SELECT status,COUNT(*) AS count FROM jobs WHERE user_id=? GROUP BY status",
+                    (user_id,),
+                )
+            }
+            where += " AND (?='all' OR status=?)"
+            parameters += (status, status)
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM jobs WHERE {where}",  # noqa: S608 -- fixed fragments
+                parameters,
+            ).fetchone()[0]
+            page = min(page, max(0, (total - 1) // 24))
+            rows = conn.execute(
+                f"SELECT {JOB_LIST_COLUMNS} FROM jobs WHERE {where} "  # noqa: S608 -- fixed SQL fragments
+                "ORDER BY created_at DESC,id DESC LIMIT 24 OFFSET ?",
+                (*parameters, page * 24),
+            ).fetchall()
+        return {
+            "items": [public_job(row, include_result=False) for row in rows],
+            "page": page,
+            "total": total,
+            "counts": {**counts, "all": sum(counts.values())},
+        }
 
     @staticmethod
     def _project(conn: sqlite3.Connection, user_id: str, project_id: str) -> dict[str, Any]:

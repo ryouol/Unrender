@@ -1,5 +1,10 @@
-const library = { projects: [], projectsRequest: 0, filter: "all", project: "", search: "", page: 0, layout: "grid", dialog: null };
+const library = { projects: [], projectsRequest: 0, filter: "all", project: "", search: "", page: 0, layout: "grid", dialog: null, total: 0, counts: {}, request: 0, searchTimer: null };
 const LIBRARY_PAGE_SIZE = 24;
+
+
+function reloadJobs() {
+  void loadJobs().catch((error) => { if (!isStaleRequest(error)) showToast(error); });
+}
 
 function libraryIsVisible() {
   return Boolean(state.account) && (!byId("library-view").hidden || !byId("projects-view").hidden);
@@ -8,7 +13,7 @@ function libraryIsVisible() {
 function scheduleLibraryRefresh(delay = 10000) {
   if (!libraryIsVisible()) return;
   stopPolling();
-  if (document.visibilityState === "visible" && state.jobs.some((job) => ["queued", "running"].includes(job.status))) {
+  if (document.visibilityState === "visible" && (library.counts.queued || library.counts.running)) {
     state.pollTimer = window.setTimeout(() => refreshLibrary(), delay);
   }
 }
@@ -60,6 +65,10 @@ function applyChartMetadata(job) {
 function resetLibrary() {
   resetLibraryPreviews();
   library.refreshRequest = null;
+  library.request += 1;
+  window.clearTimeout(library.searchTimer);
+  library.total = 0;
+  library.counts = {};
   library.projects = [];
   library.filter = "all";
   library.project = "";
@@ -107,7 +116,11 @@ async function loadProjects() {
   const result = await libraryApi("/api/projects");
   if (request !== library.projectsRequest) return;
   library.projects = result.items;
-  if (library.project && !library.projects.some((project) => project.id === library.project)) library.project = "";
+  if (library.project && !library.projects.some((project) => project.id === library.project)) {
+    library.project = "";
+    library.page = 0;
+    await loadJobs();
+  }
   const select = byId("project-filter");
   select.replaceChildren(libraryNode("option", "All projects"));
   select.children[0].value = "";
@@ -121,15 +134,11 @@ async function loadProjects() {
 }
 
 function renderLibrary() {
-  const jobs = state.jobs.filter((job) => (
-    (library.filter === "all" || job.status === library.filter)
-    && (!library.project || job.project_id === library.project)
-    && `${chartName(job)} ${job.source_name}`.toLocaleLowerCase().includes(library.search)
-  ));
-  const pages = Math.max(1, Math.ceil(jobs.length / LIBRARY_PAGE_SIZE));
-  library.page = Math.min(library.page, pages - 1);
+  const jobs = state.jobs;
+  byId("library-view").classList.toggle("is-empty", !library.counts.all);
+  const pages = Math.max(1, Math.ceil(library.total / LIBRARY_PAGE_SIZE));
   for (const filter of ["all", "review", "approved"]) {
-    byId(`count-${filter}`).textContent = String(state.jobs.filter((job) => filter === "all" || job.status === filter).length);
+    byId(`count-${filter}`).textContent = String(library.counts[filter] || 0);
   }
   for (const button of document.querySelectorAll("[data-chart-filter]")) {
     button.setAttribute("aria-pressed", String(button.dataset.chartFilter === library.filter));
@@ -138,7 +147,7 @@ function renderLibrary() {
   list.classList.toggle("is-list", library.layout === "list");
   const mounted = new Map([...list.children].map((card) => [card.dataset.chartKey, card]));
   const cards = [];
-  for (const job of jobs.slice(library.page * LIBRARY_PAGE_SIZE, (library.page + 1) * LIBRARY_PAGE_SIZE)) {
+  for (const job of jobs) {
     const key = JSON.stringify([job.id, job.updated_at, job.status, chartName(job), job.project_id]);
     if (mounted.has(key)) { cards.push(mounted.get(key)); continue; }
     const article = libraryNode("article", "", "chart-item");
@@ -155,6 +164,10 @@ function renderLibrary() {
     const time = libraryNode("time", formatDate(job.updated_at || job.created_at));
     time.dateTime = job.updated_at || job.created_at;
     meta.append(status, time);
+    if (state.account?.retention_days) {
+      const expiry = new Date(Date.parse(job.updated_at) + state.account.retention_days * 86400000);
+      if (Number.isFinite(expiry.getTime())) meta.append(libraryNode("span", `Retained until ${formatDate(expiry.toISOString())}`));
+    }
     open.append(preview, name, meta);
     article.append(open, libraryMenu(`Actions for ${chartName(job)}`, [
       ["Rename chart", () => renameChart(job)],
@@ -165,13 +178,13 @@ function renderLibrary() {
   }
   list.replaceChildren(...cards);
   syncLibraryPreviews(cards);
-  byId("library-no-results").hidden = jobs.length > 0 || state.jobs.length === 0;
-  byId("empty-view").hidden = state.jobs.length > 0 || byId("library-view").hidden;
+  byId("library-no-results").hidden = jobs.length > 0 || !library.counts.all;
+  byId("empty-view").hidden = Boolean(library.counts.all) || byId("library-view").hidden;
   byId("library-pagination").hidden = pages === 1;
   byId("library-previous").disabled = library.page === 0;
   byId("library-next").disabled = library.page >= pages - 1;
   byId("library-page-note").textContent = `Page ${library.page + 1} of ${pages}`;
-  byId("library-count").textContent = `${jobs.length} chart${jobs.length === 1 ? "" : "s"} · Private to your workspace`;
+  byId("library-count").textContent = `${library.total} chart${library.total === 1 ? "" : "s"} · Private to your workspace`;
 }
 
 function showLibrary() {
@@ -395,15 +408,15 @@ function bindLibraryEvents() {
   for (const id of ["library-button", "back-to-library"]) byId(id).addEventListener("click", showLibrary);
   byId("projects-button").addEventListener("click", showProjects);
   for (const id of ["new-project-button", "add-project-button"]) byId(id).addEventListener("click", () => editProject());
-  byId("chart-search").addEventListener("input", (event) => { library.search = event.target.value.trim().toLocaleLowerCase(); library.page = 0; renderLibrary(); });
-  byId("project-filter").addEventListener("change", (event) => { library.project = event.target.value; library.page = 0; renderLibrary(); });
-  for (const button of document.querySelectorAll("[data-chart-filter]")) button.addEventListener("click", () => { library.filter = button.dataset.chartFilter; library.page = 0; renderLibrary(); });
+  byId("chart-search").addEventListener("input", (event) => { library.search = event.target.value.trim(); library.page = 0; library.request += 1; window.clearTimeout(library.searchTimer); library.searchTimer = window.setTimeout(reloadJobs, 200); });
+  byId("project-filter").addEventListener("change", (event) => { library.project = event.target.value; library.page = 0; reloadJobs(); });
+  for (const button of document.querySelectorAll("[data-chart-filter]")) button.addEventListener("click", () => { library.filter = button.dataset.chartFilter; library.page = 0; reloadJobs(); });
   for (const layout of ["grid", "list"]) byId(`${layout}-view-button`).addEventListener("click", () => {
     library.layout = layout;
     for (const choice of ["grid", "list"]) byId(`${choice}-view-button`).setAttribute("aria-pressed", String(choice === layout));
     renderLibrary();
   });
-  for (const [id, delta] of [["library-previous", -1], ["library-next", 1]]) byId(id).addEventListener("click", () => { library.page += delta; renderLibrary(); });
+  for (const [id, delta] of [["library-previous", -1], ["library-next", 1]]) byId(id).addEventListener("click", () => { library.page += delta; reloadJobs(); });
   byId("library-dialog-form").addEventListener("submit", submitLibraryDialog);
   byId("library-dialog-close").addEventListener("click", () => closeLibraryDialog());
   byId("library-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeLibraryDialog(); });

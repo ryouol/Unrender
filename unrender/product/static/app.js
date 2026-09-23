@@ -573,8 +573,6 @@ async function recoverDurableJobSubmission() {
     if (epoch !== state.authEpoch || state.principalMarker !== submission.principalMarker) {
       throw staleAuthError();
     }
-    if (!state.jobs.some((job) => job.id === jobId)) await loadJobs();
-    if (!state.jobs.some((job) => job.id === jobId)) return false;
     await openJob(jobId, { throwOnError: true });
     if (state.currentJob?.id !== jobId) throw staleAuthError();
     clearDurableJobSubmission(submission);
@@ -1078,23 +1076,21 @@ async function logout() {
 }
 
 async function loadJobs() {
-  const authEpoch = state.authEpoch;
-  const request = ++state.jobsRequest;
-  const jobs = [];
-  let cursor = null;
-  do {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=100` : "?limit=100";
-    const payload = await api(`/api/jobs${query}`, { authEpoch, timeoutMs: 30000 });
-    if (authEpoch !== state.authEpoch) throw staleAuthError();
-    jobs.push(...payload.items);
-    cursor = payload.next_cursor;
-  } while (cursor);
-  if (authEpoch !== state.authEpoch) throw staleAuthError();
-  if (request !== state.jobsRequest) return;
-  state.jobs = jobs;
+  const request = ++library.request;
+  const epoch = state.authEpoch;
+  const query = new URLSearchParams({ page: String(library.page), search: library.search,
+    project: library.project, status: library.filter });
+  const payload = await libraryApi(`/api/library?${query}`);
+  if (epoch !== state.authEpoch) throw staleAuthError();
+  if (request !== library.request) return;
+  state.jobs = payload.items;
   state.jobsInitialized = true;
+  library.page = payload.page;
+  library.total = payload.total;
+  library.counts = payload.counts;
   renderJobList();
 }
+
 
 function renderJobList() {
   if (!byId("library-view").hidden) renderLibrary();
@@ -1328,9 +1324,6 @@ async function queueCurrentUpload() {
     if (epoch !== state.authEpoch || state.principalMarker !== principal) throw staleAuthError();
     await refreshAccount();
     await loadJobs();
-    if (!state.jobs.some((item) => item.id === job.id)) {
-      throw new Error("The extraction was accepted but has not converged into the workspace yet");
-    }
     await openJob(job.id, { throwOnError: true });
     if (state.currentJob?.id !== job.id) throw staleAuthError();
     clearDurableJobSubmission(submission);

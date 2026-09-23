@@ -181,7 +181,7 @@ function harness({ authenticated = true } = {}) {
     addEventListener(name, handler) { windowListeners.set(name, handler); },
   };
   const context = {
-    AbortController, Error, FormData, Headers, Intl, JSON, Map, Math, Number, Object,
+    AbortController, Error, FormData, Headers, URLSearchParams, Intl, JSON, Map, Math, Number, Object,
     Promise, Set, String, TextEncoder, Uint8Array, URL: TestURL, crypto: webcrypto,
     document, window, encodeURIComponent, decodeURIComponent,
     localStorage: {
@@ -212,7 +212,12 @@ function harness({ authenticated = true } = {}) {
     vm.runInContext(`${name} = globalThis.replacement`, context);
     delete context.replacement;
   };
-  replace("loadJobs", async () => {});
+  replace("loadJobs", async () => {
+    test.library.total = test.state.jobs.length;
+    test.library.counts = { all: test.state.jobs.length };
+    for (const job of test.state.jobs) test.library.counts[job.status] = (test.library.counts[job.status] || 0) + 1;
+    if (!node("library-view").hidden) test.renderLibrary();
+  });
   replace("loadProjects", async () => {});
   replace("refreshAccount", async () => {});
   replace("renderJobList", () => {});
@@ -1079,6 +1084,12 @@ function useLibraryNetwork(h, respond) {
   }
   h.context.fetch = async (path, options) => {
     const body = await respond(path, options);
+    if (path.startsWith("/api/library?") && body?.items) {
+      body.page = 0;
+      body.total = body.items.length;
+      body.counts = { all: body.items.length };
+      for (const job of body.items) body.counts[job.status] = (body.counts[job.status] || 0) + 1;
+    }
     return { ok: true, status: 200, headers: new Headers({ "content-type": "application/json" }), json: async () => body };
   };
 }
@@ -1101,7 +1112,7 @@ await check("a chart completed in the background updates the library and permits
   let job = makeJob("background", "queued");
   let deleted = false;
   useLibraryNetwork(h, async (path, options) => {
-    if (path.startsWith("/api/jobs?")) return { items: deleted ? [] : [job], next_cursor: null };
+    if (path.startsWith("/api/library?")) return { items: deleted ? [] : [job], next_cursor: null };
     if (path === "/api/projects") return { items: [] };
     if (path === "/api/me") return libraryAccount();
     assert.equal(path, "/api/jobs/background");
@@ -1134,7 +1145,7 @@ await check("a late library refresh preserves a newly opened chart and its unsav
   const h = harness();
   const reply = deferred();
   useLibraryNetwork(h, async (path) => {
-    if (path.startsWith("/api/jobs?")) return reply.promise;
+    if (path.startsWith("/api/library?")) return reply.promise;
     if (path === "/api/projects") return { items: [] };
     if (path === "/api/me") return libraryAccount();
     assert.equal(path, "/api/jobs/reviewing");
@@ -1159,7 +1170,7 @@ await check("logout discards pending library, project, and account replies witho
   const reply = deferred();
   useLibraryNetwork(h, async (path) => {
     await reply.promise;
-    if (path.startsWith("/api/jobs?")) return { items: [makeJob("private", "queued")], next_cursor: null };
+    if (path.startsWith("/api/library?")) return { items: [makeJob("private", "queued")], next_cursor: null };
     if (path === "/api/projects") return { items: [{ id: "private-project", name: "Private project", chart_count: 1 }] };
     assert.equal(path, "/api/me");
     return libraryAccount();
@@ -1187,7 +1198,7 @@ await check("returning before a pending library refresh completes resumes one po
   let lists = 0;
   let job = makeJob("background", "queued");
   useLibraryNetwork(h, async (path) => {
-    if (path.startsWith("/api/jobs?")) {
+    if (path.startsWith("/api/library?")) {
       lists += 1;
       return lists === 1 ? first.promise : { items: [job], next_cursor: null };
     }
@@ -1216,7 +1227,7 @@ await check("a hidden library pauses requests and refreshes completed charts whe
   let requests = 0;
   useLibraryNetwork(h, async (path) => {
     requests += 1;
-    if (path.startsWith("/api/jobs?")) return { items: [job], next_cursor: null };
+    if (path.startsWith("/api/library?")) return { items: [job], next_cursor: null };
     if (path === "/api/projects") return { items: [] };
     assert.equal(path, "/api/me");
     return libraryAccount();
@@ -1242,7 +1253,7 @@ await check("a stalled account refresh times out and permits later chart complet
   let job = makeJob("background", "queued");
   let accounts = 0;
   useLibraryNetwork(h, async (path, options) => {
-    if (path.startsWith("/api/jobs?")) return { items: [job], next_cursor: null };
+    if (path.startsWith("/api/library?")) return { items: [job], next_cursor: null };
     if (path === "/api/projects") return { items: [] };
     assert.equal(path, "/api/me");
     accounts += 1;
@@ -1266,41 +1277,32 @@ await check("a stalled account refresh times out and permits later chart complet
   assert.equal([...h.timerDelays.values()].includes(10000), false);
 });
 
-await check("library search, project and status filters compose with pagination and layout", async () => {
+await check("library requests bounded server pages and retains total counts", async () => {
   const h = harness();
-  h.test.state.jobs = Array.from({ length: 51 }, (_, index) => ({
-    ...makeJob(`chart-${index}`, index % 3 === 0 ? "approved" : "review"),
-    display_name: `Report ${index}`, project_id: index < 26 ? "project-a" : "project-b",
-  }));
-  h.test.showLibrary();
+  const requests = [];
+  h.replace("loadJobs", h.test.loadJobs);
+  h.replace("api", async (path) => {
+    requests.push(path);
+    const query = new URL(`https://example.test${path}`).searchParams;
+    const page = Number(query.get("page"));
+    return { items: Array.from({length: page === 2 ? 3 : 24}, (_, i) => makeJob(`chart-${page * 24 + i}`)),
+      page, total: 51, counts: { all: 51, review: 51 } };
+  });
+  h.node("library-view").hidden = false;
+  h.replace("renderJobList", h.test.renderJobList);
+  await h.test.loadJobs();
+  assert.equal(requests.length, 1);
   assert.equal(h.node("job-list").children.length, 24);
-  assert.equal(h.node("library-previous").disabled, true);
+  assert.equal(h.node("library-page-note").textContent, "Page 1 of 3");
   await h.node("library-next").click();
+  await flushHandlers();
   assert.equal(h.node("library-page-note").textContent, "Page 2 of 3");
   await h.node("library-next").click();
+  await flushHandlers();
   assert.equal(h.node("job-list").children.length, 3);
   assert.equal(h.node("library-next").disabled, true);
-  h.node("chart-search").value = " REPORT 50 ";
-  await h.node("chart-search").dispatch("input");
-  assert.equal(h.node("job-list").children.length, 1);
-  assert.equal(h.node("job-list").querySelector("button").getAttribute("aria-label"), "Open Report 50");
-  assert.equal(h.node("library-page-note").textContent, "Page 1 of 1");
-  h.node("chart-search").value = "";
-  await h.node("chart-search").dispatch("input");
-  await h.chartFilters.find((button) => button.dataset.chartFilter === "review").click();
-  h.node("project-filter").value = "project-a";
-  await h.node("project-filter").dispatch("change");
-  assert.equal(h.node("job-list").children.length, 17);
-  assert.match(h.node("library-count").textContent, /^17 charts/);
-  assert.equal(h.chartFilters[1].getAttribute("aria-pressed"), "true");
   await h.node("list-view-button").click();
   assert.equal(h.node("job-list").classList.contains("is-list"), true);
-  assert.equal(h.node("grid-view-button").getAttribute("aria-pressed"), "false");
-  h.node("chart-search").value = "no matching chart";
-  await h.node("chart-search").dispatch("input");
-  assert.equal(h.node("job-list").children.length, 0);
-  assert.equal(h.node("library-no-results").hidden, false);
-  assert.equal(h.node("empty-view").hidden, true);
 });
 
 await check("the signed-in logo returns to the dashboard and protects dirty corrections", async () => {

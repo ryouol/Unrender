@@ -1,7 +1,6 @@
 """Integration regressions for the September platform audit."""
 
 from fastapi.testclient import TestClient
-
 from test_product import settings_for
 
 from unrender.product.web import create_app
@@ -68,6 +67,44 @@ def test_dispatch_allowance_is_atomic_and_handles_clock_and_pause(tmp_path):
         assert reserve_dispatch(conn, "2026-09-24", 3)
 
 
+def test_library_page_filters_across_pages_without_reading_results(tmp_path):
+    from test_product import _paid_job, customer_id, service_for
+
+    from unrender.product.library import ChartLibrary
+
+    service = service_for(tmp_path, initial_credits=50)
+    owner = customer_id(service)
+    other = customer_id(service, "other@example.test")
+    source = _paid_job(service, owner, color="red")
+    library = ChartLibrary(service)
+    # A schema-valid fixture expanded without creating 30 image files or dispatches.
+    with service.database.transaction(immediate=True) as conn:
+        row = dict(conn.execute("SELECT * FROM jobs WHERE id=?", (source["id"],)).fetchone())
+        for n in range(30):
+            row.update(id=f"fixture-{n:02d}", display_name=f"Chart {n:02d}", upload_id=None)
+            conn.execute(
+                "INSERT INTO jobs ("
+                + ",".join(row)
+                + ") VALUES ("
+                + ",".join("?" for _ in row)
+                + ")",
+                tuple(row.values()),
+            )
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE jobs SET display_name=? WHERE id=?", ("ÉTÉ", source["id"]))
+    assert library.page(owner, search="été")["total"] == 1
+    first = library.page(owner)
+    second = library.page(owner, page=1)
+    assert len(first["items"]) == 24 and len(second["items"]) == 7
+    assert first["total"] == 31 and first["counts"]["all"] == 31
+    assert not set(j["id"] for j in first["items"]) & set(j["id"] for j in second["items"])
+    assert all("result" not in job for job in first["items"])
+    assert library.page(owner, search="Chart 00")["total"] == 1
+    assert library.page(owner, search="%")["total"] == 0
+    assert library.page(owner, status="approved")["total"] == 0
+    assert library.page(other)["total"] == 0
+
+
 def test_read_only_and_expired_api_keys_cannot_dispatch(tmp_path):
     from test_product import customer_id, service_for
 
@@ -100,6 +137,37 @@ def test_unverified_password_trial_does_not_mint_dispatch_credits(tmp_path):
             "SELECT credit_balance FROM users WHERE email='unverified@example.test'"
         ).fetchone()
     assert row["credit_balance"] == 0
+
+
+def test_thumbnail_cache_does_not_bypass_account_or_chart_access(tmp_path, monkeypatch):
+    import pytest
+    from test_product import _paid_job, customer_id, service_for
+
+    from unrender.product.service import ProductError
+
+    service = service_for(tmp_path)
+    user = customer_id(service)
+    other = customer_id(service, "other@example.test")
+    job = _paid_job(service, user, color="blue")
+    calls = 0
+    render = service.storage.page_png
+
+    def counted(**kwargs):
+        nonlocal calls
+        calls += 1
+        return render(**kwargs)
+
+    monkeypatch.setattr(service.storage, "page_png", counted)
+    first = service.job_source(user_id=user, job_id=job["id"], thumbnail=True)
+    assert service.job_source(user_id=user, job_id=job["id"], thumbnail=True) == first
+    assert calls == 1
+    with pytest.raises(ProductError, match="not found"):
+        service.job_source(user_id=other, job_id=job["id"], thumbnail=True)
+    with service.database.transaction(immediate=True) as conn:
+        conn.execute("UPDATE jobs SET status='failed' WHERE id=?", (job["id"],))
+    service.delete_job(user_id=user, job_id=job["id"])
+    with pytest.raises(ProductError, match="not found"):
+        service.job_source(user_id=user, job_id=job["id"], thumbnail=True)
 
 
 def test_expired_keys_allow_replacement_at_active_and_retained_limits(tmp_path):

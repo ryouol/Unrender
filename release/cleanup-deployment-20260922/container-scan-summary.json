@@ -1,0 +1,22 @@
+{
+  "scanner": "Trivy 0.74.0",
+  "image_digest": "sha256:596f34d7a904521b18ed7c5cc4fb1bc9cec2dfab6f98973e74af4aaf788e3b05",
+  "scan_sha256": "d73f4ca421a93cacc035af8685b9a159ead124e0773c579f1c327324b33a59dd",
+  "results": [
+    {
+      "type": "debian",
+      "counts": {
+        "LOW": 57,
+        "HIGH": 44,
+        "MEDIUM": 53,
+        "UNKNOWN": 6
+      },
+      "fixable_high_critical": 0
+    },
+    {
+      "type": "python-pkg",
+      "counts": {},
+      "fixable_high_critical": 0
+    }
+  ]
+}

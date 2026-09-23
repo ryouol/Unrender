@@ -1,0 +1,89 @@
+{
+  "scope": "One owned synthetic release canary; not a quality benchmark",
+  "source_sha256": "8158d17d651270fb49cea303052b3b14f0ca22b39d4112d7621d94676299025e",
+  "elapsed_seconds": 56.60467845800031,
+  "result": {
+    "raw": "{\"chart_type\":\"bar\",\"title\":\"Pilot orders by location\",\"x_axis\":{\"label\":\"Location\",\"unit\":null},\"y_axis\":{\"label\":\"Orders\",\"unit\":null},\"series\":[{\"name\":null,\"points\":[{\"x\":\"Harbor\",\"y\":14.0},{\"x\":\"Cedar\",\"y\":28.0},{\"x\":\"Meadow\",\"y\":21.0},{\"x\":\"Ridge\",\"y\":35.0}]}]}",
+    "json": {
+      "chart_type": "bar",
+      "title": "Pilot orders by location",
+      "x_axis": {
+        "label": "Location",
+        "unit": null
+      },
+      "y_axis": {
+        "label": "Orders",
+        "unit": null
+      },
+      "series": [
+        {
+          "name": null,
+          "points": [
+            {
+              "x": "Harbor",
+              "y": 14.0
+            },
+            {
+              "x": "Cedar",
+              "y": 28.0
+            },
+            {
+              "x": "Meadow",
+              "y": 21.0
+            },
+            {
+              "x": "Ridge",
+              "y": 35.0
+            }
+          ]
+        }
+      ]
+    },
+    "csv": "Location,Orders\r\nHarbor,14.0\r\nCedar,28.0\r\nMeadow,21.0\r\nRidge,35.0\r\n",
+    "parse_errors": [],
+    "parser_version": "chart-json-v2",
+    "finish_reason": "eos",
+    "output_tokens": 96,
+    "max_output_tokens": 4096,
+    "provider_release": "8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0"
+  },
+  "expected": {
+    "chart_type": "bar",
+    "title": "Pilot orders by location",
+    "x_axis": {
+      "label": "Location",
+      "unit": null
+    },
+    "y_axis": {
+      "label": "Orders",
+      "unit": null
+    },
+    "series": [
+      {
+        "name": "Orders",
+        "points": [
+          {
+            "x": "Harbor",
+            "y": 14.0
+          },
+          {
+            "x": "Cedar",
+            "y": 28.0
+          },
+          {
+            "x": "Meadow",
+            "y": 21.0
+          },
+          {
+            "x": "Ridge",
+            "y": 35.0
+          }
+        ]
+      }
+    ]
+  },
+  "exact_match": false,
+  "operational_contract_passed": true,
+  "exact_visible_values": 4,
+  "initial_assertion_failure": "Full JSON equality included the conceptual single-series name. Existing docs/LAUNCH_EVALUATION.md excludes this unprinted name; all visible labels, values, axes and units match. No additional inference was run."
+}

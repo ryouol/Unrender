@@ -40,7 +40,7 @@ function harness() {
   vm.createContext(context);
   vm.runInContext(`${source}\nglobalThis.preview = {
     createLibraryPreview, syncLibraryPreviews, resetLibraryPreviews,
-    setLibraryPreviewsActive, waitForLibraryPreview, libraryPreviews,
+    setLibraryPreviewsActive, libraryPreviews,
   };`, context);
   const api = context.preview;
   const card = (id) => {
@@ -140,18 +140,14 @@ test("transient capacity failures receive only one delayed automatic retry", asy
   assert.equal(card.preview.children[0].textContent, "Preview unavailable");
 });
 
-test("pausing settles the active thumbnail before a review can start and leaves queued work idle", async () => {
+test("leaving the library aborts its thumbnail and allows it to restart on return", async () => {
   const h = harness();
   const cards = [h.card("one"), h.card("two")];
   h.api.syncLibraryPreviews(cards);
   h.api.setLibraryPreviewsActive(false);
-  let ready = false;
-  const idle = h.api.waitForLibraryPreview().then(() => { ready = true; });
+  assert.equal(h.requests[0].options.signal.aborted, true);
+  h.requests[0].reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
   await tick();
-  assert.equal(ready, false);
-  h.requests[0].resolve({});
-  await idle;
-  assert.equal(ready, true);
   assert.equal(h.requests.length, 1);
   h.api.setLibraryPreviewsActive(true);
   h.api.syncLibraryPreviews(cards);

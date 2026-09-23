@@ -50,6 +50,10 @@ function setLibraryPreviewsActive(enabled) {
   if (!enabled) {
     libraryPreviews.queue = [];
     cancelPreviewRetry();
+    if (libraryPreviews.active) {
+      libraryPreviews.active.entry.status = "queued";
+      libraryPreviews.active.controller.abort();
+    }
   }
 }
 
@@ -61,14 +65,11 @@ function resetLibraryPreviews() {
   libraryPreviews.active?.controller.abort();
 }
 
-async function waitForLibraryPreview() {
-  await libraryPreviews.active?.finished;
-}
-
 function syncLibraryPreviews(cards) {
   const wanted = new Set(cards.slice(0, LIBRARY_PAGE_SIZE));
   for (const [card, entry] of libraryPreviews.entries) {
     if (!wanted.has(card)) {
+      if (libraryPreviews.active?.entry === entry) libraryPreviews.active.controller.abort();
       releaseLibraryPreview(entry);
       libraryPreviews.entries.delete(card);
     }
@@ -93,9 +94,7 @@ async function drainLibraryPreviews() {
       entry.status = "loading";
       entry.attempts += 1;
       const controller = new AbortController();
-      let finish;
-      const finished = new Promise((resolve) => { finish = resolve; });
-      libraryPreviews.active = { entry, controller, finished };
+      libraryPreviews.active = { entry, controller };
       try {
         const blob = await api(entry.path, {
           responseType: "blob", timeoutMs: 30000, signal: controller.signal,
@@ -120,7 +119,6 @@ async function drainLibraryPreviews() {
         } else failLibraryPreview(entry);
       } finally {
         libraryPreviews.active = null;
-        finish();
       }
     }
   } finally {

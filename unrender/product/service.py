@@ -2241,7 +2241,9 @@ class ProductService:
         created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE user_id=? AND ("
+                "SELECT id,source_name,display_name,project_id,source_mime,page_index,crop_json,"
+                "status,progress_stage,attempt,recovery_count,extractor,model_version,error_code,"
+                "error_message,approved_at,created_at,updated_at FROM jobs WHERE user_id=? AND ("
                 "? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
                 "ORDER BY created_at DESC,id DESC LIMIT ?",
                 (user_id, created_at, created_at, created_at, row_id, bounded_limit + 1),

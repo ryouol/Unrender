@@ -1827,14 +1827,12 @@ def test_rate_limit_cannot_be_bypassed_with_rotated_credentials_or_forwarded_ip(
     assert all("attacker" not in key and "@" not in key for key in counts)
 
 
-def test_live_health_is_cheap_while_readiness_is_admission_limited(
-    tmp_path: Path, fixed_rate_window
-) -> None:
+def test_health_endpoints_do_not_spend_public_admission(tmp_path: Path, fixed_rate_window) -> None:
     app = create_app(settings_for(tmp_path, global_rate_limit_per_minute=2))
     with TestClient(app) as client:
         assert client.get("/health/ready").status_code == 200
         assert client.get("/health/ready").status_code == 200
-        assert client.get("/health/ready").status_code == 429
+        assert client.get("/health/ready").status_code == 200
         assert client.get("/health/live").status_code == 200
 
 

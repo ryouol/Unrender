@@ -25,9 +25,11 @@ Baseline `584db2d`. All findings below were resolved before release. Paths and l
 
 The context/testing skills' Codex/Rust-specific instructions do not apply to this Python/JavaScript application. Their applicable state-boundary and behavioral-testing principles were reviewed. No GitHub review comments were posted.
 
+16. **CI acceptance — test defect:** `tests/e2e/workspace.spec.js:50` looked for a dialog button named Create project; the actual button is Save. Corrected the locator after both browser engines exposed the mismatch.
+
 ## Validation
 
-- Integrated Python suite: 680 passed, 3 skipped before the final expired-key regression; targeted follow-up: 8 passed.
+- Integrated Python suite: 680 passed, 3 skipped before the final expired-key regression; targeted follow-up including populated schema-15 migration: 9 passed.
 - Browser workflow harness: 83 scenarios passed, including unfinished-row undo, focus/redo, numeric paste, stale comparisons, search and source retry.
 - Product lint and type checks passed after fixes. Repository-wide exploratory lint also exposed existing violations outside the product CI scope; no unrelated cleanup was mixed into this release.
 - Real local browser: correction/undo/redo, paste/reverse, approval, version comparison, dark theme and search/no-match controls exercised.

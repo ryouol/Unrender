@@ -47,7 +47,7 @@ test('customer library organization and empty search keep filters reachable', as
   await page.getByRole('button', { name: 'Back to My charts' }).click();
   await page.getByRole('button', { name: 'Create project', exact: true }).click();
   await page.getByRole('dialog').getByRole('textbox').fill('Acceptance project');
-  await page.getByRole('dialog').getByRole('button', { name: 'Create project', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await page.getByRole('searchbox', { name: 'Find a chart' }).fill('nothing matches this');
   await expect(page.getByText('No charts match. Try another search or filter.')).toBeVisible();

@@ -128,6 +128,7 @@ def public_job(row: sqlite3.Row, *, include_result: bool = True) -> dict[str, An
         "updated_at": row["updated_at"],
     }
     if include_result:
+        result["provider_dispatched_at"] = row["provider_dispatched_at"]
         result["result"] = (
             json.loads(row["current_result_json"]) if row["current_result_json"] else None
         )

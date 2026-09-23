@@ -1,11 +1,11 @@
 function openSettings() {
   if (!state.account) return;
   const account = state.account;
-  byId("signin-methods-note").textContent = account.google_connected
+  byId("signin-methods-note").textContent = account.demo_account ? "This is a temporary reference workspace, not a password account." : account.google_connected
     ? (account.has_password ? "Google and password sign-in are connected to this account." : "Sign in with your connected Google account. Google manages account recovery.")
     : "You sign in with an email address and password.";
   byId("connect-google-form").hidden = !state.publicConfig.google_available || account.google_connected || !account.has_password;
-  byId("settings-retention").textContent = `Charts are retained for ${account.retention_days} days after their last update. Download exports you need to keep.`;
+  byId("settings-retention").textContent = account.demo_account ? "This reference workspace is removed when you sign out. Export anything you need first." : `Charts are retained for ${account.retention_days} days after their last update. Download exports you need to keep.`;
   byId("delete-account-button").hidden = Boolean(account.demo_account);
   clearError("settings-error");
   byId("settings-dialog").showModal();

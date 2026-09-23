@@ -202,7 +202,8 @@ function harness({ authenticated = true } = {}) {
       showWorkspace,
       downloadExport, jobMutation, restoreVersion, saveCorrections, reloadLatestResult, openJob, beginViewSelection,
       resetPrivateState, syncAuthRecordFromStorage, showPublic, deleteCurrentJob,
-      updateUploadPreview, buildEditedResult,
+      updateUploadPreview, buildEditedResult, checkpointEditor, travelEditor, pasteEditorRows,
+      reviewHistory, setJobSourceImage, renderResultTable, compareVersion, resetReviewTools,
     };
     bindEvents();
   `, context, { filename: appPath.pathname });
@@ -1634,6 +1635,77 @@ await check("both axis units remain editable and visible without changing values
   assert.equal(result.x_axis.unit, "years");
   assert.equal(result.y_axis.unit, "USD millions");
   assert.equal(result.series[0].points[0].y, 12);
+});
+
+
+await check("undo preserves unfinished rows and focusing preserves redo", async () => {
+  const h = harness();
+  h.select(makeJob());
+  h.test.state.editorRows.push({seriesIndex: 0, x: "Draft", xType: "string", y: ""});
+  h.test.renderResultTable();
+  h.test.checkpointEditor();
+  h.node("chart-title-input").value = "Changed";
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorRows.at(-1).x, "Draft");
+  assert.equal(h.test.state.editorRows.at(-1).y, "");
+  await h.node("result-form").dispatch("focusin", {target: {matches: () => true}});
+  assert.equal(h.node("redo-edit").disabled, false);
+  h.test.travelEditor("redo");
+  assert.equal(h.node("chart-title-input").value, "Changed");
+});
+
+await check("paste normalizes accepted numeric formats without dropping values", async () => {
+  const h = harness();
+  h.select(makeJob());
+  h.node("bulk-values").value = "Hex\t0x10\nEmpty\t";
+  h.test.pasteEditorRows();
+  assert.equal(h.test.state.editorRows[0].y, "16");
+  assert.equal(h.test.state.editorRows[1].y, "");
+});
+
+await check("source retry survives same-job polling and stops on account change", async () => {
+  const h = harness();
+  const job = makeJob("pending", "running");
+  h.select(job);
+  const img = h.node("job-source-image");
+  img.onerror();
+  const retry = h.timers.get(h.test.state.sourceRetryTimer);
+  h.test.beginViewSelection();
+  img.removeAttribute("src");
+  retry();
+  assert.equal(img.getAttribute("src"), "/api/jobs/pending/source");
+  img.onerror();
+  const obsolete = h.timers.get(h.test.state.sourceRetryTimer);
+  h.test.state.authEpoch += 1;
+  img.removeAttribute("src");
+  obsolete();
+  assert.equal(img.getAttribute("src"), null);
+});
+
+await check("search input schedules the server page loader", async () => {
+  const h = harness();
+  let loads = 0;
+  h.replace("loadJobs", async () => { loads += 1; });
+  h.node("chart-search").value = "budget";
+  await h.node("chart-search").dispatch("input");
+  h.timers.get(h.test.library.searchTimer)();
+  assert.equal(loads, 1);
+  assert.equal(h.test.library.search, "budget");
+});
+
+
+await check("delayed comparison cannot reopen a reset or newer result", async () => {
+  const h = harness();
+  const old = makeJob();
+  h.select(old);
+  const pending = deferred();
+  h.replace("api", () => pending.promise);
+  const comparison = h.test.compareVersion({ version: 1 });
+  h.test.state.currentJob = { ...old, result_version: 3 };
+  h.test.resetReviewTools();
+  pending.resolve({result: old.result});
+  await comparison;
+  assert.equal(h.node("version-comparison").hidden, true);
 });
 
 console.log(`Browser workflow regressions passed (${passed} scenarios)`);

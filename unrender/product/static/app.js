@@ -684,7 +684,9 @@ function applyPublicConfig() {
   byId("register-tab").hidden = !registrationOpen;
   byId("open-sample-button").hidden = !state.publicConfig.sample_available;
   const initialCredits = config.initial_credits;
-  byId("signup-access-note").textContent = Number.isInteger(initialCredits) && initialCredits > 0
+  byId("signup-access-note").textContent = config.verified_trial_required && !config.email_verification_required
+    ? "Trial credits require verified account ownership. Use Google with a verified email, or create a password workspace and request extraction access from support."
+    : Number.isInteger(initialCredits) && initialCredits > 0
     ? `Your workspace starts with ${initialCredits} extraction credit${initialCredits === 1 ? "" : "s"}. Each extraction attempt uses one credit.`
     : "Starts with 0 extraction credits. Upload access is granted separately during the beta.";
   byId("signup-recovery-note").hidden = Boolean(config.email_available);
@@ -2235,6 +2237,7 @@ async function loadApiKeys({ dialogEpoch = state.keyDialogEpoch } = {}) {
       name.textContent = key.name;
       const metadata = document.createElement("small");
       metadata.textContent = `${key.prefix}… · ${key.revoked_at ? "Revoked" : key.last_used_at ? `Last used ${formatDate(key.last_used_at)}` : "Never used"}`;
+      metadata.textContent += ` · ${key.scope} access · ${key.expires_at ? `Expires ${formatDate(key.expires_at)}` : "No expiry (existing key)"}`;
       details.append(name, metadata);
       item.append(details);
       if (!key.revoked_at) {
@@ -2299,7 +2302,7 @@ async function createKey(event) {
   try {
     const payload = await api("/api/keys", {
       method: "POST",
-      body: { name: byId("api-key-name").value },
+      body: { name: byId("api-key-name").value, scope: byId("api-key-scope").value, expires_in_days: Number(byId("api-key-days").value) },
       authEpoch,
       signal,
     });

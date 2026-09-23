@@ -9,7 +9,7 @@ import os
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import (
@@ -326,6 +326,8 @@ class VersionRestore(ReviewRequest):
 
 class ApiKeyCreate(StrictRequest):
     name: str = Field(min_length=1, max_length=80)
+    scope: Literal["read", "extract"] = "extract"
+    expires_in_days: int = Field(default=90, ge=1, le=365)
 
 
 def _cookies(response: Response, values: dict[str, str], settings: Settings) -> None:
@@ -525,7 +527,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             # Shared proxy addresses are neither tenant identities nor trusted headers.
             # Every request spends global capacity before parsing/authentication.
-            allowed = request.url.path in {"/health/live", "/health/ready"} or await run_in_threadpool(
+            allowed = request.url.path in {
+                "/health/live",
+                "/health/ready",
+            } or await run_in_threadpool(
                 allowed_request, "global", group=group, global_capacity=True
             )
         except TimeoutError:
@@ -670,6 +675,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user = service.api_key_user(secret)
         if not user:
             raise ProductError("invalid_api_key", "Provide a valid Unrender API key", 401)
+        if request.method not in {"GET", "HEAD"} and user["api_key_scope"] != "extract":
+            raise ProductError(
+                "api_key_scope", "This key only permits reading existing extractions", 403
+            )
         return authenticated_request(request, user)
 
     current_user_dependency = Depends(current_user)
@@ -871,6 +880,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "email_available": settings.email_configured,
             "email_verification_required": settings.require_email_verification,
             "initial_credits": settings.initial_credits,
+            "verified_trial_required": settings.require_verified_trial,
             "max_upload_bytes": settings.max_upload_bytes,
             "max_image_pixels": settings.max_image_pixels,
             "max_pdf_pages": settings.max_pdf_pages,
@@ -1142,6 +1152,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.create_api_key(
             user_id=user["id"],
             name=payload.name,
+            scope=payload.scope,
+            expires_in_days=payload.expires_in_days,
             expected_generation=int(user["session_generation"]),
         )
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from unrender.product.provenance import UNAVAILABLE_RECEIPT_JSON
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 SCHEMA = """
@@ -207,6 +207,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name TEXT NOT NULL,
     prefix TEXT NOT NULL,
     key_hash TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL DEFAULT 'extract' CHECK (scope IN ('read','extract')),
+    expires_at TEXT,
     created_at TEXT NOT NULL,
     last_used_at TEXT,
     revoked_at TEXT
@@ -232,6 +234,13 @@ CREATE TABLE IF NOT EXISTS provider_attempts (
 );
 CREATE INDEX IF NOT EXISTS provider_attempts_failure_idx
 ON provider_attempts(user_id, outcome, completed_at);
+
+CREATE TABLE IF NOT EXISTS dispatch_budget (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    day TEXT NOT NULL,
+    used INTEGER NOT NULL CHECK (used>=0),
+    paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0,1))
+);
 
 CREATE TABLE IF NOT EXISTS rate_limits (
     bucket_key TEXT NOT NULL,
@@ -448,6 +457,22 @@ class Database:
                 self._migrate_v13_to_v14(conn)
             elif version == 14:
                 self._migrate_v14_to_v15(conn)
+            elif version == 15:
+                self._add_column(
+                    conn,
+                    "api_keys",
+                    "scope",
+                    "TEXT NOT NULL DEFAULT 'extract' CHECK (scope IN ('read','extract'))",
+                )
+                self._add_column(conn, "api_keys", "expires_at", "TEXT")
+                self._migration_execute(
+                    conn,
+                    "CREATE TABLE IF NOT EXISTS dispatch_budget ("
+                    "id INTEGER PRIMARY KEY CHECK (id=1),day TEXT NOT NULL,"
+                    "used INTEGER NOT NULL CHECK (used>=0),"
+                    "paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0,1)))",
+                )
+                self._migration_execute(conn, "UPDATE schema_meta SET version=16")
             elif version == SCHEMA_VERSION:
                 break
             else:

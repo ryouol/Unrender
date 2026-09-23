@@ -26,6 +26,7 @@ from openpyxl import Workbook
 
 from unrender.product.config import Settings
 from unrender.product.database import Database
+from unrender.product.dispatch_budget import reserve_dispatch
 from unrender.product.extractors import ExtractionError, Extractor
 from unrender.product.provenance import (
     MAX_RECEIPT_BYTES,
@@ -303,7 +304,7 @@ class ProductService:
             )
 
     def _database_row_count(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
-        tables = (
+        tables: tuple[str, ...] = (
             "projects",
             "account_challenges",
             "google_identities",
@@ -321,26 +322,15 @@ class ProductService:
             "pending_deletions",
             "storage_reservations",
         )
-        total = 0
-        for table in tables:
-            if user_id is None:
-                row = conn.execute(
-                    f'SELECT COUNT(*) AS count FROM "{table}"'  # noqa: S608 -- closed tuple
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    f'SELECT COUNT(*) AS count FROM "{table}" WHERE user_id=?',  # noqa: S608 -- closed internal tuple
-                    (user_id,),
-                ).fetchone()
-            total += int(row["count"])
         if user_id is None:
-            for table in ("users", "billing_events", "rate_limits"):
-                total += int(
-                    conn.execute(
-                        f'SELECT COUNT(*) AS count FROM "{table}"'  # noqa: S608 -- closed tuple
-                    ).fetchone()["count"]
-                )
-        return total
+            tables += ("users", "billing_events", "rate_limits", "dispatch_budget")
+        predicate = " WHERE user_id=?" if user_id is not None else ""
+        counts = " UNION ALL ".join(
+            f'SELECT COUNT(*) AS n FROM "{table}"{predicate}'  # noqa: S608 -- fixed table names
+            for table in tables
+        )
+        parameters = (user_id,) * len(tables) if user_id is not None else ()
+        return int(conn.execute(f"SELECT SUM(n) FROM ({counts})", parameters).fetchone()[0])  # noqa: S608 -- fixed fragments
 
     def _future_terminal_rows(self, conn: sqlite3.Connection, user_id: str | None = None) -> int:
         if user_id is None:
@@ -943,7 +933,12 @@ class ProductService:
         user_id = self._create_user(
             email,
             password,
-            initial_credits=self.settings.initial_credits,
+            initial_credits=(
+                self.settings.initial_credits
+                if not self.settings.require_verified_trial
+                or self.settings.require_email_verification
+                else 0
+            ),
             account_active=not self.settings.require_email_verification,
         )
         if self.settings.require_email_verification:
@@ -3214,9 +3209,20 @@ class ProductService:
         )
 
     def create_api_key(
-        self, *, user_id: str, name: str, expected_generation: int | None = None
+        self,
+        *,
+        user_id: str,
+        name: str,
+        expected_generation: int | None = None,
+        scope: str = "extract",
+        expires_in_days: int = 90,
     ) -> dict[str, str]:
         self.require_customer_account(user_id, "API credentials")
+        if scope not in {"read", "extract"} or not 1 <= expires_in_days <= 365:
+            raise ProductError(
+                "invalid_key_policy", "Choose read or extract access and 1–365 days", 422
+            )
+        expires_at = timestamp(utcnow() + timedelta(days=expires_in_days))
         clean_name = name.strip()[:80]
         if not clean_name:
             raise ProductError("invalid_key_name", "Name the API key")
@@ -3233,9 +3239,10 @@ class ProductService:
             self._assert_database_capacity(conn, user_id)
             counts = conn.execute(
                 "SELECT COUNT(*) AS retained,"
-                "SUM(CASE WHEN revoked_at IS NULL THEN 1 ELSE 0 END) AS active "
+                "SUM(CASE WHEN revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?) "
+                "THEN 1 ELSE 0 END) AS active "
                 "FROM api_keys WHERE user_id=?",
-                (user_id,),
+                (timestamp(), user_id),
             ).fetchone()
             if int(counts["active"] or 0) >= self.settings.max_active_api_keys_per_user:
                 raise ProductError(
@@ -3248,9 +3255,9 @@ class ProductService:
                 removable = retained - self.settings.max_api_key_records_per_user + 1
                 deleted = conn.execute(
                     "DELETE FROM api_keys WHERE id IN (SELECT id FROM api_keys "
-                    "WHERE user_id=? AND revoked_at IS NOT NULL "
-                    "ORDER BY revoked_at,created_at,id LIMIT ?)",
-                    (user_id, removable),
+                    "WHERE user_id=? AND (revoked_at IS NOT NULL OR expires_at<=?) "
+                    "ORDER BY COALESCE(revoked_at,expires_at),created_at,id LIMIT ?)",
+                    (user_id, timestamp(), removable),
                 ).rowcount
                 if deleted < removable:
                     raise ProductError(
@@ -3260,9 +3267,9 @@ class ProductService:
                     )
             self._insert_row(
                 conn,
-                "INSERT INTO api_keys(id,user_id,name,prefix,key_hash,created_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (self._id(), user_id, clean_name, prefix, digest, timestamp()),
+                "INSERT INTO api_keys(id,user_id,name,prefix,key_hash,created_at,scope,expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (self._id(), user_id, clean_name, prefix, digest, timestamp(), scope, expires_at),
                 user_id=user_id,
             )
             self._audit(
@@ -3271,7 +3278,13 @@ class ProductService:
                 event_type="api_key_created",
                 details={"name": clean_name, "prefix": prefix},
             )
-        return {"key": secret, "prefix": prefix, "name": clean_name}
+        return {
+            "key": secret,
+            "prefix": prefix,
+            "name": clean_name,
+            "scope": scope,
+            "expires_at": expires_at,
+        }
 
     def list_api_keys_page(
         self,
@@ -3286,7 +3299,8 @@ class ProductService:
         created_at, row_id = decoded if decoded else (None, None)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT id,name,prefix,created_at,last_used_at,revoked_at FROM api_keys "
+                "SELECT id,name,prefix,created_at,last_used_at,revoked_at,scope,expires_at "
+                "FROM api_keys "
                 "WHERE user_id=? AND (? IS NULL OR created_at<? OR (created_at=? AND id<?)) "
                 "ORDER BY created_at DESC,id DESC LIMIT ?",
                 (user_id, created_at, created_at, created_at, row_id, bounded_limit + 1),
@@ -3315,7 +3329,8 @@ class ProductService:
         self.require_customer_account(user_id, "API credentials")
         with self.database.transaction(immediate=True) as conn:
             row = conn.execute(
-                "SELECT id,name,prefix,created_at,last_used_at,revoked_at FROM api_keys "
+                "SELECT id,name,prefix,created_at,last_used_at,revoked_at,scope,expires_at "
+                "FROM api_keys "
                 "WHERE id=? AND user_id=?",
                 (key_id, user_id),
             ).fetchone()
@@ -3363,10 +3378,12 @@ class ProductService:
         digest = token_hash(secret)
         with self.database.transaction() as conn:
             row = conn.execute(
-                "SELECT users.*,api_keys.id AS api_key_id FROM api_keys "
+                "SELECT users.*,api_keys.id AS api_key_id,api_keys.scope AS api_key_scope "
+                "FROM api_keys "
                 "JOIN users ON users.id=api_keys.user_id "
-                "WHERE api_keys.key_hash=? AND api_keys.revoked_at IS NULL",
-                (digest,),
+                "WHERE api_keys.key_hash=? AND api_keys.revoked_at IS NULL "
+                "AND (api_keys.expires_at IS NULL OR api_keys.expires_at>?)",
+                (digest, timestamp()),
             ).fetchone()
             if row:
                 conn.execute(
@@ -3534,7 +3551,7 @@ class ProductService:
     def _begin_provider_dispatch(self, claim: WorkerClaim) -> bool:
         with self.database.transaction(immediate=True) as conn:
             current = self._claim_row(conn, claim)
-            if not current:
+            if not current or current["provider_dispatched"]:
                 return False
             if current["cancel_requested"]:
                 self._finish_cancelled_claim_in_transaction(conn, current, claim)
@@ -3582,6 +3599,16 @@ class ProductService:
                 )
                 return False
             now = timestamp()
+            if not reserve_dispatch(conn, now[:10], self.settings.max_provider_dispatches_per_day):
+                self._finish_failed_claim_in_transaction(
+                    conn,
+                    current,
+                    claim,
+                    "provider_daily_limit",
+                    "Extraction is paused or today's shared allowance is used. No provider call "
+                    "was made; your credit is returned. Contact support or try after midnight UTC.",
+                )
+                return False
             changed = conn.execute(
                 "UPDATE jobs SET provider_dispatched=1,provider_dispatched_at=?,updated_at=? "
                 "WHERE id=? AND user_id=? AND attempt=? AND status='running' AND worker_owner=? "

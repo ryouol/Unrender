@@ -230,3 +230,46 @@ overlapping claims and single charging, not production throughput. Measure peak
 memory, SQLite contention and provider queueing on the target host before
 increasing the deployed default; the small Render instance may need more memory.
 Local cancellation and timeout still do not prove that remote GPU work stopped.
+
+## Global dispatch allowance and operator usage
+
+`UNRENDER_MAX_PROVIDER_DISPATCHES_PER_DAY` bounds reserved provider dispatches per
+UTC day (default 100; the Render blueprint sets 20). This is an attempt allowance,
+**not a provider-enforced dollar cap**. Establish a conservative cost per attempt
+from provider billing and the configured timeout before translating an owner
+budget into this limit. Idle compute/storage/other services are outside this control.
+
+`unrender-admin dispatch pause` stops subsequent dispatch admission across accounts;
+`resume` restores admission; `status` reports the durable pause and daily allowance.
+`unrender-admin usage` reports customer account creation counts, job status counts and
+allowance. It does not claim account creation is a successful sign-in or that retained
+records form a complete historical analytics system. No user email or chart contents
+are printed. Use the same protected production data directory as the service.
+
+The singleton allowance lives in schema 16, independent of tenant-owned records.
+Chart/account deletion does not replenish it. Midnight UTC advances the allowance;
+a backwards clock change does not reset it. An uncertain reservation remains used.
+Denied dispatches fail before provider invocation and refund the job credit through
+the existing ledger path. Pausing does not cancel an already dispatched provider call.
+
+Before deploying schema 16, drain active work and take a coordinated schema-15 backup.
+Verify a restore into a separate empty directory with schema-16 code. Rollback to
+schema-15 application code requires the corresponding recovery set; it cannot read a
+schema-16 database directly. Do not restore over a running service or discard customer
+writes taken after a backup. Coordinate web and monitor versions; pin the model/provider
+release unchanged. Health readiness bypasses public quotas but still reports unavailable
+storage/database, maintenance locks and a non-accepting worker.
+
+Thumbnail caching is process-local, at most 4 MiB/24 entries, with a 60-second lookup
+TTL. Authorization and chart existence are checked before every lookup. Browser responses
+remain `no-store`; no private image is made publicly cacheable. Restart discards the cache.
+
+`UNRENDER_REQUIRE_VERIFIED_TRIAL=true` (Render blueprint) gives unverified password
+signups zero welcome credits when email verification is disabled. Google signup
+receives the configured allowance only when its identity supplies accepted ownership
+proof. Existing balances and operator grants are unchanged. When mandatory email
+verification is enabled, the allowance is reserved at account creation but the account
+cannot use it until activation. Mailbox ownership is not a complete abuse defense;
+the global attempt budget remains mandatory. Configure both settings in the hosted
+environment before reopening admission; a repository blueprint alone does not update
+an existing manually managed service's environment.

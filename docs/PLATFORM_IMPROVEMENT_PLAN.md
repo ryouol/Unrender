@@ -31,3 +31,32 @@ Use isolated data for saturation, accounting, deletion and recovery tests. Produ
 ## Execution ledger
 
 - Plan created before implementation. Repository fetched; main unchanged since audit. Dedicated `codex/audit-remediation` worktree created.
+
+## Implementation status and remaining evidence
+
+| Finding | Concrete disposition |
+|---|---|
+| F01/F03/F04/F11 | Implemented independent truthful readiness, bounded requests, transient read retry and preview cancellation. |
+| F02 | Implemented atomic durable UTC dispatch allowance and pause/resume. Verified-ownership trial eligibility is enforced when configured; dollar budget remains an owner decision; no dollar guarantee is claimed. |
+| F05/F26 | Existing beta recovery warnings retained. Business identity, commercial terms, SMTP/payment credentials remain owner-dependent; payment and email are not silently enabled. |
+| F06 | Single-owner architecture preserved; library/query/cache hot paths improved. Scale beyond the existing host requires load evidence rather than an unmeasured infrastructure migration. |
+| F07 | Added private operator aggregate usage and allowance report. Full customer funnel analytics and sign-in history remain separately scoped measurement work. |
+| F08/F14 | Existing provider logs already include verification/preprocessing/prefill/decode timings. Pinned serving release preserved; warm-capacity spending and alternate engine promotion require controlled quality/cost evidence. |
+| F09/F10 | Metadata-only SQL, bounded 24-row library pages, server filters/search and request race fences. |
+| F12/F13 | Bounded private thumbnail cache; capacity counting consolidated into one SQL statement without removing quota checks. |
+| F15/F16 | Compact review and mobile source preview; explicit reverse-within-series action rather than guessing chart order. |
+| F17/F18 | Bounded undo/redo, validated spreadsheet paste, descriptive remove actions, saved-version row and metadata comparison. |
+| F19/F20 | Elapsed stage and background-work guidance; dispatch-denial message states no call and returned credit. Existing error codes retained. |
+| F21/F22 | Reduced empty-state spacing/filter clutter; durable inline crop errors with accessible description. Live zero-cost sample remains a provider architecture decision. |
+| F23/F24 | Per-chart retention dates, truthful demo settings, improved row names, desktop/mobile/theme browser acceptance. Full external accessibility certification remains open. |
+| F25 | API key read/extract scope, bounded expiry for new credentials and visible last-use/expiry. Existing keys retain authority. |
+| F27 | Independent reviewer/holdout is still required; synthetic acceptance cannot substitute. |
+| F28 | Added pinned Chromium/WebKit acceptance in CI in addition to simulated frontend harnesses. |
+| F29 | Existing restore/migration integration tests retained and rerun. Fresh deployed-image scan and production recovery evidence belong to release validation, not a certification claim. |
+| F30 | New dispatch-budget, preview-cache and review-tools modules isolate new responsibilities; no framework rewrite. |
+
+Browser acceptance follows the official [Playwright CI guidance](https://playwright.dev/docs/ci).
+Its server uses a fresh temporary data directory and explicit replay settings, never
+inherited cloud credentials. Traces contain only disposable synthetic test data.
+
+Release branches: `codex/audit-reliability` → `codex/audit-admission` → `codex/audit-library` → `codex/audit-review` → `codex/audit-remediation`. Each PR uses the preceding branch as its base. See [review findings and resolutions](PLATFORM_REVIEW_RESULTS.md).

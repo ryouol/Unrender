@@ -204,3 +204,18 @@ coordinated recovery set before rollout. Old in-flight reservations do not cover
 the new metadata allowance and fail closed before dispatch; do not silently
 increase their allowance. Downgrade requires the matching pre-upgrade recovery
 set in a fresh data directory, not old code on schema 15.
+
+## September 2026 library and credential controls
+
+The session-only `GET /api/library` returns at most 24 metadata rows, `page`, `total`,
+and whole-workspace status `counts`. Query parameters are zero-based `page`, literal
+`search` (maximum 120 characters), `project`, and `status` (`all`, `review`, `approved`,
+`failed`, `queued`, or `running`). Search is literal, not a SQL wildcard expression.
+The existing cursor-based `/api/jobs` contract remains available to integrations.
+
+`POST /api/keys` additionally accepts `scope` (`read` or `extract`) and
+`expires_in_days` (1–365, default 90). `read` permits retrieval of existing API
+extractions; `extract` also permits submissions that use credits. Existing keys
+retain their authority and have no expiry until rotated/revoked. New keys return
+`scope` and `expires_at`; key listings expose these fields and never the secret.
+Expired keys return 401; a read-only key used for submission returns 403.

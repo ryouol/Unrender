@@ -883,7 +883,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health/ready")
     def ready():
         worker_ready = not settings.worker_enabled or worker.is_accepting
-        if not database.ready() or not storage.ready() or not worker_ready:
+        try:
+            with database.operational_lock(exclusive=False, timeout_seconds=0):
+                dependencies_ready = database.ready() and storage.ready()
+        except TimeoutError:
+            dependencies_ready = False
+        if not dependencies_ready or not worker_ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         return {
             "status": "ready",

@@ -95,11 +95,11 @@ async function api(path, options = {}) {
   const parentSignal = requestOptions.signal || state.authController.signal;
   const timeoutMs = options.timeoutMs ?? (body instanceof FormData ? 120000 : 30000);
   const timed = new AbortController();
-  const cancel = () => timed?.abort();
-  if (timed) parentSignal.addEventListener("abort", cancel, { once: true });
+  const cancel = () => timed.abort();
+  parentSignal.addEventListener("abort", cancel, { once: true });
   if (parentSignal.aborted) cancel();
   let expired = false;
-  const timer = timed ? window.setTimeout(() => { expired = true; timed.abort(); }, timeoutMs) : null;
+  const timer = window.setTimeout(() => { expired = true; timed.abort(); }, timeoutMs);
   let response;
   let payload;
   try {
@@ -108,7 +108,7 @@ async function api(path, options = {}) {
       method,
       headers,
       body,
-      signal: timed?.signal || parentSignal,
+      signal: timed.signal,
     });
     if (!authContextMatches(epoch, authRecord)) throw staleAuthError();
     const contentType = response.headers.get("content-type") || "";
@@ -127,8 +127,8 @@ async function api(path, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(method)) error.uncertainMutation = true;
     throw error;
   } finally {
-    if (timer !== null) window.clearTimeout(timer);
-    if (timed) parentSignal.removeEventListener("abort", cancel);
+    window.clearTimeout(timer);
+    parentSignal.removeEventListener("abort", cancel);
   }
   if (!authContextMatches(epoch, authRecord)) {
     throw staleAuthError("A previous account response was discarded");

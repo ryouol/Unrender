@@ -69,6 +69,7 @@ function syncLibraryPreviews(cards) {
   const wanted = new Set(cards.slice(0, LIBRARY_PAGE_SIZE));
   for (const [card, entry] of libraryPreviews.entries) {
     if (!wanted.has(card)) {
+      if (libraryPreviews.active?.entry === entry) libraryPreviews.active.controller.abort();
       releaseLibraryPreview(entry);
       libraryPreviews.entries.delete(card);
     }

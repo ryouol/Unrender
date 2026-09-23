@@ -525,7 +525,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             # Shared proxy addresses are neither tenant identities nor trusted headers.
             # Every request spends global capacity before parsing/authentication.
-            allowed = request.url.path in {"/health/live", "/health/ready"} or await run_in_threadpool(
+            allowed = request.url.path in {
+                "/health/live",
+                "/health/ready",
+            } or await run_in_threadpool(
                 allowed_request, "global", group=group, global_capacity=True
             )
         except TimeoutError:

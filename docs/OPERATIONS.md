@@ -80,7 +80,7 @@ The probe URL remains `https://unrender.onrender.com`; change it with the origin
 The older hourly measurements below are historical. Planned maintenance can cause notifications.
 
 The monitor is `crn-dahl5uh594qs73ffkbk0` in UNRENDER's Production environment,
-now built from `2bc72d1`. Historically, its first manual run started at 01:03:00 UTC on September 11,
+now built from `a7673d9` (September 22). Historically, its first manual run started at 01:03:00 UTC on September 11,
 reported failure at 01:04:05 and exited with status 1. The operator inbox received
 Render's cron failure email at 01:04:09. This exercised the real public endpoint,
 retry command and delivery path: the earlier pilot provider attempt took 191.53

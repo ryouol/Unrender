@@ -1,6 +1,38 @@
 # Render + Modal launch
 
-## Current deployment — September 18, 2026
+## Current deployment — September 22, 2026
+
+The cleanup release runs `a7673d90d8c88a639b946ecfe3f1da1f56f81add`, schema 15,
+from [PR #13](https://github.com/ryouol/Unrender/pull/13) and
+[PR #14](https://github.com/ryouol/Unrender/pull/14). Web and monitor deployments
+became live at 00:34:59 and 00:34:52 UTC on September 23. Modal uses tag
+`cleanup-6580d79`; model weights are unchanged. The current provider release is
+`8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0`.
+
+Maintenance enclosed the final backup and rollout. All original database rows
+and four source files matched before deployment and after test-account removal.
+Database integrity, foreign keys, public health checks and live source/package
+inventory verification passed. The two-minute monitor passed at 00:38:24 UTC
+following its maintenance-window failure. Email-delivery latency was not retested.
+
+One isolated L4 canary and one hosted extraction reproduced the four visible
+values, title and axes of the labelled bar chart. The hosted request reached
+review in 69.73 seconds, used one credit despite repeated submission, and passed
+correction, stale-approval rejection, approval, CSV/JSON/XLSX download and re-login
+checks. The synthetic account was deleted. These checks do not measure
+representative accuracy, capacity or a speedup; the unprinted single-series name
+remains null, as recorded in the existing evaluation contract.
+
+Merged-main CI passed: 673 tests, three skips, container and CPU training checks.
+The fresh container scan has zero critical/Python findings and 44 high Debian
+findings without listed fixes. The [deployment receipt](../release/cleanup-deployment-20260922/deployment.json),
+[hosted workflow](../release/cleanup-deployment-20260922/hosted-workflow.json)
+and [scan assessment](CONTAINER_SCAN.md) record the evidence. The controlled-beta
+limits and independent-review gates remain in [readiness](LAUNCH_READINESS.md).
+Documentation-only commits may follow without a runtime redeploy.
+
+
+## Previous deployment — September 18, 2026
 
 The live beta runs `2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af`, schema 15,
 from [PR #11](https://github.com/ryouol/Unrender/pull/11). The application,
@@ -94,7 +126,7 @@ Production app: https://modal.com/apps/royluo05/main/deployed/unrender-productio
 
 Deploy explicitly with `modal deploy modal_train.py::production_app`; the bare
 module selects the separate research app. Approved provider release:
-`b0f38e8907a74aa5926dcb6e3a53cbf27259920084eeedcd0fbbfe3505a77886`.
+`8ea1e0e748ac7a45232ea2626f0bed97c9fc5d4bca80ef39d878e51f360003d0`.
 All release pins are in `render.yaml`. The dedicated Modal API token is stored
 in Render's private environment. Never copy credentials into git or reports. Render supplies the HTTPS origin through `RENDER_EXTERNAL_URL`.
 

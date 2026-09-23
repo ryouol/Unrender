@@ -10,7 +10,7 @@ The September 18 release changes are tracked in [audit remediation](AUDIT_REMEDI
 
 ## Dated deployment baseline
 
-The September 18, 2026 deployment runs commit [`2bc72d1`](https://github.com/ryouol/Unrender/commit/2bc72d1b7b3b5f153e03ccd19d7de9c5c54077af), schema 15. Documentation-only commits may follow without a runtime redeploy. The latest deployment record is in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md).
+The September 22, 2026 deployment runs commit [`a7673d9`](https://github.com/ryouol/Unrender/commit/a7673d90d8c88a639b946ecfe3f1da1f56f81add), schema 15. Documentation-only commits may follow without a runtime redeploy. The latest deployment record is in [RENDER_MODAL_LAUNCH.md](RENDER_MODAL_LAUNCH.md).
 
 The public beta supports Google and password signup with three welcome credits, personal projects, chart review, approval, exports, and deletion. Email delivery and customer billing are disabled. Local replay intentionally accepts only its bundled fixture. The private production model release is not downloadable from this repository.
 
@@ -52,7 +52,7 @@ Do not use the shared production service for destructive, quota-exhaustion, or l
 
 Run `pytest -q` for the full Python suite. It includes research/evaluation checks and wrappers for several Node browser harnesses. Those harnesses exercise frontend behavior with simulated browser surfaces; they are not a substitute for real-browser interaction or an external accessibility audit. Read [visual QA](design/VISUAL_QA_RECORD.md) for the separate captured browser checks.
 
-The September 18 release passed **651 local tests / 3 skipped**, plus **13 CPU training contract tests** in a separate environment. Branch, PR and merged-main jobs passed. These are dated release results; run the suite for the revision under review. [Deployment evidence](RENDER_MODAL_LAUNCH.md).
+The September 22 deployed commit passed **673 tests / 3 skipped** in merged-main CI, plus the container and CPU training/kill-resume checks. These are dated release results; run the suite for the revision under review. [Deployment evidence](RENDER_MODAL_LAUNCH.md).
 
 For offline model evaluation, use the rescore command in [LAUNCH_EVALUATION.md](LAUNCH_EVALUATION.md). Full research reproduction needs the original model artifacts/datasets and possibly paid provider access; a clean clone does not contain every generated image, training checkpoint, or frontier-provider response.
 
@@ -76,7 +76,7 @@ For offline model evaluation, use the rescore command in [LAUNCH_EVALUATION.md](
 | Password signup without email verification | Mailbox ownership is not established. Operator recovery must not treat the originally entered address as sufficient proof. |
 | No shared-team permissions | “Projects” organize one user's charts; they do not create organizational tenancy or collaboration roles. |
 | Limited quality evidence | Three crisp synthetic charts are a smoke evaluation. Representative customer charts, correction-time measurements, and actual inference cost remain needed. |
-| Recorded container advisories | The September 18 scan has zero critical and 44 high Debian findings, with no listed fixes for the remaining high findings. Advisory assessment remains open. |
+| Recorded container advisories | The September 22 scan has zero critical and 44 high Debian findings, with no listed fixes for the remaining high findings. Advisory assessment remains open. |
 | Dated historical reviews | Preserve experimental receipts, but do not infer today's deployment state from June research notes or earlier rollout inventories. |
 
 For feedback, report severity, exact file/line or workflow, reproduction, expected versus actual behavior, and the relevant test gap. Keep proposed fixes small enough to review independently. Use a `codex/` branch for agent-assisted work, follow [CI](../.github/workflows/ci.yml), and keep private customer files, secrets, generated checkpoints, and local `outputs/` out of commits. Use synthetic reproducers in [GitHub issues](https://github.com/ryouol/Unrender/issues); report sensitive details privately to the [support contact](https://unrender.onrender.com/contact).

@@ -1,5 +1,12 @@
 # Container scan
 
+CI now scans each built production image with the pinned Trivy 0.74.0 image and
+a fresh vulnerability database. The `container-scan` workflow artifact retains
+the full report for 30 days, including findings without fixes. Missing inventories,
+Python findings, and high/critical OS findings with available fixes fail the check.
+Remaining OS findings still require release assessment; a passing check is not a
+security certification. Download the artifact from the relevant commit's CI run.
+
 Recorded September 22, 2026 (September 23 UTC); release assessment remains incomplete.
 
 A fresh Trivy 0.74.0 database scan of the cleanup image found **zero critical,

@@ -1663,6 +1663,145 @@ await check("paste normalizes accepted numeric formats without dropping values",
   assert.equal(h.test.state.editorRows[1].y, "");
 });
 
+await check("incomplete corrections cannot be saved or approved and zero repairs the row", async () => {
+  const h = harness();
+  h.select(makeJob());
+  const value = h.node("result-table").querySelector('[data-kind="value"][data-row="0"]');
+  value.value = "";
+  await h.node("result-form").dispatch("input", { target: value });
+  const requests = [];
+  h.replace("api", async (path, options) => {
+    requests.push({ path, options });
+    return { ...makeJob(), result: options.body.result };
+  });
+  assert.equal(await h.test.saveCorrections(null, { approve: true }), false);
+  assert.equal(requests.length, 0);
+  assert.equal(h.test.state.editorRows.length, 2);
+  assert.equal(h.test.state.editorRows[0].y, "");
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.node("result-form").inert, false);
+  const invalid = h.node("result-table").querySelector('[data-kind="value"][data-row="0"]');
+  assert.equal(invalid.focused, true);
+  assert.equal(invalid.getAttribute("aria-invalid"), "true");
+  assert.equal(invalid.getAttribute("aria-describedby"), "editor-change-note");
+  assert.match(h.node("editor-change-note").textContent, /Row 1:.*numeric value/);
+  invalid.value = "0";
+  await h.node("result-form").dispatch("input", { target: invalid });
+  assert.equal(invalid.getAttribute("aria-invalid"), null);
+  assert.equal(h.node("editor-change-note").textContent, "Unsaved changes");
+  assert.equal(await h.test.saveCorrections(null), true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.body.result.series[0].points.length, 2);
+  assert.equal(requests[0].options.body.result.series[0].points[0].y, 0);
+  assert.equal(h.node("editor-change-note").textContent, "");
+});
+
+for (const [kind, value] of [["x", "   "], ["value", "NaN"], ["value", "1e309"], ["value", "   "]]) {
+  await check(`invalid ${kind} ${JSON.stringify(value)} on an unmounted page is retained and located`, async () => {
+    const h = harness();
+    const job = makeJob();
+    job.result.series[0].points = Array.from({ length: 45 }, (_, i) => ({ x: `Item ${i}`, y: i }));
+    h.select(job);
+    const row = h.test.state.editorRows[44];
+    row[kind === "value" ? "y" : "x"] = value;
+    h.test.markEditorDirty();
+    const before = JSON.stringify(h.test.state.editorRows);
+    let requests = 0;
+    h.replace("api", async () => { requests += 1; });
+    assert.equal(await h.test.saveCorrections(null), false);
+    assert.equal(requests, 0);
+    assert.equal(JSON.stringify(h.test.state.editorRows), before);
+    assert.equal(h.test.state.editorPage, 1);
+    assert.match(h.node("editor-change-note").textContent, /Row 45:/);
+    assert.equal(h.node("result-table").querySelector(`[data-kind="${kind}"][data-row="44"]`).focused, true);
+  });
+}
+
+for (const [value, expectedIndex] of [["", null], ["0", -1], ["3", 2], ["1.5", 0.5]]) {
+  await check(`invalid series ${JSON.stringify(value)} survives pagination and cannot be dropped by reverse`, async () => {
+    const h = harness();
+    const job = makeJob();
+    job.result.series[0].points = Array.from({ length: 41 }, (_, i) => ({ x: `Item ${i}`, y: i }));
+    job.result.series.push({ name: "Other", points: [{ x: "Other", y: -2 }] });
+    h.select(job);
+    const series = h.node("result-table").querySelector('[data-kind="series"][data-row="0"]');
+    series.value = value;
+    await h.node("result-form").dispatch("input", { target: series });
+    await h.node("editor-next-page").click();
+    assert.equal(h.test.state.editorRows[0].seriesIndex, expectedIndex);
+    const before = JSON.stringify(h.test.state.editorRows);
+    await h.node("reverse-rows").click();
+    assert.equal(JSON.stringify(h.test.state.editorRows), before);
+    assert.equal(h.test.state.editorPage, 0);
+    const invalid = h.node("result-table").querySelector('[data-kind="series"][data-row="0"]');
+    assert.equal(invalid.value, value);
+    assert.equal(invalid.focused, true);
+    assert.match(h.node("editor-change-note").textContent, /Row 1:.*series number/);
+    let requests = 0;
+    h.replace("api", async () => { requests += 1; });
+    assert.equal(await h.test.saveCorrections(null, { approve: true }), false);
+    assert.equal(requests, 0);
+    assert.equal(JSON.stringify(h.test.state.editorRows), before);
+  });
+}
+
+await check("pasted missing values remain editable until completed or explicitly removed", async () => {
+  const h = harness();
+  h.select(makeJob());
+  h.node("bulk-values").value = "Present\t-2.5\nMissing\t";
+  h.test.pasteEditorRows();
+  assert.equal(await h.test.saveCorrections(null), false);
+  assert.equal(h.test.state.editorRows.length, 2);
+  assert.match(h.node("editor-change-note").textContent, /Row 2:/);
+  const remove = h.node("result-table").querySelectorAll("button")[1];
+  await remove.click();
+  assert.equal(h.test.state.editorValidationError, false);
+  const result = h.test.buildEditedResult();
+  assert.equal(result.series[0].points.length, 1);
+  assert.equal(result.series[0].points[0].y, -2.5);
+});
+
+await check("numeric coordinates retain zero, negative and scientific values through a metadata correction", async () => {
+  const h = harness();
+  const job = makeJob();
+  job.result.series[0].points = [0, -2e-7, 2e21].map((x) => ({ x, y: -3.5 }));
+  h.select(job);
+  await h.editTitle("Corrected metadata");
+  const result = h.test.buildEditedResult();
+  assert.deepEqual(Array.from(result.series[0].points, (point) => point.x), [0, -2e-7, 2e21]);
+  const x = h.node("result-table").querySelector('[data-kind="x"][data-row="0"]');
+  x.value = "Label instead of number";
+  assert.equal(h.test.buildEditedResult().series[0].points[0].x, "Label instead of number");
+  x.value = "+1.25E-3";
+  assert.equal(h.test.buildEditedResult().series[0].points[0].x, 0.00125);
+  x.value = "1e309";
+  assert.equal(await h.test.saveCorrections(null), false);
+  assert.match(h.node("editor-change-note").textContent, /Row 1:.*finite x value/);
+  assert.equal(h.node("result-table").querySelector('[data-kind="x"][data-row="0"]').focused, true);
+});
+
+await check("numeric-looking category labels retain their string type", async () => {
+  const h = harness();
+  const job = makeJob();
+  job.result.series[0].points[0].x = "1e-7";
+  h.select(job);
+  assert.equal(h.test.buildEditedResult().series[0].points[0].x, "1e-7");
+});
+
+await check("an empty table cannot save and clearing the chart removes validation state", async () => {
+  const h = harness();
+  h.select(makeJob());
+  h.test.state.editorRows = [];
+  h.test.renderResultTable();
+  h.test.markEditorDirty();
+  assert.equal(await h.test.saveCorrections(null), false);
+  assert.match(h.node("editor-change-note").textContent, /at least one row/);
+  assert.equal(h.node("add-row-button").focused, true);
+  h.test.resetPrivateState();
+  assert.equal(h.test.state.editorValidationError, false);
+  assert.equal(h.node("editor-change-note").textContent, "");
+});
+
 await check("source retry survives same-job polling and stops on account change", async () => {
   const h = harness();
   const job = makeJob("pending", "running");

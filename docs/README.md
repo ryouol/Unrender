@@ -6,6 +6,7 @@ Start with the [engineering review guide](ENGINEERING_REVIEW.md) for a code revi
 
 | Task | Read |
 |---|---|
+| Follow product priorities and recurring delivery | [PM workflow, ChatGPT hub and Notion](PRODUCT_WORKFLOW.md) |
 | Understand the current release and open work | [Readiness](LAUNCH_READINESS.md), [deployment record](RENDER_MODAL_LAUNCH.md) |
 | Review architecture and API behavior | [Architecture](ARCHITECTURE.md), [API](API.md), [chart library](CHART_LIBRARY.md) |
 | Operate or recover the service | [Operations](OPERATIONS.md), [request limits](REQUEST_LIMITS.md) |

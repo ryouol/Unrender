@@ -1,5 +1,46 @@
 import { test, expect } from '@playwright/test';
 
+test('incomplete row prevents saving and approval until its value is corrected', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Open reference example' }).click();
+  await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible({ timeout: 15000 });
+  const first = page.getByRole('spinbutton', { name: 'Row 1 value', exact: true });
+  await expect(first).toHaveValue('9.2');
+  const originalRowCount = await page.locator('#result-table tbody tr').count();
+  const mutations = [];
+  page.on('request', (request) => {
+    if (['PATCH', 'POST'].includes(request.method())
+      && /\/api\/jobs\/[^/]+\/(result|approve)$/.test(new URL(request.url()).pathname)) {
+      mutations.push(request);
+    }
+  });
+
+  await first.fill('');
+  await page.getByRole('button', { name: 'Save corrections', exact: true }).click();
+  await expect(page.locator('#editor-change-note')).toHaveText('Row 1: Enter a finite numeric value, or remove this row.');
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute('aria-invalid', 'true');
+  await expect(first).toHaveAttribute('aria-describedby', 'editor-change-note');
+  await expect(page.locator('#result-table tbody tr')).toHaveCount(originalRowCount);
+  expect(mutations).toHaveLength(0);
+
+  await page.getByRole('button', { name: 'Save & approve', exact: true }).click();
+  await expect(first).toBeFocused();
+  await expect(first).toHaveValue('');
+  await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible();
+  expect(mutations).toHaveLength(0);
+
+  await first.fill('0');
+  await expect(page.locator('#editor-change-note')).toHaveText('Unsaved changes');
+  await expect(first).not.toHaveAttribute('aria-invalid', 'true');
+  await page.getByRole('button', { name: 'Save & approve', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Approved data', exact: true })).toBeVisible();
+  await expect(first).toHaveValue('0');
+  await expect(page.locator('#result-table tbody tr')).toHaveCount(originalRowCount);
+  expect(mutations.map((request) => request.method())).toEqual(['PATCH', 'POST']);
+  expect(mutations[0].postDataJSON().result.series[0].points[0].y).toBe(0);
+});
+
 test('reference correction, undo, paste, approval, export and version comparison', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: 'Open reference example' }).click();

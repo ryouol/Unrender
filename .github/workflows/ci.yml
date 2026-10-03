@@ -155,6 +155,37 @@ jobs:
           docker exec unrender-production-smoke sh -c 'test "$(id -u)" = 10001'
           docker exec --user root unrender-production-smoke sh -ec \
             'privileged=$(find /usr -xdev -type f -perm /6000 -print); test -z "$privileged"'
+      - name: Scan the built production image
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --scanners vuln --format json unrender:ci > container-scan.json
+          python3 - <<'PY'
+          import collections
+          import json
+          from pathlib import Path
+
+          results = json.loads(Path("container-scan.json").read_text())["Results"]
+          assert any(item.get("Type") == "debian" for item in results), "Missing OS inventory"
+          assert any(item.get("Type") == "python-pkg" for item in results), "Missing Python inventory"
+          blocked = []
+          for item in results:
+              vulnerabilities = item.get("Vulnerabilities", [])
+              print(item["Type"], dict(collections.Counter(v["Severity"] for v in vulnerabilities)))
+              blocked.extend(v for v in vulnerabilities if item["Type"] == "python-pkg"
+                             or (v["Severity"] in {"HIGH", "CRITICAL"} and v.get("FixedVersion")))
+          for item in blocked:
+              print(item["VulnerabilityID"], item["PkgName"], item.get("FixedVersion", "unfixed"))
+          raise SystemExit(bool(blocked))
+          PY
+      - name: Retain the complete container scan
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-scan
+          path: container-scan.json
+          if-no-files-found: error
+          retention-days: 30
 
   browser-acceptance:
     runs-on: ubuntu-24.04

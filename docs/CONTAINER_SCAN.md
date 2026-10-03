@@ -7,6 +7,14 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+The October 3, 2026 maintenance update pins PCRE2 `10.46-1~deb13u3` and
+OpenSSL `3.5.7-1~deb13u3` across its three installed packages, addressing the
+available Debian fixes for [CVE-2026-103111](https://security-tracker.debian.org/tracker/CVE-2026-103111),
+[CVE-2026-75804](https://security-tracker.debian.org/tracker/CVE-2026-75804), and
+[CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782).
+The application and development locks also update urllib3 to 2.8.0. Use the
+corresponding CI artifact for the current scan; counts below are historical.
+
 Recorded September 22, 2026 (September 23 UTC); release assessment remains incomplete.
 
 A fresh Trivy 0.74.0 database scan of the cleanup image found **zero critical,

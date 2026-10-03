@@ -381,9 +381,9 @@
     },
     {
       "name": "urllib3",
-      "purl": "pkg:pypi/urllib3@2.7.0",
+      "purl": "pkg:pypi/urllib3@2.8.0",
       "type": "library",
-      "version": "2.7.0"
+      "version": "2.8.0"
     },
     {
       "name": "uvicorn",
@@ -425,7 +425,7 @@
     "properties": [
       {
         "name": "unrender:requirements-app-lock-sha256",
-        "value": "d4a89a0d123690c5f3cfd9322185680aac24e3ae18d3e7a01f66bd1fca38dc17"
+        "value": "e9d9899fc786c228a66d6e9c1621c0fa28907bb8431297722423c886e534aa68"
       },
       {
         "name": "unrender:license-review-status",
@@ -433,7 +433,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:1a9bc58a-d5a9-50d9-bf66-3a8b01430509",
+  "serialNumber": "urn:uuid:31c802bd-6622-5d80-98b6-9f4396c5033d",
   "specVersion": "1.6",
   "version": 1
 }

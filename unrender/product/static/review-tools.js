@@ -59,8 +59,10 @@ function travelEditor(direction) {
 }
 
 function reverseEditorRows() {
-  checkpointEditor();
   collectEditorRows();
+  try { validateEditorRows({ seriesOnly: true }); }
+  catch (error) { showEditorValidation(error); return; }
+  checkpointEditor();
   const groups = state.editorSeries.map((_, index) => state.editorRows.filter((row) => row.seriesIndex === index).reverse());
   state.editorRows = groups.flat();
   state.editorPage = 0;

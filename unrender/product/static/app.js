@@ -15,6 +15,7 @@ const state = {
   editorSeries: [],
   editorPage: 0,
   editorDirty: false,
+  editorValidationError: false,
   authEpoch: 0,
   authController: new AbortController(),
   principalMarker: null,
@@ -48,6 +49,7 @@ const AUTH_PHASES = new Set([
 const EDITOR_PAGE_SIZE = 40;
 const EDITOR_MAX_ROWS = 10000;
 const EDITOR_MOUNTED_CELL_LIMIT = 500;
+const EDITOR_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
 const chartTypes = [
   "bar",
@@ -1591,6 +1593,7 @@ function renderJobActions() {
 }
 
 function markEditorDirty(event) {
+  clearEditorValidation();
   if (event?.target?.dataset.kind) event.target.classList.add("cell-edited");
   if (state.editorDirty) return;
   state.editorDirty = true;
@@ -1761,6 +1764,7 @@ function clearSelectedChart() {
   resetReviewTools();
   state.currentJob = null;
   state.editorDirty = false;
+  state.editorValidationError = false;
   state.editorRows = [];
   state.editorSeries = [];
   state.editorPage = 0;
@@ -1818,6 +1822,7 @@ function renderEditor(result) {
   byId("result-form").inert = false;
   byId("result-form").removeAttribute("aria-busy");
   state.editorDirty = false;
+  state.editorValidationError = false;
   byId("editor-change-note").textContent = "";
   byId("chart-type-input").replaceChildren(...chartTypes.map((type) => {
     const option = document.createElement("option");
@@ -1867,7 +1872,7 @@ function renderResultTable() {
     seriesInput.type = "number";
     seriesInput.min = "1";
     seriesInput.max = String(state.editorSeries.length);
-    seriesInput.value = String(item.seriesIndex + 1);
+    seriesInput.value = item.seriesIndex === null ? "" : String(item.seriesIndex + 1);
     seriesInput.dataset.row = String(rowIndex);
     seriesInput.dataset.kind = "series";
     seriesInput.setAttribute("aria-label", `Row ${rowIndex + 1} series number`);
@@ -1931,11 +1936,9 @@ function collectEditorRows() {
   if (!table.tBodies.length) return;
   for (const xInput of table.querySelectorAll('[data-kind="x"]')) {
     const rowIndex = Number(xInput.dataset.row);
-    const seriesValue = Number(
-      table.querySelector(`[data-kind="series"][data-row="${rowIndex}"]`)?.value,
-    );
+    const seriesValue = table.querySelector(`[data-kind="series"][data-row="${rowIndex}"]`)?.value || "";
     state.editorRows[rowIndex] = {
-      seriesIndex: Math.max(0, Math.min(state.editorSeries.length - 1, seriesValue - 1)),
+      seriesIndex: seriesValue.trim() === "" ? null : Number(seriesValue) - 1,
       x: xInput.value,
       xType: xInput.dataset.xType || "string",
       y: table.querySelector(`[data-kind="value"][data-row="${rowIndex}"]`)?.value || "",
@@ -1966,16 +1969,70 @@ function addEditorRow() {
 
 function coerceX(value, xType) {
   const text = value.trim();
-  if (xType === "number" && /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return Number(text);
+  if (xType === "number" && EDITOR_NUMBER_PATTERN.test(text) && Number.isFinite(Number(text))) return Number(text);
   return text;
+}
+
+function clearEditorValidation() {
+  if (!state.editorValidationError) return;
+  state.editorValidationError = false;
+  byId("editor-change-note").textContent = state.editorDirty ? "Unsaved changes" : "";
+  for (const input of byId("result-table").querySelectorAll("[data-kind]")) {
+    input.removeAttribute("aria-invalid");
+    input.removeAttribute("aria-describedby");
+  }
+}
+
+function validateEditorRows({ seriesOnly = false } = {}) {
+  if (!state.editorRows.length) throw new Error("Add at least one row before saving.");
+  for (const [index, row] of state.editorRows.entries()) {
+    let kind;
+    let message;
+    if (!Number.isInteger(row.seriesIndex) || row.seriesIndex < 0 || row.seriesIndex >= state.editorSeries.length) {
+      kind = "series";
+      message = `Choose a whole series number from 1 to ${state.editorSeries.length}.`;
+    } else if (!seriesOnly && !row.x.trim()) {
+      kind = "x";
+      message = "Enter a category or x value, or remove this row.";
+    } else if (!seriesOnly && row.xType === "number" && EDITOR_NUMBER_PATTERN.test(row.x.trim()) && !Number.isFinite(Number(row.x))) {
+      kind = "x";
+      message = "Enter a finite x value.";
+    } else if (!seriesOnly && (!row.y.trim() || !Number.isFinite(Number(row.y)))) {
+      kind = "value";
+      message = "Enter a finite numeric value, or remove this row.";
+    }
+    if (message) {
+      const error = new Error(`Row ${index + 1}: ${message}`);
+      error.editorRow = index;
+      error.editorField = kind;
+      throw error;
+    }
+  }
+}
+
+function showEditorValidation(error) {
+  clearEditorValidation();
+  state.editorValidationError = true;
+  byId("editor-change-note").textContent = error.message;
+  if (Number.isInteger(error.editorRow)) {
+    state.editorPage = Math.floor(error.editorRow / EDITOR_PAGE_SIZE);
+    renderResultTable();
+    const input = byId("result-table").querySelector(`[data-kind="${error.editorField}"][data-row="${error.editorRow}"]`);
+    input?.setAttribute("aria-invalid", "true");
+    input?.setAttribute("aria-describedby", "editor-change-note");
+    input?.focus();
+  } else {
+    byId("add-row-button").focus();
+  }
 }
 
 function buildEditedResult() {
   collectEditorRows();
+  validateEditorRows();
   const series = state.editorSeries.map((item, seriesIndex) => ({
     name: item.name,
     points: state.editorRows
-      .filter((row) => row.seriesIndex === seriesIndex && row.x.trim() && row.y !== "")
+      .filter((row) => row.seriesIndex === seriesIndex)
       .map((row) => ({ x: coerceX(row.x, row.xType), y: Number(row.y) })),
   }));
   return {
@@ -1997,18 +2054,25 @@ async function saveCorrections(event, { approve = false } = {}) {
   event?.preventDefault();
   const form = byId("result-form");
   if (form.getAttribute("aria-busy") === "true") return false;
-  if (!form.reportValidity()) return false;
   const jobId = state.currentJob?.id;
   const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
   const authEpoch = state.authEpoch;
   const signal = state.viewController.signal;
   if (!jobId) return false;
+  clearEditorValidation();
+  let result;
+  try {
+    result = buildEditedResult();
+  } catch (error) {
+    showEditorValidation(error);
+    return false;
+  }
+  if (!form.reportValidity()) return false;
   form.setAttribute("aria-busy", "true");
   form.inert = true;
   let saved = false;
   try {
-    const result = buildEditedResult();
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/result`, {
       method: "PATCH", body: { result, expected_revision: expectedRevision }, signal,
     });

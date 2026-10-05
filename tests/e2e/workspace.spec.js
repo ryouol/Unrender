@@ -1,5 +1,42 @@
 import { test, expect } from '@playwright/test';
 
+test('undo restores approved downloads without creating a correction and keeps redo', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Open reference example' }).click();
+  await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save & approve', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Approved data', exact: true })).toBeVisible();
+  const savedMeta = await page.locator('#job-meta').textContent();
+  const first = page.getByRole('spinbutton', { name: 'Row 1 value', exact: true });
+  const mutations = [];
+  page.on('request', (request) => {
+    if (['PATCH', 'POST'].includes(request.method())
+      && /\/api\/jobs\/[^/]+\/(result|approve)$/.test(new URL(request.url()).pathname)) {
+      mutations.push(request);
+    }
+  });
+
+  await first.fill('9.3');
+  await expect(page.locator('#editor-change-note')).toHaveText('Unsaved changes');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(first).toHaveValue('9.2');
+  await expect(page.locator('#editor-change-note')).toHaveText('');
+  await expect(page.getByRole('heading', { name: 'Approved data', exact: true })).toBeVisible();
+  await expect(page.locator('#job-meta')).toHaveText(savedMeta);
+  await expect(page.getByRole('button', { name: 'Redo', exact: true })).toBeEnabled();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download workbook', exact: true }).click();
+  expect((await download).suggestedFilename()).toMatch(/\.xlsx$/);
+  expect(mutations).toHaveLength(0);
+
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(first).toHaveValue('9.3');
+  await expect(page.locator('#editor-change-note')).toHaveText('Unsaved changes');
+  await expect(page.getByRole('button', { name: 'Save & approve', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download workbook', exact: true })).toBeHidden();
+  expect(mutations).toHaveLength(0);
+});
+
 test('incomplete row prevents saving and approval until its value is corrected', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: 'Open reference example' }).click();

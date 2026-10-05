@@ -1638,6 +1638,61 @@ await check("both axis units remain editable and visible without changing values
 });
 
 
+await check("undo to the saved approved result restores downloads without saving and keeps redo", async () => {
+  const h = harness();
+  h.select(makeJob("chart-a", "approved"));
+  h.test.checkpointEditor();
+  await h.editTitle("Temporary correction");
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.node("editor-change-note").textContent, "");
+  assert.equal(h.node("job-title").textContent, "Approved data");
+  assert.equal(h.node("edit-state").textContent, "Approved");
+  assert.equal(h.node("review-notice").hidden, true);
+  assert.equal(h.node("job-actions").children[0].textContent, "Download workbook");
+  assert.match(h.node("job-meta").textContent, /Approved by you/);
+  assert.equal(h.node("workflow-steps").querySelector('[data-step="export"]').getAttribute("aria-current"), "step");
+  assert.equal(h.node("redo-edit").disabled, false);
+  let prompts = 0;
+  h.window.confirm = () => { prompts += 1; return false; };
+  const event = { preventDefault() { prompts += 1; } };
+  h.windowListeners.get("beforeunload")(event);
+  assert.equal(prompts, 0);
+  h.test.travelEditor("redo");
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.node("chart-title-input").value, "Temporary correction");
+  assert.equal(h.node("job-actions").children[0].textContent, "Save & approve");
+  h.windowListeners.get("beforeunload")(event);
+  assert.equal(prompts, 1);
+});
+
+await check("partial undo keeps other corrections dirty and full undo ignores the viewed table page", async () => {
+  const h = harness();
+  const job = makeJob();
+  job.result.series[0].points = Array.from({ length: 45 }, (_, index) => ({ x: `Item ${index}`, y: index }));
+  h.select(job);
+  h.test.state.editorPage = 1;
+  h.test.renderResultTable();
+  h.test.checkpointEditor();
+  await h.editTitle("Changed title");
+  h.test.checkpointEditor();
+  const value = h.node("result-table").querySelector('[data-kind="value"][data-row="44"]');
+  value.value = "500";
+  await h.node("result-form").dispatch("input", { target: value });
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.node("chart-title-input").value, "Changed title");
+  assert.equal(h.test.state.editorRows[44].y, "44");
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.test.state.editorPage, 1);
+  assert.equal(h.node("edit-state").textContent, "Not approved");
+  assert.equal(h.node("review-notice").hidden, false);
+  assert.match(h.node("job-meta").textContent, /Ready for your review/);
+  h.test.travelEditor("redo");
+  assert.equal(h.test.state.editorDirty, true);
+});
+
 await check("undo preserves unfinished rows and focusing preserves redo", async () => {
   const h = harness();
   h.select(makeJob());
@@ -1648,10 +1703,51 @@ await check("undo preserves unfinished rows and focusing preserves redo", async 
   h.test.travelEditor("undo");
   assert.equal(h.test.state.editorRows.at(-1).x, "Draft");
   assert.equal(h.test.state.editorRows.at(-1).y, "");
+  assert.equal(h.test.state.editorDirty, true);
   await h.node("result-form").dispatch("focusin", {target: {matches: () => true}});
   assert.equal(h.node("redo-edit").disabled, false);
   h.test.travelEditor("redo");
   assert.equal(h.node("chart-title-input").value, "Changed");
+});
+
+await check("undo clears validation only when returning to the saved data and preserves invalid redo", async () => {
+  const h = harness();
+  h.select(makeJob());
+  h.test.checkpointEditor();
+  const value = h.node("result-table").querySelector('[data-kind="value"][data-row="0"]');
+  value.value = "";
+  await h.node("result-form").dispatch("input", { target: value });
+  assert.equal(await h.test.saveCorrections(null), false);
+  assert.equal(h.test.state.editorValidationError, true);
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.test.state.editorValidationError, false);
+  assert.equal(h.node("editor-change-note").textContent, "");
+  h.test.travelEditor("redo");
+  assert.equal(h.test.state.editorDirty, true);
+  assert.equal(h.test.state.editorRows[0].y, "");
+  assert.equal(await h.test.saveCorrections(null), false);
+});
+
+await check("a successful save establishes a new undo baseline and changing charts clears history", async () => {
+  const h = harness();
+  h.select(makeJob());
+  await h.editTitle("New saved title");
+  h.replace("api", async (_path, options) => ({ ...makeJob(), result: options.body.result }));
+  assert.equal(await h.test.saveCorrections(null), true);
+  h.test.checkpointEditor();
+  await h.editTitle("Another correction");
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.node("chart-title-input").value, "New saved title");
+  assert.equal(h.node("redo-edit").disabled, false);
+  h.select(makeJob("chart-b"));
+  assert.equal(h.node("redo-edit").disabled, true);
+  h.test.checkpointEditor();
+  await h.editTitle("New saved title");
+  h.test.travelEditor("undo");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.node("chart-title-input").value, "Saved chart-b");
 });
 
 await check("paste normalizes accepted numeric formats without dropping values", async () => {

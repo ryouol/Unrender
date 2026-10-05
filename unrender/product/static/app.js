@@ -1467,13 +1467,23 @@ function setJobSourceImage(job) {
   image.src = sourceUrl;
 }
 
+function renderSavedJobStatus() {
+  const job = state.currentJob;
+  if (!job) return;
+  const resultReady = ["review", "approved"].includes(job.status) && job.result;
+  byId("job-status").textContent = statusLabel(job.status);
+  byId("job-title").textContent = job.status === "approved" ? "Approved data" : ["review"].includes(job.status) ? "Review data" : statusLabel(job.status);
+  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage}${job.result_version ? ` · Version ${job.result_version}` : ""} · ${formatDate(job.updated_at)}`;
+  byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
+  setHidden("review-notice", !resultReady || job.status === "approved");
+  renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
+}
+
 function renderJob() {
   const job = state.currentJob;
   if (!job) return;
-  byId("job-status").textContent = statusLabel(job.status);
-  byId("job-title").textContent = job.status === "approved" ? "Approved data" : ["review"].includes(job.status) ? "Review data" : statusLabel(job.status);
+  renderSavedJobStatus();
   byId("review-filename").textContent = chartName(job);
-  byId("job-meta").textContent = `${job.status === "approved" ? "Approved by you" : job.status === "review" ? "Ready for your review" : job.progress_stage}${job.result_version ? ` · Version ${job.result_version}` : ""} · ${formatDate(job.updated_at)}`;
   byId("source-page-label").textContent = job.source_mime === "application/pdf" ? `PDF page ${job.page_index + 1}` : "Uploaded image";
   setJobSourceImage(job);
   const error = byId("job-error");
@@ -1485,15 +1495,12 @@ function renderJob() {
   }
   setHidden("review-conflict", true);
   const resultReady = ["review", "approved"].includes(job.status) && job.result;
-  setHidden("review-notice", !resultReady || job.status === "approved");
   setHidden("result-loading", Boolean(resultReady));
   setHidden("result-form", !resultReady);
   byId("result-loading").textContent = job.error?.message || (["queued", "running"].includes(job.status)
     ? `${job.progress_stage} · ${Math.max(0, Math.floor((Date.now() - Date.parse(job.provider_dispatched_at || job.updated_at)) / 1000))} seconds in this stage. You can return to My charts; extraction continues in the background.`
     : job.progress_stage);
-  byId("edit-state").textContent = job.status === "approved" ? "Approved" : resultReady ? "Not approved" : "";
   setHidden("export-completion", true);
-  renderWorkflowSteps(job.status === "approved" ? "export" : resultReady ? "review" : "extract");
   renderExtractionEvidence(job, Boolean(resultReady));
   if (resultReady) { resetReviewTools(); renderEditor(job.result); }
   renderJobActions();
@@ -1843,6 +1850,7 @@ function renderEditor(result) {
   state.editorPage = 0;
   renderSeriesEditor();
   renderResultTable();
+  reviewHistory.saved = editorSnapshot({ includePage: false });
 }
 
 function renderResultTable() {

@@ -1,13 +1,13 @@
 let comparisonRequest = 0;
-const reviewHistory = { undo: [], redo: [], pending: null };
+const reviewHistory = { undo: [], redo: [], pending: null, saved: null };
 const historyFields = ["chart-type-input", "chart-title-input", "x-label-input", "y-label-input", "x-unit-input", "y-unit-input"];
 
-function editorSnapshot() {
+function editorSnapshot({ includePage = true } = {}) {
   collectEditorRows();
   for (const input of byId("series-editor-list").querySelectorAll("[data-series-name]")) {
     state.editorSeries[Number(input.dataset.seriesName)].name = input.value;
   }
-  return JSON.stringify({ rows: state.editorRows, series: state.editorSeries, page: state.editorPage,
+  return JSON.stringify({ rows: state.editorRows, series: state.editorSeries, ...(includePage ? { page: state.editorPage } : {}),
     fields: historyFields.map((id) => byId(id).value) });
 }
 
@@ -15,6 +15,7 @@ function editorSnapshot() {
 function resetReviewTools() {
   comparisonRequest += 1;
   reviewHistory.pending = null;
+  reviewHistory.saved = null;
   reviewHistory.undo = [];
   reviewHistory.redo = [];
   byId("bulk-values").value = "";
@@ -54,7 +55,15 @@ function travelEditor(direction) {
   reviewHistory.pending = null;
   renderSeriesEditor();
   renderResultTable();
-  markEditorDirty();
+  if (editorSnapshot({ includePage: false }) === reviewHistory.saved) {
+    state.editorDirty = false;
+    clearEditorValidation();
+    byId("editor-change-note").textContent = "";
+    renderSavedJobStatus();
+    renderJobActions();
+  } else {
+    markEditorDirty();
+  }
   updateHistoryButtons();
 }
 

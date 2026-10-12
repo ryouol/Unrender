@@ -14,6 +14,10 @@ a reference leak in specific C-extension items-view set operations. The initial
 monitor-diagnostics CI failed on that advisory in the existing runtime. No other
 package pins change. Updating a training lock does not deploy a model or provider;
 those releases and their canary requirements remain separate.
+The runtime also pins liblzma5 `5.8.1-1+deb13u2`, applying the newly available
+[Debian DSA-6549-1 fix](https://security-tracker.debian.org/tracker/DSA-6549-1)
+for a decoder reinitialization write after allocation failure. The scan did not
+assign a severity to this finding; an unrated finding still warrants assessment.
 
 The October 3, 2026 maintenance update pins PCRE2 `10.46-1~deb13u3` and
 OpenSSL `3.5.7-1~deb13u3` across its three installed packages, addressing the

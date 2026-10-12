@@ -79,8 +79,24 @@ notification-delivery guarantee; that latency remains to be measured.
 The probe URL remains `https://unrender.onrender.com`; change it with the origin.
 The older hourly measurements below are historical. Planned maintenance can cause notifications.
 
+Each unsuccessful monitor attempt logs its attempt number and a bounded reason:
+the HTTP status with fixed failed check names, an invalid/oversized response, or a
+transport failure. Response bodies, arbitrary check names and exception messages
+are never logged. A success requires HTTP 200 and a valid response containing all
+six healthy checks. The three attempts, ten-second request timeout, ten-second
+retry pauses and final nonzero exit are unchanged.
+
+For example, `http_status=503 failed_checks=backup_recent` identifies an
+application check needing attention. `http_status=503 response=invalid_json`
+means the public endpoint returned a non-JSON response, which can occur during
+Render maintenance or a gateway/service outage. Correlate it with Render's
+maintenance state and deploy timestamps before attributing the cause. A 503
+alone never proves planned maintenance, and the monitor does not suppress that
+failure. These diagnostics address the ambiguous alerts during the October 5
+rollout without adding credentials or weakening outage detection.
+
 The monitor is `crn-dahl5uh594qs73ffkbk0` in UNRENDER's Production environment,
-now built from `a7673d9` (September 22). Historically, its first manual run started at 01:03:00 UTC on September 11,
+with deployment receipts tracked in the project delivery hub. Historically, its first manual run started at 01:03:00 UTC on September 11,
 reported failure at 01:04:05 and exited with status 1. The operator inbox received
 Render's cron failure email at 01:04:09. This exercised the real public endpoint,
 retry command and delivery path: the earlier pilot provider attempt took 191.53

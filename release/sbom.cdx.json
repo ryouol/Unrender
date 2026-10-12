@@ -195,9 +195,9 @@
     },
     {
       "name": "multidict",
-      "purl": "pkg:pypi/multidict@6.7.1",
+      "purl": "pkg:pypi/multidict@6.9.1",
       "type": "library",
-      "version": "6.7.1"
+      "version": "6.9.1"
     },
     {
       "name": "numpy",
@@ -425,7 +425,7 @@
     "properties": [
       {
         "name": "unrender:requirements-app-lock-sha256",
-        "value": "e9d9899fc786c228a66d6e9c1621c0fa28907bb8431297722423c886e534aa68"
+        "value": "862e2694a8d61fca73707b3cf72f8e2170717a6a6510d5b1731244d70888a438"
       },
       {
         "name": "unrender:license-review-status",
@@ -433,7 +433,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:31c802bd-6622-5d80-98b6-9f4396c5033d",
+  "serialNumber": "urn:uuid:e3ee02ee-e7df-58f3-bde8-f873e3b5f356",
   "specVersion": "1.6",
   "version": 1
 }

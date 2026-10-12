@@ -4434,6 +4434,7 @@ def test_backup_cannot_enter_between_probe_and_rate_admission(
 )
 def test_operational_probe_detects_conditions_without_exposing_tenant_data(tmp_path, problem):
     from unrender.product.operations import OperationsProbe
+    from unrender.product.operations_check import _response_failure
 
     settings = settings_for(tmp_path, backup_volume_name="private-backups")
     app = create_app(settings)
@@ -4491,6 +4492,9 @@ def test_operational_probe_detects_conditions_without_exposing_tenant_data(tmp_p
             200 if problem in ("none", "reprocessed", "running_fresh") else 503
         )
         assert response.json()["status"] == ("ok" if response.status_code == 200 else "attention")
+        assert (_response_failure(response.status_code, response.content) is None) == (
+            response.status_code == 200
+        )
         assert (
             "private" not in response.text
             and user_id not in response.text
@@ -4520,7 +4524,7 @@ def test_operational_probe_cache_and_unavailable_database_are_bounded(tmp_path, 
 
 @pytest.mark.parametrize("failures", [0, 1, 3])
 def test_operation_check_retries_then_exits_for_platform_notification(
-    monkeypatch, capsys, failures
+    tmp_path, monkeypatch, capsys, failures
 ):
     import urllib.error
 
@@ -4528,6 +4532,8 @@ def test_operation_check_retries_then_exits_for_platform_notification(
 
     calls = []
     sleeps = []
+    with TestClient(create_app(settings_for(tmp_path))) as client:
+        healthy_body = client.get("/health/operations").content
 
     class Response(io.BytesIO):
         status = 200
@@ -4538,7 +4544,7 @@ def test_operation_check_retries_then_exits_for_platform_notification(
         calls.append(url)
         if len(calls) <= failures:
             raise urllib.error.HTTPError(url, 503, "attention", {}, None)
-        return Response(b'{"status":"ok"}')
+        return Response(healthy_body)
 
     monkeypatch.setattr(operations_check.urllib.request, "urlopen", request)
     monkeypatch.setattr(operations_check, "time", SimpleNamespace(sleep=sleeps.append))
@@ -4552,3 +4558,127 @@ def test_operation_check_retries_then_exits_for_platform_notification(
         operations_check.main()
         assert len(calls) == failures + 1 and sleeps == [10] * failures
         assert "passed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "diagnostic"),
+    [
+        (503, b"<html>private-maintenance-body</html>", "http_status=503 response=invalid_json"),
+        (502, b"private-gateway-body", "http_status=502 response=invalid_json"),
+        (200, b"{", "http_status=200 response=invalid_json"),
+        (200, b"\xff", "http_status=200 response=invalid_json"),
+        pytest.param(
+            200,
+            b"[" * 1500 + b"]" * 1499,
+            "http_status=200 response=invalid_json",
+            id="nested-json",
+        ),
+        (200, b"[]", "http_status=200 response=invalid_payload"),
+        (200, b"null", "http_status=200 response=invalid_payload"),
+        (200, b'{"status":"ok"}', "http_status=200 response=invalid_payload"),
+        (200, b'{"status":"ok","checks":{}}', "http_status=200 response=invalid_payload"),
+        (
+            200,
+            b'{"status":"ok","checks":{"backup_recent":true}}',
+            "http_status=200 response=invalid_payload",
+        ),
+        (
+            200,
+            b'{"status":"ok","checks":{"backup_recent":"true"}}',
+            "http_status=200 response=invalid_payload",
+        ),
+        (
+            503,
+            b'{"status":"attention","checks":{"backup_recent":false,"worker_available":true}}',
+            "http_status=503 failed_checks=backup_recent",
+        ),
+        (
+            503,
+            b'{"status":"attention","checks":{"probe_available":false,"worker_available":false}}',
+            "http_status=503 failed_checks=worker_available,probe_available",
+        ),
+        (
+            200,
+            b'{"status":"ok","checks":{"credit_ledger_consistent":false}}',
+            "http_status=200 failed_checks=credit_ledger_consistent",
+        ),
+        (
+            503,
+            b'{"status":"attention","checks":{"private-person@example.com":false}}',
+            "http_status=503 failed_checks=unrecognized_check",
+        ),
+        pytest.param(
+            503, b"private-body" * 1000, "http_status=503 response=too_large", id="oversized"
+        ),
+    ],
+)
+def test_operation_check_reports_bounded_safe_failures(
+    monkeypatch, capsys, status, body, diagnostic
+):
+    import urllib.error
+
+    from unrender.product import operations_check
+
+    reads = []
+    responses = []
+    sleeps = []
+
+    class Response(io.BytesIO):
+        def read(self, size=-1):
+            reads.append(size)
+            assert size == 4097
+            return super().read(size)
+
+    def request(url, timeout):
+        response = Response(body)
+        response.status = status
+        responses.append(response)
+        if status != 200:
+            raise urllib.error.HTTPError(url, status, "private-error-message", {}, response)
+        return response
+
+    monkeypatch.setattr(operations_check.urllib.request, "urlopen", request)
+    monkeypatch.setattr(operations_check, "time", SimpleNamespace(sleep=sleeps.append))
+    with pytest.raises(SystemExit, match="1"):
+        operations_check.main()
+    output = capsys.readouterr()
+    assert not output.out
+    assert all(f"attempt={attempt}/3 failed: {diagnostic}" in output.err for attempt in (1, 2, 3))
+    assert "private" not in output.err and "Traceback" not in output.err
+    assert "planned maintenance" not in output.err
+    assert reads == [4097, 4097, 4097] and sleeps == [10, 10]
+    assert all(response.closed for response in responses)
+
+
+@pytest.mark.parametrize("problem", ["connect", "read"])
+def test_operation_check_retries_transport_errors_without_logging_details(
+    monkeypatch, capsys, problem
+):
+    import http.client
+    import urllib.error
+
+    from unrender.product import operations_check
+
+    attempts = []
+    sleeps = []
+
+    class Response(io.BytesIO):
+        status = 200
+
+        def read(self, size=-1):
+            raise http.client.IncompleteRead(b"private-response")
+
+    def request(url, timeout):
+        attempts.append(url)
+        if problem == "connect":
+            raise urllib.error.URLError("private-transport-message")
+        return Response()
+
+    monkeypatch.setattr(operations_check.urllib.request, "urlopen", request)
+    monkeypatch.setattr(operations_check, "time", SimpleNamespace(sleep=sleeps.append))
+    with pytest.raises(SystemExit, match="1"):
+        operations_check.main()
+    output = capsys.readouterr()
+    assert output.err.count("response=transport_error") == 3
+    assert "private" not in output.err and "passed" not in output.out
+    assert len(attempts) == 3 and sleeps == [10, 10]

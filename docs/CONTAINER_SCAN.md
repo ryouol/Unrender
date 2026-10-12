@@ -7,6 +7,14 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+The October 12, 2026 update pins multidict 6.9.1 in the application, development
+and training locks and regenerates the runtime inventory. This addresses
+[CVE-2026-104874](https://github.com/aio-libs/multidict/security/advisories/GHSA-54p9-h82j-f925),
+a reference leak in specific C-extension items-view set operations. The initial
+monitor-diagnostics CI failed on that advisory in the existing runtime. No other
+package pins change. Updating a training lock does not deploy a model or provider;
+those releases and their canary requirements remain separate.
+
 The October 3, 2026 maintenance update pins PCRE2 `10.46-1~deb13u3` and
 OpenSSL `3.5.7-1~deb13u3` across its three installed packages, addressing the
 available Debian fixes for [CVE-2026-103111](https://security-tracker.debian.org/tracker/CVE-2026-103111),

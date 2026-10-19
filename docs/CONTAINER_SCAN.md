@@ -7,6 +7,24 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+The October 19, 2026 update pins libc6 and libc-bin to `2.41-12+deb13u4`,
+replacing `2.41-12+deb13u3` inherited from the pinned base image. Debian identifies
+this version as fixing [CVE-2026-5450](https://security-tracker.debian.org/tracker/CVE-2026-5450)
+(a heap overflow in a specific allocating scanf conversion) and
+[CVE-2026-5928](https://security-tracker.debian.org/tracker/CVE-2026-5928)
+(a wide-character stream pushback buffer under-read or crash). The October 12
+image report contained four medium findings: both advisories on both packages.
+This is preventive runtime maintenance; the findings do not establish an
+exploitable application path. Other glibc advisories remain subject to assessment.
+
+Release acceptance requires both fixed package versions in the built image,
+absence of these four findings in its fresh scan, passing runtime smoke and
+product/browser checks, and unchanged application/Python inventories. Before
+reopening production, verify a coordinated recovery copy, matching persistent
+records and source hashes, unchanged privileges and schema, healthy endpoints,
+and the non-spending provider contract. No new inference canary is authorized
+for this runtime-only update; the model and provider release remain unchanged.
+
 The October 12, 2026 update pins multidict 6.9.1 in the application, development
 and training locks and regenerates the runtime inventory. This addresses
 [CVE-2026-104874](https://github.com/aio-libs/multidict/security/advisories/GHSA-54p9-h82j-f925),

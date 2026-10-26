@@ -537,6 +537,57 @@ await check("save and approve performs both writes before its single sidebar ref
   assert.equal(h.node("job-actions").children[0].textContent, "Download workbook");
 });
 
+for (const approve of [false, true]) {
+  await check(`confirmed save with approve=${approve} survives a failed list refresh`, async () => {
+    const h = harness();
+    h.select(makeJob());
+    await h.editTitle("Saved correction");
+    const methods = [];
+    h.replace("api", async (path, options) => {
+      methods.push(options.method);
+      return makeJob("chart-a", path.endsWith("/approve") ? "approved" : "review", "Saved correction");
+    });
+    h.replace("loadJobs", async () => { throw new Error("List unavailable"); });
+    assert.equal(await h.test.saveCorrections(null, { approve }), true);
+    assert.deepEqual(methods, approve ? ["PATCH", "POST"] : ["PATCH"]);
+    assert.equal(h.test.state.currentJob.status, approve ? "approved" : "review");
+    assert.equal(h.test.state.editorDirty, false);
+    assert.equal(h.node("editor-change-note").textContent, "");
+    assert.equal(h.node("chart-title-input").value, "Saved correction");
+    assert.equal(h.node("result-form").inert, false);
+    assert.match(h.node("toast").textContent, /Corrections saved.*chart list could not refresh/);
+    if (approve) assert.equal(h.node("job-actions").children[0].textContent, "Download workbook");
+  });
+
+  for (const change of ["authentication", "view"]) {
+    await check(`save with approve=${approve} ignores a failed refresh after ${change} changes`, async () => {
+      const h = harness();
+      h.select(makeJob());
+      await h.editTitle("Saved chart A");
+      const listing = deferred();
+      const reply = deferred();
+      h.replace("api", async (path) => makeJob("chart-a", path.endsWith("/approve") ? "approved" : "review", "Saved chart A"));
+      h.replace("loadJobs", async () => { listing.resolve(); return reply.promise; });
+      const pending = h.test.saveCorrections(null, { approve });
+      await reached(listing);
+      if (change === "authentication") {
+        h.test.state.authEpoch += 1;
+        h.test.state.currentJob = makeJob("chart-b");
+        h.test.renderJob();
+      } else {
+        h.select(makeJob("chart-b"));
+      }
+      await h.editTitle("Unsaved chart B");
+      reply.reject(new Error("Late list failure"));
+      assert.equal(await pending, false);
+      assert.equal(h.test.state.currentJob.id, "chart-b");
+      assert.equal(h.node("chart-title-input").value, "Unsaved chart B");
+      assert.equal(h.test.state.editorDirty, true);
+      assert.equal(h.node("toast").hidden, true);
+    });
+  }
+}
+
 await check("save and approve never approves a failed correction", async () => {
   const h = harness();
   h.select(makeJob());

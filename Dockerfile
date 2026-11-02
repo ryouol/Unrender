@@ -24,6 +24,7 @@ WORKDIR /app
 # Security updates for the pinned base; exact versions fail closed if unavailable.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
+       ca-certificates=20250419+deb13u1 \
        gzip=1.13-1+deb13u1 \
        libc-bin=2.41-12+deb13u4 \
        libc6=2.41-12+deb13u4 \

@@ -7,6 +7,58 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+## November 2 dependency remediation
+
+The October 26 save-recovery release was blocked by Python dependency findings.
+The November 2 audit also identified affected pyasn1, filelock, msgpack and
+setuptools versions. This candidate updates the application locks to aiohttp
+3.14.4, certifi 2026.10.19, Pillow 13.0.0 and pyasn1 0.6.5. aiohttp 3.14.4
+requires yarl >=1.25.1, so the application/development yarl pin also becomes
+1.25.1. The runtime pins Debian ca-certificates `20250419+deb13u1` for
+[DSA-6572-1](https://security-tracker.debian.org/tracker/DSA-6572-1).
+
+The development/training locks update filelock to 4.2.1; development updates
+msgpack to 1.2.3; build and training locks update setuptools to 84.1.0.
+The build-system requirement and build input agree with that exact pin.
+Training and CPU-test Pillow inputs move to 13.0.0. All unrelated package
+versions are preserved, and the application SBOM is regenerated from its lock.
+These training-lock edits prepare a candidate; they do not run training or
+release a model.
+
+Upstream evidence: [aiohttp](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.4),
+[certifi](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2),
+[Pillow](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html),
+[pyasn1](https://github.com/pyasn1/pyasn1/releases/tag/v0.6.5),
+[filelock](https://github.com/tox-dev/filelock/releases/tag/4.2.1),
+[msgpack](https://github.com/msgpack/msgpack-python/releases/tag/v1.2.3), and
+[setuptools](https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w).
+Finding affected packages does not establish exploitation.
+
+Pillow 13 removes deprecated APIs and changes some image operations. The product
+uses none of the removed APIs; page preparation converts images to RGB before
+resizing. A fixed-fixture comparison of Pillow 12.3.0 and 13.0.0 on the local
+Python 3.14 runtime passed 43 cases with identical PNG bytes, decoded pixels,
+dimensions and replay results. It covers RGB/RGBA/LA, grayscale, palette and
+16-bit PNG, JPEG including CMYK and EXIF rotation, WebP, PDF pages, crops and
+640-pixel previews. This bounded comparison is compatibility evidence, not a
+claim about every image or Linux wheel; CI's product, CPU-processor and real
+browser checks must also pass on the exact candidate.
+
+Release acceptance requires passing dependency audits, SBOM/license structure,
+product/browser/CPU checks, package build and production-image smoke/scan without
+relaxing the existing gates. Before reopening a deployment, verify the coordinated
+recovery copy, persistent records/source hashes, expected package-only changes,
+schema/privileges, healthy endpoints and non-spending provider resolution.
+
+The deployed inference provider is a separate boundary: `modal_train.py` still
+pins Pillow 12.3.0 in `INFER_DIRECT_DEPENDENCIES`. Its source digest inputs, model
+bytes and deployment are unchanged. Updating application/training locks does not
+patch that provider. A provider upgrade and its required real inference canary
+need separate authorization; neither is part of this recurring maintenance task.
+The provider's live package inventory has not been scanned here. Keep
+[issue 26](https://github.com/ryouol/Unrender/issues/26) open for that remaining
+work, even after the application release passes its checks.
+
 The October 19, 2026 update pins libc6 and libc-bin to `2.41-12+deb13u4`,
 replacing `2.41-12+deb13u3` inherited from the pinned base image. Debian identifies
 this version as fixing [CVE-2026-5450](https://security-tracker.debian.org/tracker/CVE-2026-5450)

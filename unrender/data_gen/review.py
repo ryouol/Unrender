@@ -80,7 +80,7 @@ PROCESSOR_RUNTIME = {
     "torch": "2.14.0",
     "torchvision": "0.29.0",
     "transformers": "5.17.0",
-    "pillow": "12.3.0",
+    "pillow": "13.0.0",
 }
 
 

@@ -23,7 +23,12 @@ The build-system requirement and build input agree with that exact pin.
 Training and CPU-test Pillow inputs move to 13.0.0. All unrelated package
 versions are preserved, and the application SBOM is regenerated from its lock.
 These training-lock edits prepare a candidate; they do not run training or
-release a model.
+release a model. The processor-audit validator also requires Pillow 13.0.0,
+matching both training locks. Historical Pillow 12.3.0 processor evidence cannot
+approve this candidate: regenerate the CPU audit and source-review packet, then
+obtain the required source review before any future training. Existing datasets
+and review records are not rewritten. Regression tests submit package metadata
+from both actual lock files and reject the historical Pillow version.
 
 Upstream evidence: [aiohttp](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.4),
 [certifi](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2),

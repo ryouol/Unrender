@@ -150,6 +150,8 @@ jobs:
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' unrender-production-smoke)" = healthy
           docker exec unrender-production-smoke python -c "import modal; from unrender.product.web import create_app; assert callable(create_app)"
+          docker exec unrender-production-smoke python -c "import gzip,zlib; data=b'unrender-native-compression-check'*1024; assert zlib.decompress(zlib.compress(data))==data; assert gzip.decompress(gzip.compress(data))==data"
+          docker exec unrender-production-smoke python -c "from io import BytesIO; from PIL import Image; out=BytesIO(); Image.new('RGB',(32,24),(12,34,56)).save(out,format='PNG'); out.seek(0); image=Image.open(out); image.load(); assert image.size==(32,24) and image.getpixel((0,0))==(12,34,56)"
           docker exec unrender-production-smoke sh -c 'command -v timeout && command -v unrender-operations-check'
           docker exec unrender-production-smoke python -c "import json, urllib.request; req = urllib.request.Request('http://127.0.0.1:8000/health/operations', headers={'Host': 'unrender.example'}); assert json.load(urllib.request.urlopen(req, timeout=3))['status'] == 'ok'"
           docker exec unrender-production-smoke sh -c 'test "$(id -u)" = 10001'

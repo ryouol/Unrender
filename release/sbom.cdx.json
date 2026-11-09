@@ -9,9 +9,9 @@
     },
     {
       "name": "aiohttp",
-      "purl": "pkg:pypi/aiohttp@3.14.3",
+      "purl": "pkg:pypi/aiohttp@3.14.4",
       "type": "library",
-      "version": "3.14.3"
+      "version": "3.14.4"
     },
     {
       "name": "aiosignal",
@@ -51,9 +51,9 @@
     },
     {
       "name": "certifi",
-      "purl": "pkg:pypi/certifi@2026.7.22",
+      "purl": "pkg:pypi/certifi@2026.10.19",
       "type": "library",
-      "version": "2026.7.22"
+      "version": "2026.10.19"
     },
     {
       "name": "cffi",
@@ -219,9 +219,9 @@
     },
     {
       "name": "pillow",
-      "purl": "pkg:pypi/pillow@12.3.0",
+      "purl": "pkg:pypi/pillow@13.0.0",
       "type": "library",
-      "version": "12.3.0"
+      "version": "13.0.0"
     },
     {
       "name": "propcache",
@@ -237,9 +237,9 @@
     },
     {
       "name": "pyasn1",
-      "purl": "pkg:pypi/pyasn1@0.6.4",
+      "purl": "pkg:pypi/pyasn1@0.6.5",
       "type": "library",
-      "version": "0.6.4"
+      "version": "0.6.5"
     },
     {
       "name": "pyasn1-modules",
@@ -411,9 +411,9 @@
     },
     {
       "name": "yarl",
-      "purl": "pkg:pypi/yarl@1.24.5",
+      "purl": "pkg:pypi/yarl@1.25.1",
       "type": "library",
-      "version": "1.24.5"
+      "version": "1.25.1"
     }
   ],
   "metadata": {
@@ -425,7 +425,7 @@
     "properties": [
       {
         "name": "unrender:requirements-app-lock-sha256",
-        "value": "862e2694a8d61fca73707b3cf72f8e2170717a6a6510d5b1731244d70888a438"
+        "value": "7e8f92b6ffb19dba5197ad00716974c9235a03fe7abd610046d26b92acb78a09"
       },
       {
         "name": "unrender:license-review-status",
@@ -433,7 +433,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:e3ee02ee-e7df-58f3-bde8-f873e3b5f356",
+  "serialNumber": "urn:uuid:b77aadab-a4c3-5970-b587-c1a4fa9ea0cf",
   "specVersion": "1.6",
   "version": 1
 }

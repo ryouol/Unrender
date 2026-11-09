@@ -21,10 +21,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Security updates for the pinned base; exact versions fail closed if unavailable.
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
+# Disable retries while bootstrapping the inherited APT security update.
+# Exact package versions fail closed if unavailable.
+RUN apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --yes --no-install-recommends \
+       apt=3.0.4 \
+       ca-certificates=20250419+deb13u1 \
        gzip=1.13-1+deb13u1 \
+       libapt-pkg7.0=3.0.4 \
        libc-bin=2.41-12+deb13u4 \
        libc6=2.41-12+deb13u4 \
        liblzma5=5.8.1-1+deb13u2 \
@@ -34,6 +38,7 @@ RUN apt-get update \
        openssl=3.5.7-1~deb13u3 \
        openssl-provider-legacy=3.5.7-1~deb13u3 \
        perl-base=5.40.1-6+deb13u1 \
+       zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 10001 unrender \

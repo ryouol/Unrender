@@ -18,6 +18,7 @@ from unrender.data_gen.provenance import digest, json_bytes, read_split, verify_
 from unrender.data_gen.review import (
     CHECKS,
     PROCESSOR_RUNTIME,
+    _audit_rows,
     prepare,
     require_source_review,
     require_training_sources,
@@ -68,6 +69,24 @@ def packet_source(tmp_path_factory):
     (audit / "report.json").write_bytes(json_bytes(report))
     prepare(root, audit, audit)
     return root
+
+
+@pytest.mark.parametrize("lock", ["requirements-train.lock", "requirements-train-cpu.lock"])
+def test_source_review_accepts_the_locked_processor_runtime(packet_source, lock):
+    generation, rows = verify_dataset(packet_source)
+    report = json.loads((packet_source / "review/processor-audit.json").read_bytes())
+    pins = {}
+    for line in (Path(__file__).parents[1] / lock).read_text().splitlines():
+        if line and not line.startswith((" ", "#")) and "==" in line:
+            name, version = line.split()[0].split("==", 1)
+            pins[name] = version
+    report["packages"] = pins
+    assert _audit_rows(report, generation, rows, packet_source.name)
+
+    # Historical evidence must be regenerated and reviewed for the new runtime.
+    report["packages"]["pillow"] = "12.3.0"
+    with pytest.raises(ValueError, match="processor audit does not match"):
+        _audit_rows(report, generation, rows, packet_source.name)
 
 
 @pytest.fixture

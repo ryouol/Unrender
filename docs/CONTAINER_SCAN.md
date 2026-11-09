@@ -7,6 +7,72 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+## November 9 release continuation
+
+The fresh scan of the November 2 candidate failed on newly available Debian
+fixes. The runtime now pins `apt` and `libapt-pkg7.0` to `3.0.4` for
+[CVE-2026-109518 / DSA-6607-1](https://security-tracker.debian.org/tracker/CVE-2026-109518),
+and `zlib1g` to `1:1.3.dfsg+really1.3.1-1+deb13u1` for
+[DSA-6613-1](https://security-tracker.debian.org/tracker/DSA-6613-1).
+The latter addresses the scanner's
+[CVE-2026-76844](https://security-tracker.debian.org/tracker/CVE-2026-76844),
+[CVE-2026-85091](https://security-tracker.debian.org/tracker/CVE-2026-85091), and
+[CVE-2026-27171](https://security-tracker.debian.org/tracker/CVE-2026-27171)
+entries. Five advisory/package entries must disappear from the final scan.
+The inherited APT is used to install its own update, so both package operations
+explicitly set `Acquire::Retries=0`: Debian's advisory identifies nonzero retries
+as a prerequisite for the download-reuse attack. Package signature verification
+remains enabled. No distribution, image-digest or Python-package change is added
+to the November 2 candidate.
+
+CI also exercises gzip/zlib round trips and a PNG encode/decode inside the built
+Linux image. These supplement the existing product, CPU, browser and image checks;
+they do not attempt to reproduce an exploit or prove every native library safe.
+
+The new SQLite findings have no fixed Trixie package in the
+[Debian tracker](https://security-tracker.debian.org/tracker/source-package/sqlite3).
+Source review and the November 9 read-only production check found no virtual
+tables or views, customer-supplied SQL/database ingestion, extension loading,
+changeset processing or SQLite authorizer policy. The SQL wrappers use bound
+values and application-owned statements. The narrower trigger assessment is:
+
+| Advisory group | Required surface | Current product boundary |
+| --- | --- | --- |
+| CVE-2026-119372, CVE-2026-119373, CVE-2026-119374 | FTS queries or crafted FTS indexes | No FTS tables or MATCH queries; no uploaded databases are opened. |
+| CVE-2026-119371, CVE-2026-119376, CVE-2026-119591 | Crafted SQL expressions, CTE chains or views | No SQL submission interface or stored views. |
+| CVE-2026-119375, CVE-2026-119378 | Crafted database/WAL or R-Tree shadow tables | No database/WAL uploads or virtual tables. |
+| CVE-2026-119377, CVE-2026-119379 | SQLite authorizer policy or supplied changesets | Neither API is used by the product. |
+
+This supports no identified customer route for those triggers, not patched
+SQLite or safety of arbitrary databases. Restore still opens SQLite and must
+use only the existing operator-controlled recovery destination; manifest hashes
+alone cannot authenticate an untrusted recovery set.
+
+The additional GCC/libstdc++ findings
+[CVE-2026-114690](https://security-tracker.debian.org/tracker/CVE-2026-114690),
+[CVE-2026-114691](https://security-tracker.debian.org/tracker/CVE-2026-114691),
+[CVE-2026-115455](https://security-tracker.debian.org/tracker/CVE-2026-115455),
+and CVE-2026-115456 concern particular native C++ operations. Python source
+inspection cannot exclude those operations inside every binary wheel. Keep this
+native-library uncertainty visible and apply a Trixie fix when available; it is
+not a claimed non-applicability exception. The
+[glibc LANGUAGE finding](https://security-tracker.debian.org/tracker/source-package/glibc)
+requires control of the process locale/environment and a supplied message catalog.
+The hosted process has no LANGUAGE value and the product exposes no environment
+configuration route to customers. Operator/SSH locale handling remains outside
+that product-only assessment.
+
+The existing non-root boundary was rechecked: UID/GID 10001, no effective
+capabilities, NoNewPrivs=1, and no active fstab entries. Seccomp=0 is recorded;
+no outer-platform sandbox claim is made. Direct SSH still fails before command
+execution, but the dashboard shell works. The scheduled recovery archive was
+downloaded from the existing private Modal backup volume into a mode-0600 file
+on a FileVault-encrypted disk. Archive/manifest hashes, SQLite integrity and
+foreign keys pass; all 12 persistent-table snapshots and source inventory match
+production. Recheck this match after closing ingress before any rollout, and
+create a new coordinated copy if production has changed. No customer data was
+restored or migrated and no backup access was expanded.
+
 ## November 2 dependency remediation
 
 The October 26 save-recovery release was blocked by Python dependency findings.

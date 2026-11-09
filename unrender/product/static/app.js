@@ -2094,10 +2094,19 @@ async function saveCorrections(event, { approve = false } = {}) {
       if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
       state.currentJob = approved;
     }
-    await loadJobs();
+    let listRefreshFailed = false;
+    try {
+      await loadJobs();
+    } catch (error) {
+      if (isStaleRequest(error)) throw error;
+      listRefreshFailed = true;
+    }
     if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     renderJob();
-    showToast(approve ? "Corrections saved and result approved" : "Corrections saved to the audit trail");
+    const message = approve ? "Corrections saved and result approved" : "Corrections saved to the audit trail";
+    showToast(listRefreshFailed
+      ? `${message}. The chart list could not refresh. Return to My charts to retry.`
+      : message);
     return true;
   } catch (error) {
     if (approve && saved && authEpoch === state.authEpoch

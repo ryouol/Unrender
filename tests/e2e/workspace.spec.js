@@ -1,5 +1,49 @@
 import { test, expect } from '@playwright/test';
 
+for (const approve of [false, true]) {
+  test(`confirmed ${approve ? 'save and approval' : 'save'} survives a failed chart-list refresh`, async ({ page }) => {
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Open reference example' }).click();
+    await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible();
+    const first = page.getByRole('spinbutton', { name: 'Row 1 value', exact: true });
+    await first.fill('12.5');
+    const mutations = [];
+    page.on('request', (request) => {
+      if (['PATCH', 'POST'].includes(request.method())
+        && /\/api\/jobs\/[^/]+\/(result|approve)$/.test(new URL(request.url()).pathname)) {
+        mutations.push(request);
+      }
+    });
+    await page.route('**/api/library?*', (route) => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'unavailable', message: 'Chart list unavailable' } }),
+    }));
+    await page.getByRole('button', { name: approve ? 'Save & approve' : 'Save corrections', exact: true }).click();
+    await expect(page.locator('#editor-change-note')).toHaveText('');
+    await expect(first).toHaveValue('12.5');
+    await expect(page.locator('#toast')).toContainText(approve ? 'Corrections saved and result approved' : 'Corrections saved');
+    await expect(page.locator('#toast')).toContainText('chart list could not refresh');
+    await expect(page.locator('#result-form')).not.toHaveAttribute('aria-busy', 'true');
+    expect(mutations.map((request) => request.method())).toEqual(approve ? ['PATCH', 'POST'] : ['PATCH']);
+    const jobId = new URL(mutations[0].url()).pathname.split('/')[3];
+    const saved = await page.request.get(`/api/jobs/${jobId}`);
+    expect(saved.ok()).toBe(true);
+    const payload = await saved.json();
+    expect(payload.status).toBe(approve ? 'approved' : 'review');
+    expect(payload.result.series[0].points[0].y).toBe(12.5);
+    if (approve) {
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download workbook', exact: true }).click();
+      expect((await download).suggestedFilename()).toMatch(/\.xlsx$/);
+    }
+    await page.unroute('**/api/library?*');
+    page.on('dialog', (dialog) => { throw new Error(`Unexpected discard prompt: ${dialog.message()}`); });
+    await page.getByRole('button', { name: 'Back to My charts', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'My charts', exact: true })).toBeVisible();
+    expect(mutations.map((request) => request.method())).toEqual(approve ? ['PATCH', 'POST'] : ['PATCH']);
+  });
+}
+
 test('undo restores approved downloads without creating a correction and keeps redo', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: 'Open reference example' }).click();

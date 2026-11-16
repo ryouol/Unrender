@@ -1,5 +1,47 @@
 import { test, expect } from '@playwright/test';
 
+test('confirmed version restore replaces approved data despite a failed chart-list refresh', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Open reference example' }).click();
+  const first = page.getByRole('spinbutton', { name: 'Row 1 value', exact: true });
+  await expect(first).toHaveValue('9.2');
+  await first.fill('12.5');
+  await page.getByRole('button', { name: 'Save & approve', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Approved data', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Show versions', exact: true }).click();
+  const writes = [];
+  page.on('request', (request) => {
+    if (['PATCH', 'POST'].includes(request.method())
+      && /\/api\/jobs\/[^/]+\/(restore|result|approve)$/.test(new URL(request.url()).pathname)) writes.push(request);
+  });
+  await page.route('**/api/library?*', (route) => route.fulfill({
+    status: 503, contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'unavailable', message: 'Chart list unavailable' } }),
+  }));
+  await page.getByRole('button', { name: 'Restore as new correction', exact: true }).last().click();
+  await expect(first).toHaveValue('9.2');
+  await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download workbook', exact: true })).toBeHidden();
+  await expect(page.locator('#editor-change-note')).toHaveText('');
+  await expect(page.locator('#result-form')).not.toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#toast')).toContainText('restored as a new correction');
+  await expect(page.locator('#toast')).toContainText('chart list could not refresh');
+  expect(writes).toHaveLength(1);
+  expect(writes[0].method()).toBe('POST');
+  expect(new URL(writes[0].url()).pathname).toMatch(/\/restore$/);
+  const jobId = new URL(writes[0].url()).pathname.split('/')[3];
+  const response = await page.request.get(`/api/jobs/${jobId}`);
+  expect(response.ok()).toBe(true);
+  const restored = await response.json();
+  expect(restored.status).toBe('review');
+  expect(restored.result.series[0].points[0].y).toBe(9.2);
+  await page.unroute('**/api/library?*');
+  page.on('dialog', (dialog) => { throw new Error(`Unexpected discard prompt: ${dialog.message()}`); });
+  await page.getByRole('button', { name: 'Back to My charts', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'My charts', exact: true })).toBeVisible();
+  expect(writes).toHaveLength(1);
+});
+
 for (const approve of [false, true]) {
   test(`confirmed ${approve ? 'save and approval' : 'save'} survives a failed chart-list refresh`, async ({ page }) => {
     await page.goto('/login');

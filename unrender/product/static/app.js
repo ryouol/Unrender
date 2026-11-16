@@ -2178,6 +2178,7 @@ async function restoreVersion(version) {
   const jobId = state.currentJob?.id;
   const expectedRevision = state.currentJob?.review_revision;
   const viewEpoch = state.viewEpoch;
+  const authEpoch = state.authEpoch;
   const signal = state.viewController.signal;
   const form = byId("result-form");
   if (!jobId || form.getAttribute("aria-busy") === "true") return;
@@ -2191,16 +2192,25 @@ async function restoreVersion(version) {
     const updated = await api(`/api/jobs/${routeSegment(jobId)}/restore`, {
       method: "POST", body: { version: version.version, expected_revision: expectedRevision }, signal,
     });
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     state.currentJob = updated;
-    await loadJobs();
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
+    let listRefreshFailed = false;
+    try {
+      await loadJobs();
+    } catch (error) {
+      if (isStaleRequest(error)) throw error;
+      listRefreshFailed = true;
+    }
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     renderJob();
-    showToast(`Version ${version.version} restored as a new correction`);
+    const message = `Version ${version.version} restored as a new correction`;
+    showToast(listRefreshFailed
+      ? `${message}. The chart list could not refresh. Return to My charts to retry.`
+      : message);
   } catch (error) {
     showReviewError(error, jobId, viewEpoch);
   } finally {
-    if (viewEpoch === state.viewEpoch) {
+    if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
       form.inert = false;
       form.removeAttribute("aria-busy");
     }

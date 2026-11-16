@@ -20,7 +20,7 @@ Upload PNG, JPEG, WebP, or PDF: up to 10 MiB, 4 MP per image, or 25 PDF pages. S
 
 ## Run locally
 
-Use Python 3.11 and Git. Node.js is needed for browser regression tests. Local replay needs no GPU or cloud credentials and accepts only the bundled reference chart.
+Use Python 3.11.5 or a newer 3.11 patch release and Git. Node.js is needed for browser regression tests. Local replay needs no GPU or cloud credentials and accepts only the bundled reference chart.
 
 ```bash
 git clone https://github.com/ryouol/Unrender.git

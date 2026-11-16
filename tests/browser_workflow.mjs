@@ -852,6 +852,78 @@ for (const phase of ["restore", "list"]) {
   });
 }
 
+await check("confirmed restore survives a failed list refresh and feeds the next correction", async () => {
+  const h = harness();
+  h.select(makeJob("chart-a", "approved"));
+  const restored = makeJob("chart-a", "review", "Historical title");
+  restored.result.series[0].points[0].y = 42;
+  const requests = [];
+  h.replace("api", async (path, options) => { requests.push({ path, options }); return restored; });
+  h.replace("loadJobs", async () => { throw new Error("List unavailable"); });
+  await h.test.restoreVersion({ version: 2 });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, "/api/jobs/chart-a/restore");
+  assert.equal(h.test.state.currentJob, restored);
+  assert.equal(h.node("chart-title-input").value, "Historical title");
+  assert.equal(h.test.state.editorRows[0].y, "42");
+  assert.equal(h.test.state.editorDirty, false);
+  assert.equal(h.node("editor-change-note").textContent, "");
+  assert.equal(h.node("job-actions").children[0].textContent, "Save & approve");
+  assert.equal(h.node("result-form").inert, false);
+  assert.equal(h.node("result-form").getAttribute("aria-busy"), null);
+  assert.match(h.node("toast").textContent, /Version 2 restored.*chart list could not refresh/);
+  await h.editTitle("Next correction");
+  await h.test.saveCorrections();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].path, "/api/jobs/chart-a/result");
+  assert.equal(requests[1].options.body.result.series[0].points[0].y, 42);
+});
+
+for (const change of ["authentication", "view"]) {
+  await check(`restore ignores a failed refresh after ${change} changes`, async () => {
+    const h = harness();
+    h.select(makeJob());
+    const listing = deferred();
+    const reply = deferred();
+    h.replace("api", async () => makeJob("chart-a", "review", "Historical title"));
+    h.replace("loadJobs", async () => { listing.resolve(); return reply.promise; });
+    const pending = h.test.restoreVersion({ version: 2 });
+    await reached(listing);
+    if (change === "authentication") h.test.state.authEpoch += 1;
+    else h.test.beginViewSelection();
+    h.test.state.currentJob = makeJob();
+    h.test.renderJob();
+    await h.editTitle("New unsaved draft");
+    h.node("result-form").setAttribute("aria-busy", "true");
+    h.node("result-form").inert = true;
+    reply.reject(new Error("Late list failure"));
+    await pending;
+    assert.equal(h.node("chart-title-input").value, "New unsaved draft");
+    assert.equal(h.test.state.editorDirty, true);
+    assert.equal(h.node("result-form").inert, true);
+    assert.equal(h.node("result-form").getAttribute("aria-busy"), "true");
+    assert.equal(h.node("toast").hidden, true);
+  });
+}
+
+for (const code of ["unavailable", "result_conflict"]) {
+  await check(`failed restore with ${code} retains the displayed result`, async () => {
+    const h = harness();
+    const original = makeJob("chart-a", "approved");
+    h.select(original);
+    let refreshes = 0;
+    h.replace("api", async () => { const error = new Error("Restore failed"); error.code = code; throw error; });
+    h.replace("loadJobs", async () => { refreshes += 1; });
+    await h.test.restoreVersion({ version: 2 });
+    assert.equal(h.test.state.currentJob, original);
+    assert.equal(h.node("chart-title-input").value, original.result.title);
+    assert.equal(h.node("result-form").inert, false);
+    assert.equal(h.node("result-form").getAttribute("aria-busy"), null);
+    assert.equal(refreshes, 0);
+    assert.match(h.node("toast").textContent, /Restore failed/);
+  });
+}
+
 await check("restore succeeds in the same view and releases editor busy state", async () => {
   const h = harness();
   h.select(makeJob());

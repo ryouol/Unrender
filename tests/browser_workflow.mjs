@@ -774,6 +774,57 @@ for (const [action, before, after] of [["approve", "review", "approved"], ["canc
 }
 
 for (const phase of ["refreshAccount", "loadJobs"]) {
+  await check(`confirmed retry reaches its finished result while ${phase} remains unavailable`, async () => {
+    const h = harness();
+    h.select(makeJob("chart-a", "failed"));
+    const requests = [];
+    const replies = [makeJob("chart-a", "queued"), makeJob("chart-a", "running"), makeJob("chart-a", "review")];
+    h.replace("api", async (path, options) => { requests.push({ path, options }); return replies.shift(); });
+    h.replace(phase, async () => { throw new Error("Refresh still unavailable"); });
+    await h.test.jobMutation("reprocess");
+    await h.timers.get(h.test.state.pollTimer)();
+    assert.equal(h.test.state.currentJob.status, "running");
+    assert.notEqual(h.test.state.pollTimer, null);
+    await h.timers.get(h.test.state.pollTimer)();
+    assert.equal(h.test.state.currentJob.status, "review");
+    assert.equal(h.test.state.pollTimer, null);
+    assert.equal(h.node("result-form").hidden, false);
+    assert.equal(h.node("job-actions").children[0].textContent, "Save & approve");
+    assert.equal(h.node("chart-title-input").value, "Saved chart-a");
+    assert.equal(requests.length, 3);
+    assert.equal(requests.filter(({ options }) => options?.method === "POST").length, 1);
+    assert.equal(requests[1].path, "/api/jobs/chart-a");
+    assert.equal(requests[2].path, "/api/jobs/chart-a");
+  });
+}
+
+for (const phase of ["refreshAccount", "loadJobs"]) {
+  for (const change of ["authentication", "view"]) {
+    await check(`polled completion ignores late ${phase} failure after ${change} changes`, async () => {
+      const h = harness();
+      h.select(makeJob("chart-a", "running"));
+      const started = deferred();
+      const reply = deferred();
+      h.replace("api", async () => makeJob("chart-a", "review"));
+      h.replace(phase, async () => { started.resolve(); return reply.promise; });
+      const pending = h.test.openJob("chart-a");
+      await reached(started);
+      if (change === "authentication") h.test.state.authEpoch += 1;
+      else h.test.beginViewSelection();
+      h.test.state.currentJob = makeJob();
+      h.test.renderJob();
+      await h.editTitle("New unsaved draft");
+      reply.reject(new Error("Late refresh failure"));
+      await pending;
+      assert.equal(h.node("chart-title-input").value, "New unsaved draft");
+      assert.equal(h.test.state.editorDirty, true);
+      assert.equal(h.node("toast").hidden, true);
+      assert.equal(h.test.state.pollTimer, null);
+    });
+  }
+}
+
+for (const phase of ["refreshAccount", "loadJobs"]) {
   for (const change of ["authentication", "view"]) {
     await check(`failed mutation ${phase} after ${change} changes preserves the new draft and busy state`, async () => {
       const h = harness();

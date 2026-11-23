@@ -7,6 +7,29 @@ Python findings, and high/critical OS findings with available fixes fail the che
 Remaining OS findings still require release assessment; a passing check is not a
 security certification. Download the artifact from the relevant commit's CI run.
 
+## November 23 release assessment
+
+The confirmed-action recovery release also pins `libc6` and `libc-bin` to
+`2.41-12+deb13u5`, the available [Debian Trixie update](https://security-tracker.debian.org/tracker/source-package/glibc).
+The fresh baseline lists fixes for 14 advisories across those two packages
+(26 medium and two low advisory/package entries). Release acceptance requires
+all 28 entries to disappear, both exact package versions in the built and live
+runtime, and passing image smoke, browser, product and CPU checks. The base-image
+digest and all Python/provider inputs remain unchanged. Verify persistent data,
+all application files and the full package inventory before reopening ingress.
+
+Two newly reported OpenSSL findings are high in Trivy and still have no listed
+Trixie fix: [CVE-2026-107494](https://security-tracker.debian.org/tracker/CVE-2026-107494)
+and [CVE-2026-124709](https://security-tracker.debian.org/tracker/CVE-2026-124709).
+Both require OpenSSL QUIC connections. The application does not configure QUIC;
+its server uses HTTP behind Render TLS termination and its outbound clients use
+ordinary TLS. This bounds the identified application route, not every possible
+native-library path or Render's separate edge implementation. Remaining OpenSSL,
+iconv/glob, native C++ and newly listed libseccomp/shadow entries stay visible in
+the full scan and issue 26. Neither package presence nor a passing scan proves
+exploitability or safety. Keep all existing gates; reassess vendor fixes and
+native-library evidence before the next release.
+
 ## November 9 release continuation
 
 The fresh scan of the November 2 candidate failed on newly available Debian

@@ -1382,16 +1382,23 @@ async function openJob(jobId, { throwOnError = false } = {}) {
     if (state.currentJob?.id !== jobId) state.pollDelay = 1500;
     const previousStatus = state.currentJob?.id === jobId ? state.currentJob.status : null;
     const job = await api(`/api/jobs/${routeSegment(jobId)}`, { signal: view.signal, timeoutMs: 30000 });
-    if (view.epoch !== state.viewEpoch) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || view.epoch !== state.viewEpoch) throw staleAuthError();
     state.currentJob = job;
     state.jobs = state.jobs.map((item) => item.id === job.id ? {
       ...item, status: job.status, updated_at: job.updated_at,
       display_name: job.display_name, project_id: job.project_id,
     } : item);
+    let refreshFailed = false;
     if (previousStatus && previousStatus !== state.currentJob.status) {
       state.pollDelay = 1500;
-      await Promise.all([loadJobs(), refreshAccount({ timeoutMs: 30000 })]);
-      if (view.epoch !== state.viewEpoch) throw staleAuthError();
+      const refreshes = await Promise.allSettled([loadJobs(), refreshAccount({ timeoutMs: 30000 })]);
+      for (const refresh of refreshes) {
+        if (refresh.status === "rejected") {
+          if (isStaleRequest(refresh.reason)) throw refresh.reason;
+          refreshFailed = true;
+        }
+      }
+      if (authEpoch !== state.authEpoch || view.epoch !== state.viewEpoch || state.currentJob?.id !== jobId) throw staleAuthError();
     }
     else renderJobList();
     renderJob();
@@ -1400,6 +1407,7 @@ async function openJob(jobId, { throwOnError = false } = {}) {
       state.pollTimer = window.setTimeout(() => openJob(jobId), state.pollDelay);
       state.pollDelay = Math.min(4000, state.pollDelay + 500);
     }
+    if (refreshFailed) showToast("Chart updated. Some workspace details could not refresh. Reload the page to refresh them.");
     return job;
   } catch (error) {
     if (!isStaleRequest(error) && (!error.status || error.status === 429 || error.status >= 500)
@@ -1735,6 +1743,7 @@ async function jobMutation(action) {
     return;
   }
   const viewEpoch = state.viewEpoch;
+  const authEpoch = state.authEpoch;
   const signal = state.viewController.signal;
   const form = byId("result-form");
   if (form.getAttribute("aria-busy") === "true") return;
@@ -1745,22 +1754,31 @@ async function jobMutation(action) {
       method: "POST", signal,
       ...(action === "approve" ? { body: { expected_revision: job.review_revision } } : {}),
     });
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
     state.currentJob = updated;
-    await refreshAccount();
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
-    await loadJobs();
-    if (viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    let refreshFailed = false;
+    for (const refresh of [refreshAccount, loadJobs]) {
+      try {
+        await refresh();
+      } catch (error) {
+        if (isStaleRequest(error)) throw error;
+        refreshFailed = true;
+      }
+      if (authEpoch !== state.authEpoch || viewEpoch !== state.viewEpoch || state.currentJob?.id !== job.id) throw staleAuthError();
+    }
     renderJob();
     if (["queued", "running"].includes(state.currentJob.status)) {
       state.pollDelay = 1500;
       state.pollTimer = window.setTimeout(() => openJob(job.id), state.pollDelay);
     }
-    showToast(action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued");
+    const message = action === "approve" ? "Result approved" : action === "cancel" ? "Cancellation recorded" : "Extraction queued";
+    showToast(refreshFailed
+      ? `${message}. Some workspace details could not refresh. Reload the page to refresh them.`
+      : message);
   } catch (error) {
     showReviewError(error, job.id, viewEpoch);
   } finally {
-    if (viewEpoch === state.viewEpoch) {
+    if (authEpoch === state.authEpoch && viewEpoch === state.viewEpoch) {
       form.inert = false;
       form.removeAttribute("aria-busy");
     }

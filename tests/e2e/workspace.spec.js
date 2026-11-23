@@ -1,5 +1,39 @@
 import { test, expect } from '@playwright/test';
 
+for (const refresh of ['account', 'list']) {
+  test(`confirmed approval enables downloads despite a failed ${refresh} refresh`, async ({ page }) => {
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Open reference example' }).click();
+    await expect(page.getByRole('heading', { name: 'Review data', exact: true })).toBeVisible();
+    const writes = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && /\/api\/jobs\/[^/]+\/approve$/.test(new URL(request.url()).pathname)) writes.push(request);
+    });
+    const route = refresh === 'account' ? '**/api/me' : '**/api/library?*';
+    await page.route(route, (request) => request.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'unavailable', message: 'Refresh unavailable' } }),
+    }));
+    await page.getByRole('button', { name: 'Save & approve', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Approved data', exact: true })).toBeVisible();
+    await expect(page.locator('#editor-change-note')).toHaveText('');
+    await expect(page.locator('#result-form')).not.toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#toast')).toContainText('Result approved');
+    await expect(page.locator('#toast')).toContainText('workspace details could not refresh');
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download workbook', exact: true }).click();
+    expect((await download).suggestedFilename()).toMatch(/\.xlsx$/);
+    expect(writes).toHaveLength(1);
+    const jobId = new URL(writes[0].url()).pathname.split('/')[3];
+    const saved = await page.request.get(`/api/jobs/${jobId}`);
+    expect(saved.ok()).toBe(true);
+    expect((await saved.json()).status).toBe('approved');
+    await page.unroute(route);
+    await page.reload();
+    expect(writes).toHaveLength(1);
+  });
+}
+
 test('confirmed version restore replaces approved data despite a failed chart-list refresh', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: 'Open reference example' }).click();

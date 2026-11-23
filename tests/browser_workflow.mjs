@@ -739,6 +739,88 @@ await check("a clean export starts one download and revokes its URL", async () =
   assert.equal(h.node("export-completion").hidden, false);
 });
 
+for (const [action, before, after] of [["approve", "review", "approved"], ["cancel", "running", "cancelled"], ["reprocess", "failed", "queued"]]) {
+  for (const phase of ["refreshAccount", "loadJobs", "both"]) {
+    await check(`confirmed ${action} survives ${phase} failure without repeating the write`, async () => {
+      const h = harness();
+      h.select(makeJob("chart-a", before));
+      const updated = makeJob("chart-a", after);
+      const writes = [];
+      const refreshes = [];
+      h.replace("api", async (path, options) => { writes.push({ path, options }); return updated; });
+      for (const name of ["refreshAccount", "loadJobs"]) {
+        h.replace(name, async () => {
+          refreshes.push(name);
+          if (phase === name || phase === "both") throw new Error("Refresh unavailable");
+        });
+      }
+      await h.test.jobMutation(action);
+      assert.equal(h.test.state.currentJob, updated);
+      assert.equal(h.node("job-actions").children[0].textContent,
+        action === "approve" ? "Download workbook" : action === "cancel" ? "Try again · 1 credit" : "Cancel extraction");
+      assert.equal(h.node("result-form").inert, false);
+      assert.equal(h.node("result-form").getAttribute("aria-busy"), null);
+      assert.equal(h.test.state.editorDirty, false);
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].path, `/api/jobs/chart-a/${action}`);
+      assert.equal(writes[0].options.method, "POST");
+      assert.deepEqual(refreshes, ["refreshAccount", "loadJobs"]);
+      assert.match(h.node("toast").textContent, /workspace details could not refresh/);
+      assert.match(h.node("toast").textContent, /Reload the page/);
+      assert.equal(h.test.state.pollTimer !== null, action === "reprocess");
+      if (action === "reprocess") assert.equal(h.test.state.pollDelay, 1500);
+    });
+  }
+}
+
+for (const phase of ["refreshAccount", "loadJobs"]) {
+  for (const change of ["authentication", "view"]) {
+    await check(`failed mutation ${phase} after ${change} changes preserves the new draft and busy state`, async () => {
+      const h = harness();
+      h.select(makeJob());
+      const started = deferred();
+      const reply = deferred();
+      h.replace("api", async () => makeJob("chart-a", "approved"));
+      h.replace(phase, async () => { started.resolve(); return reply.promise; });
+      const pending = h.test.jobMutation("approve");
+      await reached(started);
+      if (change === "authentication") h.test.state.authEpoch += 1;
+      else h.test.beginViewSelection();
+      h.test.state.currentJob = makeJob();
+      h.test.renderJob();
+      await h.editTitle("New unsaved draft");
+      h.node("result-form").setAttribute("aria-busy", "true");
+      h.node("result-form").inert = true;
+      reply.reject(new Error("Late refresh failure"));
+      await pending;
+      assert.equal(h.node("chart-title-input").value, "New unsaved draft");
+      assert.equal(h.test.state.editorDirty, true);
+      assert.equal(h.node("result-form").inert, true);
+      assert.equal(h.node("result-form").getAttribute("aria-busy"), "true");
+      assert.equal(h.node("toast").hidden, true);
+    });
+  }
+}
+
+for (const code of ["unavailable", "result_conflict"]) {
+  await check(`failed approval with ${code} does not claim success or refresh details`, async () => {
+    const h = harness();
+    const original = makeJob();
+    h.select(original);
+    let refreshes = 0;
+    h.replace("api", async () => { const error = new Error("Approval failed"); error.code = code; throw error; });
+    for (const name of ["refreshAccount", "loadJobs"]) h.replace(name, async () => { refreshes += 1; });
+    await h.test.jobMutation("approve");
+    assert.equal(h.test.state.currentJob, original);
+    assert.equal(h.node("job-actions").children[0].textContent, "Save & approve");
+    assert.equal(h.node("result-form").inert, false);
+    assert.equal(h.node("result-form").getAttribute("aria-busy"), null);
+    assert.equal(refreshes, 0);
+    assert.match(h.node("toast").textContent, /Approval failed/);
+    assert.equal(h.node("review-conflict").hidden, code !== "result_conflict");
+  });
+}
+
 await check("mutation keeps the editor inert until refresh completes", async () => {
   const h = harness();
   h.select(makeJob());
